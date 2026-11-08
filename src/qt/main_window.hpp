@@ -1,5 +1,6 @@
 #pragma once
 #include "picodbg/debugger.hpp"
+#include <QByteArray>
 #include <QMainWindow>
 #include <array>
 #include <memory>
@@ -25,6 +26,7 @@ private:
     bool previousValid_ = false;
     bool running_ = false;
     unsigned selected_ = 0;
+    QByteArray overviewState_;
     QTimer* timer_;
     QComboBox* chip_;
     QComboBox* core_;

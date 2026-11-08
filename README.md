@@ -6,10 +6,10 @@ Débogueur **hors ligne**, en C++11, pour explorer des ELF32 ARM/Thumb destinés
 
 ## Compilation et démarrage
 
-CMake ≥ 3.16 et un compilateur C++11 suffisent pour le moteur et la console :
+CMake ≥ 3.16 et un compilateur C++11 suffisent pour les tests du moteur et la console optionnelle. Pour l'utilisation du débogueur, privilégier l'interface Qt ci-dessous.
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DPICODBG_GUI=OFF
 cmake --build build -j2
 ctest --test-dir build --output-on-failure
 ./build/pico-debugger-cli --demo
@@ -47,16 +47,32 @@ python3 examples/make_demo.py build/demo.elf
 
 ## Interface Qt
 
-Installer les paquets de développement Qt et reconfigurer CMake. Sur Debian/Ubuntu : `qtbase5-dev` **ou** `qt6-base-dev`, avec `build-essential` et `cmake`.
+Sur Debian/Ubuntu, ce script installe Qt5 et les outils nécessaires, compile l'interface, lance les tests et ouvre la démonstration :
 
 ```sh
-cmake -S . -B build -DPICODBG_GUI=ON
-cmake --build build -j2
-./build/pico-debugger --demo
-# ou : ./build/pico-debugger /chemin/firmware.elf
+bash scripts/install-qt-debian.sh --launch
 ```
 
-Qt 5 conserve C++11 ; Qt 6 impose C++17 à la cible graphique. Le moteur reste en C++11. Sans les fichiers de développement Qt, CMake construit console et tests et signale l'absence de GUI.
+Lancer ce script comme utilisateur de bureau, dans un terminal disposant d'un accès administrateur via `sudo` et d'un accès réseau aux dépôts Debian. `sudo` est utilisé uniquement pour les paquets ; la compilation se fait dans `build-gui`. Si Qt est déjà installé :
+
+```sh
+bash scripts/build-gui.sh --launch
+```
+
+Installation manuelle possible avec `qtbase5-dev` **ou** `qt6-base-dev`, puis :
+
+```sh
+cmake -S . -B build-gui -DPICODBG_GUI=ON
+cmake --build build-gui -j2
+./build-gui/pico-debugger --demo
+# ou : ./build-gui/pico-debugger /chemin/firmware.elf
+```
+
+Qt 5 conserve C++11 ; Qt 6 impose C++17 à la cible graphique. Le moteur reste en C++11. **La GUI est requise par défaut** : sans les fichiers de développement Qt, CMake s'arrête avec une erreur explicite. Un build sans interface doit être demandé avec `-DPICODBG_GUI=OFF`.
+
+La fenêtre démarre maximisée. Les panneaux essentiels sont disposés simultanément, sans onglets qui les masquent : CPU des deux cœurs et pile à gauche, assembleur/mémoire/console au centre, cartographie/périphériques/expressions/points d'arrêt à droite. Chaque tableau reste défilable ; sur un écran réduit, les panneaux sont redimensionnables et peuvent être détachés sur un autre écran.
+
+Le menu **Vues → Rétablir la vue d'ensemble** (`Ctrl+Maj+0`) restaure cet agencement. Le futur panneau source C++ est masqué par défaut et accessible dans Vues.
 
 Panneaux déplaçables/redimensionnables :
 
@@ -97,6 +113,7 @@ src/core/debugger.cpp ordonnancement, points d'arrêt, expressions
 src/cli/           console interactive et batch
 src/qt/            interface Qt Widgets
 tests/             suites de vérification du moteur
+scripts/           installation Qt et compilation/test de la GUI
 examples/          ELF reproductible et scénario à deux cœurs
 docs/              architecture et couverture
 ```
@@ -112,6 +129,12 @@ ctest --test-dir build-sanitize --output-on-failure
 Si LeakSanitizer ne fonctionne pas sous `ptrace`, préfixer la dernière commande par `ASAN_OPTIONS=detect_leaks=0` : AddressSanitizer/UBSan restent actifs, mais les fuites ne sont pas contrôlées.
 
 Dans l'environnement de création : moteur/console compilés et testés, mais **GUI Qt non compilée et non testée visuellement**, car les en-têtes/outils Qt sont absents. La chaîne croisée ARM est également absente. Aucun test comparatif sur silicium n'a été réalisé. Voir [ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+Quand Qt est présent, CTest ajoute un test de démarrage et un test d'interactions graphiques : visibilité simultanée des panneaux, pas, breakpoint, exécution, reset et restauration de l'agencement. Pour produire une capture lors de ce dernier test :
+
+```sh
+QT_QPA_PLATFORM=offscreen ./build-gui/picodbg_gui_tests build-gui/overview.png
+```
 
 ## Références
 

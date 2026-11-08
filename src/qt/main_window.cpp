@@ -72,6 +72,10 @@ QDockWidget* dock(QMainWindow* parent, const QString& name, QWidget* content, Qt
 MainWindow::MainWindow() : debugger_(new Debugger), timer_(new QTimer(this)) {
     setWindowTitle("PicoDebugger — ARM / Thumb"); resize(1500, 980);
     setDockOptions(AnimatedDocks | AllowNestedDocks | AllowTabbedDocks);
+    // Keep the side columns full-height. Memory and console occupy the bottom
+    // of the center column, rather than pushing registers off a short screen.
+    setCorner(Qt::BottomLeftCorner, Qt::LeftDockWidgetArea);
+    setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
     setStyleSheet(
         "QMainWindow,QDialog {background:#111923;color:#dce6f0;}"
         "QWidget {color:#dce6f0;}"
@@ -98,6 +102,11 @@ MainWindow::MainWindow() : debugger_(new Debugger), timer_(new QTimer(this)) {
 void MainWindow::buildUi() {
     auto* file = menuBar()->addMenu("Fichier");
     auto* views = menuBar()->addMenu("Vues"); views->setObjectName("views");
+    auto* overview = views->addAction("Rétablir la vue d'ensemble");
+    overview->setObjectName("overviewAction");
+    overview->setShortcut(QKeySequence("Ctrl+Shift+0"));
+    connect(overview, &QAction::triggered, this, [this] { restoreState(overviewState_); });
+    views->addSeparator();
     auto* debug = menuBar()->addMenu("Débogage");
     auto* help = menuBar()->addMenu("Aide");
     auto* toolbar = addToolBar("Exécution"); toolbar->setObjectName("execution"); toolbar->setMovable(false);
@@ -120,12 +129,16 @@ void MainWindow::buildUi() {
     core_ = new QComboBox; core_->addItems({"Contexte : cœur 0", "Contexte : cœur 1"}); toolbar->addWidget(core_);
     connect(core_, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this, [this](int index) { selected_ = static_cast<unsigned>(index); refresh(); });
     stepAction_ = debug->addAction("Pas instruction"); stepAction_->setShortcut(QKeySequence(Qt::Key_F10));
+    stepAction_->setObjectName("stepAction");
     connect(stepAction_, &QAction::triggered, this, [this] { singleStep(); });
     runAction_ = debug->addAction("Exécuter les cœurs"); runAction_->setShortcut(QKeySequence(Qt::Key_F5));
+    runAction_->setObjectName("runAction");
     connect(runAction_, &QAction::triggered, this, [this] { setRunning(true); });
     pauseAction_ = debug->addAction("Pause"); pauseAction_->setShortcut(QKeySequence("Shift+F5"));
+    pauseAction_->setObjectName("pauseAction");
     connect(pauseAction_, &QAction::triggered, this, [this] { setRunning(false); debugger_->pause(); refresh(); });
     resetAction_ = debug->addAction("Reset / restart"); resetAction_->setShortcut(QKeySequence("Ctrl+R"));
+    resetAction_->setObjectName("resetAction");
     connect(resetAction_, &QAction::triggered, this, [this] { setRunning(false); try { debugger_->reset(); previousValid_ = false; refresh(); log(q(debugger_->stop.message)); } catch (const std::exception& e) { failure(e); } });
     toolbar->addAction(stepAction_); toolbar->addAction(runAction_); toolbar->addAction(pauseAction_); toolbar->addAction(resetAction_);
     auto* launch = debug->addAction("Démarrer un cœur explicitement…"); connect(launch, &QAction::triggered, this, [this] { launchCore(); });
@@ -145,6 +158,7 @@ void MainWindow::buildUi() {
     banner_ = new QLabel("SIMULATION PARTIELLE  •  ARM / THUMB  •  HORS LIGNE");
     banner_->setStyleSheet("background:#49391d;color:#ffda8b;padding:8px;font-weight:600;");
     assembly_ = table({"", "Adresse", "Opcode", "Instruction", "Symbole ELF"});
+    assembly_->setObjectName("assemblyTable");
     assemblyAddress_ = new QLineEdit("pc"); assemblyAddress_->setPlaceholderText("Adresse ou symbole");
     followPc_ = new QCheckBox("Suivre PC"); followPc_->setChecked(true);
     auto* disassemble = new QPushButton("Afficher");
@@ -158,40 +172,48 @@ void MainWindow::buildUi() {
         if (debugger_->breakpoints.count(address)) debugger_->breakpoints.erase(address); else debugger_->breakpoints.insert(address);
         refreshAssembly(); refreshPoints();
     });
-    auto* assemblyPane = vertical(row({new QLabel("Assembleur"), assemblyAddress_, disassemble, followPc_}), assembly_);
+    auto* assemblyPane = vertical(row({new QLabel("Assembleur — instruction à PC"), assemblyAddress_, disassemble, followPc_}), assembly_);
     source_ = new QPlainTextEdit; source_->setReadOnly(true); source_->setMaximumWidth(380);
     source_->setPlainText("Correspondance C++ — itération 2\n\nLes symboles ELF sont affichés à côté des instructions.\n\nL'import des sources et la lecture DWARF seront ajoutés dans une couche séparée.");
-    auto* split = new QSplitter; split->addWidget(assemblyPane); split->addWidget(source_); split->setStretchFactor(0, 4); split->setStretchFactor(1, 1);
-    setCentralWidget(vertical(banner_, split));
+    setCentralWidget(vertical(banner_, assemblyPane));
     auto* cpuPane = new QSplitter;
     for (unsigned c = 0; c < 2; ++c) {
         registers_[c] = table({"Registre", "Valeur"}); flags_[c] = new QLabel; flags_[c]->setWordWrap(true);
+        registers_[c]->setObjectName(QString("registers%1Table").arg(c));
         cpuPane->addWidget(vertical(flags_[c], registers_[c]));
     }
     auto* cpuDock = dock(this, "CPU — deux cœurs", cpuPane, Qt::LeftDockWidgetArea); cpuDock->setMinimumWidth(420);
     memory_ = table({"Adresse", "00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F", "ASCII"});
+    memory_->setObjectName("memoryTable");
     memoryAddress_ = new QLineEdit("0x20000000"); memoryLength_ = new QSpinBox; memoryLength_->setRange(16, 4096); memoryLength_->setSingleStep(16); memoryLength_->setValue(256);
     auto* showMemory = new QPushButton("Lire");
     connect(showMemory, &QPushButton::clicked, this, [this] { refreshMemory(); });
     connect(memoryAddress_, &QLineEdit::returnPressed, showMemory, &QPushButton::click);
     auto* memoryDock = dock(this, "Mémoire partagée", vertical(row({new QLabel("Adresse"), memoryAddress_, new QLabel("Octets"), memoryLength_, showMemory}), memory_), Qt::BottomDockWidgetArea);
     stack_ = table({"", "Adresse pile", "Mot 32 bits", "Symbole proche / région"});
-    auto* stackDock = dock(this, "Pile du cœur sélectionné (brute)", stack_, Qt::BottomDockWidgetArea);
-    splitDockWidget(memoryDock, stackDock, Qt::Horizontal);
+    stack_->setObjectName("stackTable");
+    auto* stackDock = dock(this, "Pile du cœur sélectionné (brute)", stack_, Qt::LeftDockWidgetArea);
+    splitDockWidget(cpuDock, stackDock, Qt::Vertical);
     mapping_ = table({"Début", "Fin incluse", "Région", "Accès", "Couverture"});
-    auto* mappingDock = dock(this, "Cartographie / périphériques", mapping_, Qt::BottomDockWidgetArea); tabifyDockWidget(memoryDock, mappingDock);
+    mapping_->setObjectName("mappingTable");
+    auto* mappingDock = dock(this, "Cartographie / périphériques", mapping_, Qt::RightDockWidgetArea);
     peripherals_ = table({"Registre", "Adresse", "Valeur", "Sémantique d'inspection"});
-    auto* peripheralDock = dock(this, "État des périphériques modélisés", peripherals_, Qt::BottomDockWidgetArea); tabifyDockWidget(memoryDock, peripheralDock);
+    peripherals_->setObjectName("peripheralsTable");
+    auto* peripheralDock = dock(this, "État des périphériques modélisés", peripherals_, Qt::RightDockWidgetArea);
+    splitDockWidget(mappingDock, peripheralDock, Qt::Vertical);
     connect(mapping_, &QTableWidget::cellDoubleClicked, this, [this, memoryDock](int line, int) {
         if (!mapping_->item(line, 0)) return;
         memoryAddress_->setText(mapping_->item(line, 0)->text()); refreshMemory(); memoryDock->raise();
     });
     watches_ = table({"Expression", "Valeur", "Contexte"});
+    watches_->setObjectName("watchesTable");
     auto* addWatch = new QPushButton("+ Expression"); auto* removeWatch = new QPushButton("Supprimer");
     connect(addWatch, &QPushButton::clicked, this, [this] { addExpression(); });
     connect(removeWatch, &QPushButton::clicked, this, [this] { if (watches_->currentRow() >= 0) watches_->removeRow(watches_->currentRow()); });
     auto* watchesDock = dock(this, "Expressions surveillées", vertical(row({addWatch, removeWatch}), watches_), Qt::RightDockWidgetArea);
+    splitDockWidget(peripheralDock, watchesDock, Qt::Vertical);
     points_ = table({"Type", "Adresse", "Taille / accès"});
+    points_->setObjectName("pointsTable");
     auto* addPoint = new QPushButton("+ Break"); auto* addMemory = new QPushButton("+ Watch"); auto* removePoint = new QPushButton("Supprimer");
     connect(addPoint, &QPushButton::clicked, this, [this] { addBreakpoint(); });
     connect(addMemory, &QPushButton::clicked, this, [this] { addMemoryWatch(); });
@@ -205,14 +227,22 @@ void MainWindow::buildUi() {
     auto* pointsDock = dock(this, "Points d'arrêt / watchpoints", vertical(row({addPoint, addMemory, removePoint}), points_), Qt::RightDockWidgetArea);
     splitDockWidget(watchesDock, pointsDock, Qt::Vertical);
     console_ = new QPlainTextEdit; console_->setReadOnly(true); console_->setMaximumBlockCount(2000); console_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+    console_->setObjectName("consoleView");
     auto* expression = new QLineEdit; expression->setPlaceholderText("print read32(counter), r0 + 4, *sp… Entrée pour évaluer");
     connect(expression, &QLineEdit::returnPressed, this, [this, expression] { evaluate(expression->text()); expression->clear(); });
     auto* consoleDock = dock(this, "Console / print / diagnostics", vertical(expression, console_), Qt::BottomDockWidgetArea);
-    tabifyDockWidget(stackDock, consoleDock); memoryDock->raise(); stackDock->raise();
+    splitDockWidget(memoryDock, consoleDock, Qt::Vertical);
+    // Source import is a future feature. Keep it available through the Views
+    // menu, without reserving screen area needed by live chip inspection.
+    auto* sourceDock = dock(this, "Source C++ — prochaine itération", source_, Qt::RightDockWidgetArea);
+    sourceDock->hide();
     stop_ = new QLabel; stop_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     statusBar()->addWidget(stop_, 1);
-    resizeDocks({cpuDock, watchesDock}, {420, 320}, Qt::Horizontal);
-    resizeDocks({memoryDock, stackDock}, {240, 240}, Qt::Vertical);
+    resizeDocks({cpuDock, mappingDock}, {420, 380}, Qt::Horizontal);
+    resizeDocks({cpuDock, stackDock}, {580, 240}, Qt::Vertical);
+    resizeDocks({mappingDock, peripheralDock, watchesDock, pointsDock}, {260, 240, 160, 160}, Qt::Vertical);
+    resizeDocks({memoryDock, consoleDock}, {230, 130}, Qt::Vertical);
+    overviewState_ = saveState();
 }
 void MainWindow::loadFile(const QString& path) {
     setRunning(false);

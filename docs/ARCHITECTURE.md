@@ -36,3 +36,5 @@ Effectuée : GCC C++11, suites CTest, console batch, ELF synthétique reproducti
 Non effectuée : compilation/exécution Qt (paquets de développement absents), compilation croisée ARM (outil absent), comparaison au silicium et conformité ARM.
 
 Sur une machine équipée de Qt : construire la GUI, ouvrir l'exemple, vérifier F10/F5/Maj+F5, breakpoint par double-clic, watch `read32(counter)`, lancement cœur 1, reset/changement de profil, agencement sur petit écran. L'inspection doit préserver FIFO/spinlocks.
+
+`scripts/install-qt-debian.sh` installe les dépendances puis appelle `scripts/build-gui.sh`. Celui-ci exige une cible graphique et exécute CTest ; un build CLI seul ne constitue jamais un succès de cette procédure. `picodbg_widgets` est partagé par l'application et `picodbg_gui_tests`, qui pilote les QAction et signaux des widgets sans accéder aux CPU privés. Ces tests graphiques restent à exécuter dans un environnement équipé de Qt.

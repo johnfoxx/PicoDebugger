@@ -20,7 +20,8 @@ int main(int argc, char** argv) {
     MainWindow window;
     if (parser.isSet("demo")) window.loadDemo();
     else if (!parser.positionalArguments().isEmpty()) window.loadFile(parser.positionalArguments().first());
-    window.show();
+    if (parser.isSet("smoke-test")) window.show();
+    else window.showMaximized();
     if (parser.isSet("smoke-test")) QTimer::singleShot(100, &app, &QCoreApplication::quit);
     return app.exec();
 }
