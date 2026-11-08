@@ -1,4 +1,4 @@
-# Couverture effective — extension après v0.1.0
+# Couverture effective — v0.2.0
 
 L'objectif initial est un débogueur complet, fiable sur le matériel réel. **Cette première implémentation ne satisfait pas encore cet objectif de fidélité complète.** La présence d'un périphérique dans la cartographie n'implique pas son émulation.
 

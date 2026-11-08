@@ -134,7 +134,7 @@ Si LeakSanitizer ne fonctionne pas sous `ptrace`, préfixer la dernière command
 
 Validation v0.1.0 : moteur et interface **compilés avec Qt 5.15**, 10 tests CTest réussis, dont démarrage et interactions graphiques en mode `offscreen`. Une capture de la vue d'ensemble a été produite et inspectée. Qt6, la compilation croisée ARM et la comparaison sur silicium restent à valider. Voir [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-L'extension périphériques porte ce total à **11 tests CTest**, dont neuf suites moteur également exécutées sous ASan/UBSan. Le tag `v0.1.0` conserve la base précédente ; voir [les notes de version](docs/RELEASES.md).
+La version **v0.2.0** porte ce total à **11 tests CTest**, dont neuf suites moteur également exécutées sous ASan/UBSan. Le tag `v0.1.0` conserve la base précédente ; voir [la liste des ajouts depuis ce tag](docs/RELEASES.md).
 
 Quand Qt est présent, CTest ajoute un test de démarrage et un test d'interactions graphiques : visibilité simultanée des panneaux, pas, breakpoint, exécution, reset et restauration de l'agencement. Pour produire une capture lors de ce dernier test :
 
