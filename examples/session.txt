@@ -1,0 +1,16 @@
+# Avec --demo --batch examples/session.txt
+asm
+display read32(counter)
+break 0x10000204
+run 100
+delete 0x10000204
+watch counter 4 w
+run 100
+print read32(counter)
+unwatch
+reset
+launch 1 core1_entry 0x20042000
+run 1000
+regs
+mem counter 16
+quit

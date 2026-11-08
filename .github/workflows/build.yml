@@ -1,0 +1,16 @@
+name: Build and test
+on: [push, pull_request]
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        qt: [qtbase5-dev, qt6-base-dev]
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y ${{ matrix.qt }}
+      - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+      - run: cmake --build build --parallel 2
+      - run: ctest --test-dir build --output-on-failure
+      - run: python3 examples/make_demo.py build/demo.elf
+      - run: ./build/pico-debugger-cli --elf build/demo.elf --batch examples/session.txt

@@ -7,3 +7,4 @@ CMakeUserPresets.json
 *.user.*
 .cache/
 .DS_Store
+__pycache__/
