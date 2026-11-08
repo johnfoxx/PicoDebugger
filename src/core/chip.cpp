@@ -26,12 +26,21 @@ ChipDescription describe(Chip chip) {
         d.regions.push_back({0x15000000, 0x15004000ull, "XIP SRAM/cache", "R/W", "Non émulé"});
         d.regions.push_back({0x18000000, 0x18004000ull, "XIP_SSI", "MMIO", "Non émulé"});
     } else {
+        d.regions.push_back({0x13ffc000, 0x14000000ull, "XIP SRAM/cache", "R/W", "Non émulé"});
         const char* names[] = {"SYSINFO", "SYSCFG", "CLOCKS", "PSM", "RESETS", "IO_BANK0", "IO_QSPI", "PADS_BANK0", "PADS_QSPI", "XOSC", "PLL_SYS", "PLL_USB", "ACCESSCTRL", "BUSCTRL", "UART0", "UART1", "SPI0", "SPI1", "I2C0", "I2C1", "ADC", "PWM", "TIMER0", "TIMER1", "HSTX_CTRL", "XIP_CTRL", "XIP_QMI", "WATCHDOG", "BOOTRAM", "ROSC", "TRNG", "SHA256", "POWMAN", "TICKS"};
         for (unsigned i = 0; i < sizeof(names) / sizeof(*names); ++i)
             d.regions.push_back({0x40000000u + i * 0x8000u, 0x40000000ull + (i + 1) * 0x8000u, names[i], "MMIO", "Cartographié, non émulé (fenêtre de décodage)"});
-        d.regions.push_back({0x40120000, 0x40140000ull, "OTP / données / alias", "MMIO", "Non émulé"});
-        d.regions.push_back({0x40140000, 0x40150000ull, "CoreSight", "MMIO", "Non émulé"});
-        d.regions.push_back({0x40150000, 0x40168000ull, "DFT / GLITCH_DETECTOR / TBMAN", "MMIO", "Non émulé"});
+        d.regions.push_back({0x40120000, 0x40128000ull, "OTP", "MMIO", "Non émulé"});
+        const char* otp[] = {"OTP_DATA", "OTP_DATA_RAW", "OTP_DATA_GUARDED", "OTP_DATA_RAW_GUARDED"};
+        for (unsigned i = 0; i < 4; ++i)
+            d.regions.push_back({0x40130000u + i * 0x4000u, 0x40130000ull + (i + 1) * 0x4000u, otp[i], "MMIO", "Non émulé"});
+        const uint32_t coreSightOffsets[] = {0, 0x2000, 0x4000, 0x6000, 0x7000, 0x8000, 0x9000, 0xa000};
+        const char* coreSightNames[] = {"CORESIGHT_ROMTABLE", "CORESIGHT_AHB_AP_CORE0", "CORESIGHT_AHB_AP_CORE1", "CORESIGHT_TIMESTAMP_GEN", "CORESIGHT_ATB_FUNNEL", "CORESIGHT_TPIU", "CORESIGHT_CTI", "CORESIGHT_APB_AP_RISCV"};
+        for (unsigned i = 0; i < 8; ++i)
+            d.regions.push_back({0x40140000u + coreSightOffsets[i], 0x40141000ull + coreSightOffsets[i], coreSightNames[i], "MMIO", "Non émulé"});
+        d.regions.push_back({0x40150000, 0x40158000ull, "DFT", "MMIO", "Non émulé"});
+        d.regions.push_back({0x40158000, 0x40160000ull, "GLITCH_DETECTOR", "MMIO", "Non émulé"});
+        d.regions.push_back({0x40160000, 0x40168000ull, "TBMAN", "MMIO", "Non émulé"});
     }
     d.regions.push_back({0x50000000, 0x50010000ull, "DMA", "MMIO", "Non émulé"});
     d.regions.push_back({0x50100000, 0x50101000ull, "USB DPRAM", "R/W", "Non émulé"});
@@ -40,9 +49,17 @@ ChipDescription describe(Chip chip) {
     d.regions.push_back({0x50300000, 0x50304000ull, "PIO1", "MMIO", "Non émulé"});
     if (pico2) d.regions.push_back({0x50400000, 0x50404000ull, "PIO2", "MMIO", "Non émulé"});
     d.regions.push_back({pico2 ? 0x50500000u : 0x50400000u, pico2 ? 0x50504000ull : 0x50404000ull, "XIP_AUX", "MMIO", "Non émulé"});
-    if (pico2) d.regions.push_back({0x50600000, 0x50701000ull, "HSTX FIFO / trace CoreSight", "MMIO", "Non émulé"});
+    if (pico2) {
+        d.regions.push_back({0x50600000, 0x50601000ull, "HSTX_FIFO", "MMIO", "Non émulé"});
+        d.regions.push_back({0x50700000, 0x50701000ull, "CORESIGHT_TRACE", "MMIO", "Non émulé"});
+        d.regions.push_back({0xd0020000, 0xd0021000ull, "SIO_NONSEC", "MMIO", "Alias non sécurisé ; non émulé"});
+        d.regions.push_back({0xe0080000, 0xe0090000ull, "EPPB", "MMIO", "Non émulé"});
+    }
     d.regions.push_back({0xd0000000, 0xd0001000ull, "SIO / accès propre au cœur", "MMIO", "CPUID, FIFO, spinlocks ; GPIO sortie RP2040"});
-    d.regions.push_back({0xe0000000, 0xe0100000ull, "PPB / NVIC / SysTick / SCB (par cœur)", "MMIO", "Sous-ensemble ; RP2350 : non émulé"});
+    d.regions.push_back({0xe0000000, pico2 ? 0xe0020000ull : 0xe0100000ull, "PPB / NVIC / SysTick / SCB (par cœur)", "MMIO", "Sous-ensemble ; RP2350 : non émulé"});
+    if (pico2) d.regions.push_back({0xe0020000, 0xe0040000ull, "PPB_NONSEC", "MMIO", "Alias non sécurisé ; non émulé"});
+    if (!pico2) for (auto& region : d.regions)
+        if (region.begin == 0x40054000) region.coverage = "Timer 64 bits, 4 alarmes et IRQ ; temps virtuel, mots alignés";
     std::sort(d.regions.begin(), d.regions.end(), [](const Region& a, const Region& b) { return a.begin < b.begin; });
     return d;
 }

@@ -169,6 +169,9 @@ Stop Debugger::stepImpl(unsigned core) {
     stop.kind = StopKind::Step; stop.core = core; stop.address = pc; stop.message = "Pas instruction";
     try {
         const StepResult result = execute(cpu, memory, core);
+        // One virtual microsecond per scheduler quantum. This is deliberately
+        // independent of the host clock and is not an ARM cycle timing claim.
+        memory.advanceTime(1);
         // Deterministic virtual quanta, NOT hardware CPU cycles. Both SysTicks
         // advance even while only one core is selected for manual stepping.
         memory.tick(0); memory.tick(1);
@@ -218,7 +221,7 @@ Stop Debugger::run(size_t budget) {
         }
         const auto result = stepImpl(core);
         if (result.kind == StopKind::Breakpoint || result.kind == StopKind::Watchpoint || result.kind == StopKind::Fault || result.kind == StopKind::Unsupported) return stop;
-        bool idle = true;
+        bool idle = !memory.hasScheduledPeripheralEvent();
         for (unsigned i = 0; i < 2; ++i) {
             const auto& c = cpus[i]; const auto& s = memory.system(i);
             if (!c.held && !c.lockup && (!c.sleeping || c.event || s.systickPending || (s.enabled & s.pending) || (s.systickCtrl & 1u))) idle = false;

@@ -74,12 +74,14 @@ La fenêtre démarre maximisée. Les panneaux essentiels sont disposés simultan
 
 Le menu **Vues → Rétablir la vue d'ensemble** (`Ctrl+Maj+0`) restaure cet agencement. Le futur panneau source C++ est masqué par défaut et accessible dans Vues.
 
+**Vues → Ouvrir la fenêtre des périphériques** (`Ctrl+P`) détache l'explorateur pour le placer à côté de l'assembleur ou sur un deuxième écran. Rechercher un bloc, un registre ou une adresse, puis sélectionner le périphérique : valeurs, adresses, modes d'accès et champs connus sont affichés ensemble. Les blocs sans modèle restent visibles avec l'indication « Non émulé ». Le catalogue des blocs couvre les deux puces ; la description de tous leurs registres reste à compléter.
+
 Panneaux déplaçables/redimensionnables :
 
 - Registres des **deux cœurs côte à côte**, MSP/PSP, CONTROL, PRIMASK, xPSR et flags NZCV/T/IPSR ; changements surlignés.
 - Assembleur, opcodes, symboles ELF, flèche à **PC (prochaine instruction)** ; double-clic pour basculer un breakpoint.
 - Mémoire hexadécimale/ASCII et pile brute du cœur sélectionné.
-- Cartographie avec couverture des régions, inspecteur des registres périphériques modélisés.
+- Cartographie avec couverture des régions, catalogue des périphériques et inspecteur des registres décrits, dont le timer RP2040 et ses quatre alarmes.
 - Expressions liées explicitement à un cœur, breakpoints, watchpoints lecture/écriture, console `print` et diagnostics.
 - Emplacement réservé à la correspondance C++ de la deuxième itération.
 
@@ -106,6 +108,8 @@ Les symboles donnent des **adresses**, pas des variables C++ typées : `print co
 include/picodbg/    API du moteur sans Qt
 src/core/chip.cpp   profils mémoire et registres inspectables
 src/core/memory.cpp bus SRAM/Flash, SIO et PPB partiels
+src/core/timer.cpp  timer RP2040 : compteur, alarmes, IRQ en temps virtuel
+src/core/peripherals.cpp catalogue des blocs et métadonnées des registres
 src/core/elf.cpp    chargeur ELF borné et symboles
 src/core/thumb.cpp  décodage commun exécution/désassemblage
 src/core/cpu.cpp    instructions, flags, pile, exceptions partielles
@@ -115,10 +119,10 @@ src/qt/            interface Qt Widgets
 tests/             suites de vérification du moteur
 scripts/           installation Qt et compilation/test de la GUI
 examples/          ELF reproductible et scénario à deux cœurs
-docs/              architecture et couverture
+docs/              architecture, couverture, références officielles et versions
 ```
 
-Tests : arithmétique/flags, décalages limites, mémoire, branchements, pile, SVC/HardFault, retours d'exception, FIFO/spinlocks, SysTick, ordonnancement, watchpoints, expressions et ELF invalides. Le parcours des 65 536 premiers demi-mots teste la **robustesse** du décodeur, pas la conformité de toutes les instructions.
+Tests : arithmétique/flags, décalages limites, mémoire, branchements, pile, SVC/HardFault, retours d'exception, FIFO/spinlocks, SysTick, timer/alarmes/IRQ/WFI, ordonnancement, watchpoints, expressions et ELF invalides. Le parcours des 65 536 premiers demi-mots teste la **robustesse** du décodeur, pas la conformité de toutes les instructions.
 
 ```sh
 cmake -S . -B build-sanitize -DPICODBG_GUI=OFF -DPICODBG_SANITIZERS=ON
@@ -130,12 +134,16 @@ Si LeakSanitizer ne fonctionne pas sous `ptrace`, préfixer la dernière command
 
 Validation v0.1.0 : moteur et interface **compilés avec Qt 5.15**, 10 tests CTest réussis, dont démarrage et interactions graphiques en mode `offscreen`. Une capture de la vue d'ensemble a été produite et inspectée. Qt6, la compilation croisée ARM et la comparaison sur silicium restent à valider. Voir [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+L'extension périphériques porte ce total à **11 tests CTest**, dont neuf suites moteur également exécutées sous ASan/UBSan. Le tag `v0.1.0` conserve la base précédente ; voir [les notes de version](docs/RELEASES.md).
+
 Quand Qt est présent, CTest ajoute un test de démarrage et un test d'interactions graphiques : visibilité simultanée des panneaux, pas, breakpoint, exécution, reset et restauration de l'agencement. Pour produire une capture lors de ce dernier test :
 
 ```sh
 QT_QPA_PLATFORM=offscreen ./build-gui/picodbg_gui_tests build-gui/overview.png
 ```
 
+Le test vérifie également l'explorateur, les valeurs du timer, le filtrage, le contexte cœur et le changement de profil. Il produit une seconde capture `overview.png.peripherals.png` de la fenêtre détachée.
+
 ## Références
 
-Cartographies officielles : [RP2040](https://github.com/raspberrypi/pico-sdk/blob/master/src/rp2040/hardware_regs/include/hardware/regs/addressmap.h), [RP2350](https://github.com/raspberrypi/pico-sdk/blob/master/src/rp2350/hardware_regs/include/hardware/regs/addressmap.h). Références de validation : [datasheet RP2040](https://datasheets.raspberrypi.com/rp2040/rp2040-datasheet.pdf), [datasheet RP2350](https://datasheets.raspberrypi.com/rp2350/rp2350-datasheet.pdf), [ARMv6-M](https://support.arm.com/documentation/ddi0419/c/?lang=en).
+Les [références officielles et leur provenance](docs/REFERENCES.md) regroupent datasheets, manuels ARM, cartographies et registres du SDK **2.2.0**, ainsi que les étapes de validation restantes. `python3 scripts/fetch-reference-docs.py` permet de constituer un cache local des PDF et en-têtes avec manifeste SHA-256, sur une machine ayant accès au réseau.

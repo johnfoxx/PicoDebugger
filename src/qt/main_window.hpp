@@ -14,6 +14,7 @@ class QPlainTextEdit;
 class QSpinBox;
 class QTableWidget;
 class QTimer;
+class PeripheralPanel;
 
 class MainWindow : public QMainWindow {
 public:
@@ -38,7 +39,7 @@ private:
     QTableWidget* memory_;
     QTableWidget* stack_;
     QTableWidget* mapping_;
-    QTableWidget* peripherals_;
+    PeripheralPanel* peripherals_;
     QTableWidget* watches_;
     QTableWidget* points_;
     QLineEdit* memoryAddress_;

@@ -1,12 +1,15 @@
 #include "main_window.hpp"
 #include <QAction>
 #include <QApplication>
+#include <QComboBox>
 #include <QDockWidget>
 #include <QElapsedTimer>
+#include <QLineEdit>
 #include <QPixmap>
 #include <QRegion>
 #include <QTableWidget>
 #include <QThread>
+#include <QTreeWidget>
 #include <functional>
 #include <iostream>
 #include <stdexcept>
@@ -83,8 +86,56 @@ int main(int argc, char** argv) {
         find<QAction>(window, "overviewAction")->trigger();
         QApplication::processEvents();
         require(regs->isVisible(), "Overview action did not restore CPU panel");
+        auto* devices = find<QTreeWidget>(window, "peripheralCatalog");
+        auto* peripheralRegisters = find<QTableWidget>(window, "peripheralsTable");
+        auto* filter = find<QLineEdit>(window, "peripheralFilter");
+        require(devices->topLevelItemCount() >= 35, "Peripheral inventory incomplete");
+        QTreeWidgetItem* timer = nullptr;
+        QTreeWidgetItem* uart = nullptr;
+        for (int i = 0; i < devices->topLevelItemCount(); ++i) {
+            auto* item = devices->topLevelItem(i);
+            if (item->text(0) == "TIMER") timer = item;
+            if (item->text(0) == "UART0") uart = item;
+        }
+        require(timer && uart, "Timer/UART missing from catalog");
+        devices->setCurrentItem(timer);
+        require(peripheralRegisters->rowCount() == 17, "Timer register catalog missing");
+        require(peripheralRegisters->item(10, 1)->text() == "0x00000000", "Timer live value missing");
+        step->trigger();
+        require(peripheralRegisters->item(10, 1)->text() == "0x00000001", "Timer view did not update");
+        filter->setText("UART0");
+        require(timer->isHidden() && !uart->isHidden(), "Peripheral filter mismatch");
+        devices->setCurrentItem(uart);
+        require(uart->text(1) == "Non émulé" && peripheralRegisters->rowCount() == 0, "Unsupported peripheral must not invent values");
+        filter->clear(); devices->setCurrentItem(timer);
+        find<QAction>(window, "peripheralWindowAction")->trigger();
+        QApplication::processEvents();
+        bool floating = false;
+        for (auto* panel : window.findChildren<QDockWidget*>()) if (panel->isAncestorOf(devices)) floating = panel->isFloating();
+        require(floating, "Dedicated peripheral window did not open");
+        if (argc == 2) {
+            for (auto* panel : window.findChildren<QDockWidget*>())
+                if (panel->isAncestorOf(devices)) require(panel->grab().save(QString::fromLocal8Bit(argv[1]) + ".peripherals.png"), "Cannot save peripheral screenshot");
+        }
+        find<QAction>(window, "overviewAction")->trigger(); QApplication::processEvents();
         if (argc == 2) require(window.grab().save(QString::fromLocal8Bit(argv[1])), "Cannot save GUI screenshot");
-        std::cout << "GUI checks passed: simultaneous panels, step, breakpoint, run, reset, layout restore\n";
+        // Profiles have different register maps. Rebuild the catalog and clear
+        // any values belonging to the previous session rather than reusing them.
+        find<QComboBox>(window, "chipSelector")->setCurrentIndex(1);
+        require(devices->topLevelItemCount() >= 60, "RP2350 catalog not rebuilt");
+        const auto timer1 = devices->findItems("TIMER1", Qt::MatchExactly, 0);
+        require(timer1.size() == 1, "RP2350 TIMER1 missing");
+        devices->setCurrentItem(timer1.front());
+        require(peripheralRegisters->rowCount() == 19, "RP2350 timer offsets not described");
+        require(peripheralRegisters->item(10, 1)->text() == "Pas d'image", "Old session value survived profile change");
+        window.loadDemo();
+        require(peripheralRegisters->item(10, 1)->text() == "Non émulé", "RP2350 timer must not reuse RP2040 values");
+        find<QComboBox>(window, "coreSelector")->setCurrentIndex(1);
+        const auto sio = devices->findItems("SIO", Qt::MatchExactly, 0);
+        require(sio.size() == 1, "SIO missing");
+        devices->setCurrentItem(sio.front());
+        require(peripheralRegisters->item(0, 1)->text() == "0x00000001", "SIO inspection did not select core1 context");
+        std::cout << "GUI checks passed: overview, step, breakpoint, run, reset, catalog, timer, filter, peripheral window, profiles, core context\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "GUI FAIL: " << error.what() << '\n';

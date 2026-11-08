@@ -23,6 +23,10 @@ Instruction : documenter encodage/contraintes, ajouter `Op` et décodeur, exécu
 
 Périphérique : plage/couverture dans `chip.cpp`, accès CPU/inspection séparés, puis tests des largeurs, alias, effets de lecture, IRQ et reset. Lorsque les modèles grossiront, extraire `Peripheral`, `Sio`, `SystemControl` dans leurs propres modules. La cartographie contient des fenêtres de décodage, parfois avec alias/réserves : elle n'autorise pas tous les accès d'une fenêtre.
 
+`timer.hpp/.cpp` est le premier module de comportement séparé : il reçoit des quanta virtuels, sans dépendance à Qt ni à l'horloge hôte. `Memory` décode ses accès et distribue ses lignes IRQ aux deux contextes système. `Debugger` avance le temps une seule fois par quantum, puis évalue les sources propres à chaque cœur. Les tests couvrent aussi le cas où tous les cœurs exécutables attendent une alarme.
+
+`peripherals.hpp/.cpp` décrit le catalogue matériel, les registres connus et leurs champs ; ces métadonnées sont séparées du comportement. `PeripheralPanel` en Qt lit uniquement `peek` : aucun rafraîchissement ne doit acquérir un spinlock, consommer une FIFO, acquitter une IRQ ou capturer la partie haute du timer. Il reconstruit son catalogue au changement de cible et conserve ses lignes lors des rafraîchissements ordinaires. Le panneau est un dock détachable, partagé avec la vue d'ensemble.
+
 ## Correspondance source C++
 
 `sourceHint(address)` fournit un symbole précédent + offset, pas une ligne C++. La GUI réserve une zone à côté de l'assembleur. La prochaine couche devra charger DWARF, gérer chemins de compilation et répertoires fournis par l'utilisateur, puis résoudre adresse → fichier/ligne/colonne.
@@ -34,6 +38,8 @@ Prévoir un `SourceResolver` indépendant de Qt. Le déroulage de pile devra uti
 Effectuée : GCC C++11, suites CTest, console batch, ELF synthétique reproductible, AddressSanitizer/UBSan avec détection des fuites désactivée à cause de `ptrace`. Le parcours exhaustif du décodeur teste sa robustesse, pas la sémantique de chaque encodage.
 
 Validation v0.1.0 complémentaire : compilation Qt 5.15, 10 tests CTest réussis dont `qt_smoke` et `qt_interactions`, capture offscreen inspectée. Non effectuée : Qt6, compilation croisée ARM, comparaison au silicium et conformité ARM.
+
+Extension périphériques : 11 tests CTest avec Qt5, dont la suite `peripherals` (latches, débordement, alarmes, alias, IRQ, WFI, inventaire). Le test GUI vérifie aussi les valeurs du timer, le filtrage, l'absence de valeurs inventées, la fenêtre détachée et le changement RP2040/RP2350. Les neuf suites du moteur sont exécutables sous AddressSanitizer/UBSan. Les captures de la vue d'ensemble et de la fenêtre périphériques sont inspectées séparément.
 
 Sur une machine équipée de Qt : construire la GUI, ouvrir l'exemple, vérifier F10/F5/Maj+F5, breakpoint par double-clic, watch `read32(counter)`, lancement cœur 1, reset/changement de profil, agencement sur petit écran. L'inspection doit préserver FIFO/spinlocks.
 

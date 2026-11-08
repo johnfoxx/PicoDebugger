@@ -43,6 +43,7 @@ uint32_t shifted(Cpu& cpu, uint32_t value, uint32_t amount, Op op) {
     }
 }
 void exceptionReturn(Cpu& cpu, Memory& memory, unsigned core, uint32_t token) {
+    const unsigned previousException = cpu.xpsr & 0x1ffu;
     if (token != 0xfffffff1u && token != 0xfffffff9u && token != 0xfffffffdu)
         throw Error(ErrorKind::BusFault, "EXC_RETURN invalide", token);
     if (!cpu.handlerMode()) throw Error(ErrorKind::BusFault, "EXC_RETURN hors handler", token);
@@ -60,6 +61,8 @@ void exceptionReturn(Cpu& cpu, Memory& memory, unsigned core, uint32_t token) {
     if (usePsp) cpu.psp = restoredSp; else cpu.msp = restoredSp;
     if (!cpu.handlerMode()) cpu.control = (cpu.control & ~2u) | (usePsp ? 2u : 0u);
     cpu.r[13] = usePsp ? cpu.psp : cpu.msp;
+    if (previousException >= 16 && previousException < 48)
+        memory.system(core).active &= ~(1u << (previousException - 16));
 }
 void branchExchange(Cpu& cpu, Memory& memory, unsigned core, uint32_t address) {
     if ((address & 0xfffffff0u) == 0xfffffff0u) { exceptionReturn(cpu, memory, core, address); return; }
@@ -122,6 +125,7 @@ bool enterException(Cpu& cpu, Memory& memory, unsigned core, unsigned number, ui
         cpu.r[13] = cpu.msp;
         cpu.r[14] = wasHandler ? 0xfffffff1u : wasPsp ? 0xfffffffdu : 0xfffffff9u;
         cpu.xpsr = (cpu.xpsr & ~0x1ffu) | number;
+        if (number >= 16 && number < 48) memory.system(core).active |= 1u << (number - 16);
         cpu.r[15] = vector & ~1u; cpu.sleeping = false;
         return true;
     } catch (const Error& e) {

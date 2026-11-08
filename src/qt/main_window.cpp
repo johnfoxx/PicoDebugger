@@ -1,4 +1,5 @@
 #include "main_window.hpp"
+#include "peripheral_panel.hpp"
 #include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
@@ -77,12 +78,12 @@ MainWindow::MainWindow() : debugger_(new Debugger), timer_(new QTimer(this)) {
     setCorner(Qt::BottomLeftCorner, Qt::LeftDockWidgetArea);
     setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
     setStyleSheet(
-        "QMainWindow,QDialog {background:#111923;color:#dce6f0;}"
+        "QMainWindow,QDialog,QDockWidget {background:#111923;color:#dce6f0;}"
         "QWidget {color:#dce6f0;}"
         "QMenuBar,QMenu,QToolBar,QStatusBar {background:#182331;}"
         "QMenu::item:selected {background:#28536b;}"
         "QDockWidget::title {background:#213044;padding:7px;font-weight:600;}"
-        "QTableWidget,QPlainTextEdit {background:#131e2b;alternate-background-color:#192635;selection-background-color:#28536b;border:1px solid #304052;}"
+        "QTableWidget,QTreeWidget,QPlainTextEdit {background:#131e2b;alternate-background-color:#192635;selection-background-color:#28536b;border:1px solid #304052;}"
         "QHeaderView::section {background:#213044;color:#a5bdd3;padding:5px;border:none;}"
         "QLineEdit,QComboBox,QSpinBox {background:#111923;color:#dce6f0;border:1px solid #40536a;border-radius:3px;padding:5px;}"
         "QComboBox QAbstractItemView {background:#213044;color:#dce6f0;selection-background-color:#365f7f;}"
@@ -120,6 +121,7 @@ void MainWindow::buildUi() {
     file->addSeparator(); connect(file->addAction("Quitter"), &QAction::triggered, this, &QWidget::close);
     toolbar->addAction(open); toolbar->addAction(demo); toolbar->addSeparator();
     chip_ = new QComboBox; chip_->addItems({"Pico / RP2040", "Pico 2 / RP2350 (expérimental)"});
+    chip_->setObjectName("chipSelector");
     toolbar->addWidget(chip_);
     connect(chip_, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this, [this](int index) {
         setRunning(false); debugger_.reset(new Debugger(index == 0 ? Chip::RP2040 : Chip::RP2350));
@@ -127,6 +129,7 @@ void MainWindow::buildUi() {
     });
     toolbar->addSeparator();
     core_ = new QComboBox; core_->addItems({"Contexte : cœur 0", "Contexte : cœur 1"}); toolbar->addWidget(core_);
+    core_->setObjectName("coreSelector");
     connect(core_, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this, [this](int index) { selected_ = static_cast<unsigned>(index); refresh(); });
     stepAction_ = debug->addAction("Pas instruction"); stepAction_->setShortcut(QKeySequence(Qt::Key_F10));
     stepAction_->setObjectName("stepAction");
@@ -147,7 +150,7 @@ void MainWindow::buildUi() {
     connect(help->addAction("Couverture et limites"), &QAction::triggered, this, [this] {
         QMessageBox::information(this, "Couverture de cette version",
             "Exécution locale sans carte, ARM/Thumb. Modèle fonctionnel partiel.\n\n"
-            "RP2040 : instructions Thumb usuelles, BL, MRS/MSR, pile, HardFault/SVC, SysTick simplifié, SRAM, Flash, FIFO et spinlocks.\n"
+            "RP2040 : instructions Thumb usuelles, BL, MRS/MSR, pile, HardFault/SVC, SysTick simplifié, timer/alarmes en temps virtuel, SRAM, Flash, FIFO et spinlocks.\n"
             "RP2350 : mémoire et sous-ensemble Thumb ; Cortex-M33 complet, TrustZone, FPU et exceptions non émulés.\n\n"
             "Pas de Boot ROM, SDK complet, DMA, PIO, USB, horloges ni timing cycle par cycle. Un accès hors couverture arrête l'exécution.\n"
             "Le cœur 1 se lance explicitement ; le protocole de lancement ROM n'est pas émulé.\n"
@@ -180,9 +183,12 @@ void MainWindow::buildUi() {
     for (unsigned c = 0; c < 2; ++c) {
         registers_[c] = table({"Registre", "Valeur"}); flags_[c] = new QLabel; flags_[c]->setWordWrap(true);
         registers_[c]->setObjectName(QString("registers%1Table").arg(c));
+        // Never squeeze a 32-bit register into an elided value: preserve the
+        // full hexadecimal width, with scrolling if the user narrows the dock.
+        registers_[c]->horizontalHeader()->setStretchLastSection(false);
         cpuPane->addWidget(vertical(flags_[c], registers_[c]));
     }
-    auto* cpuDock = dock(this, "CPU — deux cœurs", cpuPane, Qt::LeftDockWidgetArea); cpuDock->setMinimumWidth(420);
+    auto* cpuDock = dock(this, "CPU — deux cœurs", cpuPane, Qt::LeftDockWidgetArea); cpuDock->setMinimumWidth(490);
     memory_ = table({"Adresse", "00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F", "ASCII"});
     memory_->setObjectName("memoryTable");
     memoryAddress_ = new QLineEdit("0x20000000"); memoryLength_ = new QSpinBox; memoryLength_->setRange(16, 4096); memoryLength_->setSingleStep(16); memoryLength_->setValue(256);
@@ -197,10 +203,16 @@ void MainWindow::buildUi() {
     mapping_ = table({"Début", "Fin incluse", "Région", "Accès", "Couverture"});
     mapping_->setObjectName("mappingTable");
     auto* mappingDock = dock(this, "Cartographie / périphériques", mapping_, Qt::RightDockWidgetArea);
-    peripherals_ = table({"Registre", "Adresse", "Valeur", "Sémantique d'inspection"});
-    peripherals_->setObjectName("peripheralsTable");
-    auto* peripheralDock = dock(this, "État des périphériques modélisés", peripherals_, Qt::RightDockWidgetArea);
+    peripherals_ = new PeripheralPanel;
+    auto* peripheralDock = dock(this, "Périphériques — catalogue matériel", peripherals_, Qt::RightDockWidgetArea);
     splitDockWidget(mappingDock, peripheralDock, Qt::Vertical);
+    auto* peripheralWindow = views->addAction("Ouvrir la fenêtre des périphériques");
+    peripheralWindow->setObjectName("peripheralWindowAction");
+    peripheralWindow->setShortcut(QKeySequence("Ctrl+P"));
+    connect(peripheralWindow, &QAction::triggered, this, [peripheralDock] {
+        peripheralDock->setFloating(true); peripheralDock->resize(1120, 900);
+        peripheralDock->show(); peripheralDock->raise();
+    });
     connect(mapping_, &QTableWidget::cellDoubleClicked, this, [this, memoryDock](int line, int) {
         if (!mapping_->item(line, 0)) return;
         memoryAddress_->setText(mapping_->item(line, 0)->text()); refreshMemory(); memoryDock->raise();
@@ -238,9 +250,9 @@ void MainWindow::buildUi() {
     sourceDock->hide();
     stop_ = new QLabel; stop_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     statusBar()->addWidget(stop_, 1);
-    resizeDocks({cpuDock, mappingDock}, {420, 380}, Qt::Horizontal);
+    resizeDocks({cpuDock, mappingDock}, {510, 420}, Qt::Horizontal);
     resizeDocks({cpuDock, stackDock}, {580, 240}, Qt::Vertical);
-    resizeDocks({mappingDock, peripheralDock, watchesDock, pointsDock}, {260, 240, 160, 160}, Qt::Vertical);
+    resizeDocks({mappingDock, peripheralDock, watchesDock, pointsDock}, {180, 370, 145, 145}, Qt::Vertical);
     resizeDocks({memoryDock, consoleDock}, {230, 130}, Qt::Vertical);
     overviewState_ = saveState();
 }
@@ -383,14 +395,7 @@ void MainWindow::refreshWatches() {
     }
 }
 void MainWindow::refreshPeripherals() {
-    peripherals_->setRowCount(0);
-    if (!debugger_->loaded()) return;
-    for (const auto& reg : inspectableRegisters(debugger_->memory.description().chip)) {
-        const int r = peripherals_->rowCount(); peripherals_->setRowCount(r + 1);
-        cell(peripherals_, r, 0, q(reg.name)); cell(peripherals_, r, 1, hx(reg.address)); cell(peripherals_, r, 3, q(reg.note));
-        try { cell(peripherals_, r, 2, hx(debugger_->memory.peek(reg.address, 4, selected_))); }
-        catch (const Error& e) { cell(peripherals_, r, 2, "Indisponible", q(e.what())); }
-    }
+    peripherals_->updateTarget(*debugger_, selected_);
 }
 void MainWindow::refreshPoints() {
     points_->setRowCount(0);

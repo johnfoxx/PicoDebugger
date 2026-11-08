@@ -1,0 +1,30 @@
+#pragma once
+#include "picodbg/debugger.hpp"
+#include "picodbg/peripherals.hpp"
+#include <QWidget>
+
+class QLabel;
+class QLineEdit;
+class QTableWidget;
+class QTreeWidget;
+
+class PeripheralPanel : public QWidget {
+public:
+    explicit PeripheralPanel(QWidget* parent = nullptr);
+    void updateTarget(const picodbg::Debugger& debugger, unsigned core);
+private:
+    const picodbg::Debugger* debugger_ = nullptr;
+    picodbg::Chip chip_ = picodbg::Chip::RP2040;
+    unsigned core_ = 0;
+    int selected_ = -1;
+    std::vector<picodbg::PeripheralDescription> devices_;
+    QLineEdit* filter_;
+    QLabel* context_;
+    QLabel* detail_;
+    QTreeWidget* catalog_;
+    QTableWidget* registers_;
+    void rebuildCatalog();
+    void applyFilter();
+    void selectDevice();
+    void refreshValues();
+};

@@ -19,6 +19,7 @@ void Memory::clear() {
     std::fill(flash_.begin(), flash_.end(), 0xff);
     system_ = {}; locks_.fill(false); fifoErrors_.fill(0);
     fifo_[0].clear(); fifo_[1].clear(); gpioOut_ = gpioOe_ = 0;
+    timer_.reset();
 }
 void Memory::check(uint32_t address, unsigned size, unsigned core) const {
     if (core > 1 || (size != 1 && size != 2 && size != 4))
@@ -96,6 +97,8 @@ void Memory::load(uint32_t address, const std::vector<uint8_t>& bytes) {
     else throw Error(ErrorKind::InvalidImage, "Segment ELF hors Flash/SRAM du profil : " + hex(address), address);
 }
 uint32_t Memory::readDevice(uint32_t address, unsigned core, bool inspect) {
+    if (description_.chip == Chip::RP2040 && address >= 0x40054000 && address < 0x40058000)
+        return timer_.read(address - 0x40054000, inspect);
     auto& s = system_[core];
     switch (address) {
     case 0xd0000000: return core;
@@ -136,6 +139,12 @@ uint32_t Memory::readDevice(uint32_t address, unsigned core, bool inspect) {
         std::string(region ? "Registre non émulé : " + region->name : "Adresse non cartographiée") + " à " + hex(address), address);
 }
 void Memory::writeDevice(uint32_t address, uint32_t value, unsigned core) {
+    if (description_.chip == Chip::RP2040 && address >= 0x40054000 && address < 0x40058000) {
+        timer_.write(address - 0x40054000, value);
+        // Level lines can pend even without advancing the timer (e.g. INTF).
+        for (auto& s : system_) s.pending |= timer_.interrupts() & ~s.active;
+        return;
+    }
     auto& s = system_[core];
     if (address == 0xd0000050) { fifoErrors_[core] &= ~(value & 12u); return; }
     if (address == 0xd0000054) {
@@ -173,12 +182,21 @@ void Memory::writeDevice(uint32_t address, uint32_t value, unsigned core) {
 void Memory::tick(unsigned core) {
     auto& s = system_.at(core);
     if (description_.chip == Chip::RP2040 && (!fifo_[core].empty() || fifoErrors_[core]))
-        s.pending |= 1u << (15u + core); // RP2040 SIO_IRQ_PROC0/PROC1, level sensitive.
+        s.pending |= (1u << (15u + core)) & ~s.active;
+    if (description_.chip == Chip::RP2040) s.pending |= timer_.interrupts() & ~s.active;
     if (!(s.systickCtrl & 1u)) return;
     if (s.systickValue == 0) s.systickValue = s.systickLoad;
     else if (--s.systickValue == 0) {
         s.systickCountFlag = true;
         if (s.systickCtrl & 2u) s.systickPending = true;
     }
+}
+void Memory::advanceTime(uint64_t virtualMicroseconds) {
+    if (description_.chip != Chip::RP2040) return;
+    timer_.advance(virtualMicroseconds);
+    for (auto& s : system_) s.pending |= timer_.interrupts() & ~s.active;
+}
+bool Memory::hasScheduledPeripheralEvent() const {
+    return description_.chip == Chip::RP2040 && timer_.hasScheduledAlarm();
 }
 }
