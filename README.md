@@ -128,7 +128,7 @@ ctest --test-dir build-sanitize --output-on-failure
 
 Si LeakSanitizer ne fonctionne pas sous `ptrace`, préfixer la dernière commande par `ASAN_OPTIONS=detect_leaks=0` : AddressSanitizer/UBSan restent actifs, mais les fuites ne sont pas contrôlées.
 
-Dans l'environnement de création : moteur/console compilés et testés, mais **GUI Qt non compilée et non testée visuellement**, car les en-têtes/outils Qt sont absents. La chaîne croisée ARM est également absente. Aucun test comparatif sur silicium n'a été réalisé. Voir [ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Validation v0.1.0 : moteur et interface **compilés avec Qt 5.15**, 10 tests CTest réussis, dont démarrage et interactions graphiques en mode `offscreen`. Une capture de la vue d'ensemble a été produite et inspectée. Qt6, la compilation croisée ARM et la comparaison sur silicium restent à valider. Voir [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 Quand Qt est présent, CTest ajoute un test de démarrage et un test d'interactions graphiques : visibilité simultanée des panneaux, pas, breakpoint, exécution, reset et restauration de l'agencement. Pour produire une capture lors de ce dernier test :
 

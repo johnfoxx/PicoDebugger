@@ -33,8 +33,8 @@ Prévoir un `SourceResolver` indépendant de Qt. Le déroulage de pile devra uti
 
 Effectuée : GCC C++11, suites CTest, console batch, ELF synthétique reproductible, AddressSanitizer/UBSan avec détection des fuites désactivée à cause de `ptrace`. Le parcours exhaustif du décodeur teste sa robustesse, pas la sémantique de chaque encodage.
 
-Non effectuée : compilation/exécution Qt (paquets de développement absents), compilation croisée ARM (outil absent), comparaison au silicium et conformité ARM.
+Validation v0.1.0 complémentaire : compilation Qt 5.15, 10 tests CTest réussis dont `qt_smoke` et `qt_interactions`, capture offscreen inspectée. Non effectuée : Qt6, compilation croisée ARM, comparaison au silicium et conformité ARM.
 
 Sur une machine équipée de Qt : construire la GUI, ouvrir l'exemple, vérifier F10/F5/Maj+F5, breakpoint par double-clic, watch `read32(counter)`, lancement cœur 1, reset/changement de profil, agencement sur petit écran. L'inspection doit préserver FIFO/spinlocks.
 
-`scripts/install-qt-debian.sh` installe les dépendances puis appelle `scripts/build-gui.sh`. Celui-ci exige une cible graphique et exécute CTest ; un build CLI seul ne constitue jamais un succès de cette procédure. `picodbg_widgets` est partagé par l'application et `picodbg_gui_tests`, qui pilote les QAction et signaux des widgets sans accéder aux CPU privés. Ces tests graphiques restent à exécuter dans un environnement équipé de Qt.
+`scripts/install-qt-debian.sh` installe les dépendances puis appelle `scripts/build-gui.sh`. Celui-ci exige une cible graphique et exécute CTest ; un build CLI seul ne constitue jamais un succès de cette procédure. `picodbg_widgets` est partagé par l'application et `picodbg_gui_tests`, qui pilote les QAction et signaux des widgets sans accéder aux CPU privés.
