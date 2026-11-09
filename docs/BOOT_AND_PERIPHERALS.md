@@ -35,6 +35,16 @@ Les fenêtres UART0/UART1 comprennent la sortie TX (jusqu'aux derniers 64 Kio en
 
 ## Modèles ajoutés après v0.2.0
 
+### Inspection détaillée des registres
+
+Le catalogue décrit désormais **587 registres / 1 653 champs pour le RP2040** et **783 registres / 2 373 champs pour le RP2350**, alias DMA compris. Ces nombres mesurent la documentation intégrée, **pas la couverture d'émulation**. Les familles ajoutées sont ADC, I2C0/1, DMA (12/16 canaux et leurs alias) et PIO0/1/2 ; elles restent sans modèle d'exécution. Leurs adresses, accès et champs sont consultables, mais leur valeur reste « Non émulé ». La valeur de reset documentaire n'est jamais utilisée comme état courant.
+
+Dans le panneau **Périphériques**, double-cliquer sur un bloc ou utiliser **↗ Fenêtre** ouvre une fenêtre indépendante, déplaçable et redimensionnable, y compris sur un autre écran. Plusieurs fenêtres peuvent observer le même bloc ou des blocs différents ; leur contexte cœur est indépendant. Elles sont déjà détachées de l'agencement principal. Le catalogue complet reste détachable avec `Ctrl+P`.
+
+Dans chaque fenêtre, sélectionner un registre affiche ses champs : positions des bits, valeur numérique et signification. Exemples : `UARTFR.RXFE=1` signifie « FIFO RX vide : Oui », `UARTLCR_H.WLEN=3` signifie « 8 bits ». Les descriptions matérielles incluent parfois des modes non émulés ; la couverture du bloc et ses limites restent applicables. Les listes de valeurs symboliques sont accessibles dans les infobulles, même si la valeur actuelle est inconnue. Les bits absents d'une description ne sont pas automatiquement considérés comme réservés.
+
+Le bouton **Bits** replie ce détail ; un double-clic sur un registre le déplie. Le filtre de registres accepte un nom, une adresse ou un champ, par exemple `RXFE`, `CH15` ou `0x40070018`. Les changements sont surlignés. Les détails réutilisent la valeur déjà inspectée, sans lecture MMIO supplémentaire. Aucun champ n'est éditable dans cette version.
+
 | Bloc | Couverture fonctionnelle | Limites principales |
 |---|---|---|
 | TIMER0/TIMER1 RP2350 | Compteurs indépendants, alarmes, IRQ0..7, PAUSE, LOCKED, SOURCE, alias RW | Tick et clk_sys virtuels ; pas de bloc TICKS/arbre d'horloge |
@@ -54,7 +64,21 @@ SPI, PWM et UART sont maintenant dans des modules séparés du routage `Peripher
 
 Le message `Wayland does not support QWindow::requestActivate()` est émis par le backend Wayland de Qt5 lorsqu'une activation est demandée. Qt5 appelle notamment `activateWindow()` à la fin d'un glisser-déposer de dock flottant. Sources : [backend QtWayland 5.15](https://github.com/qt/qtwayland/blob/5.15/src/client/qwaylandwindow.cpp), [QDockWidget Qt 5.15](https://github.com/qt/qtbase/blob/5.15/src/widgets/widgets/qdockwidget.cpp).
 
-Le projet ouvre les fenêtres d'inspection sans demander l'activation sous Wayland et évite `raise()`. Sous Qt5/Wayland, le détachement d'un dock par glisser-déposer est désactivé pour éviter l'appel interne de Qt ; `Ctrl+P` et les petites fenêtres restent accessibles. Les avertissements Qt ne sont pas filtrés. Le compositeur décide du focus et du placement. La validation graphique de cette session est faite en `offscreen`, **pas sous un compositeur Wayland natif** ; des boîtes de dialogue natives peuvent encore dépendre du comportement de Qt/compositeur.
+La première correction ne couvrait pas les listes déroulantes. Le cas de sélection de puce a été reproduit en traçant les appels Qt : `QComboBox::hidePopup()` → fermeture du popup → rétablissement du focus → `QWindow::requestActivate()`. Le nouveau `ChoiceBox` conserve le popup natif et diffère le retour du focus clavier jusqu'à ce que la fenêtre propriétaire ait réellement retrouvé le focus du compositeur. Les sélecteurs de puce, de cœur et les dialogues utilisent ce composant.
+
+Le projet ouvre aussi les fenêtres d'inspection sans demander l'activation sous Wayland et évite `raise()`. Sous Qt5/Wayland, le détachement d'un dock par glisser-déposer reste désactivé pour éviter un autre appel interne de Qt ; `Ctrl+P` et les petites fenêtres restent accessibles. Les avertissements Qt ne sont pas filtrés. Le test Linux/Qt5 `qt_popup_activation` intercepte les appels à `QWindow::requestActivate()` uniquement dans son exécutable, les transmet à Qt et vérifie l'absence de demande lors des choix souris/clavier, de l'annulation et du retour différé du focus. Cette validation reste **offscreen**, sans accès au compositeur Wayland depuis l'environnement de développement.
+
+Le second avertissement, `QSocketNotifier: Can only be used with threads started with QThread`, a été identifié grâce à la trace fournie sur la machine utilisateur : le plugin **IBus** de Qt5 crée un `QFileSystemWatcher` dans le constructeur de l'intégration Wayland, avant la création du dispatcher d'événements. Ce chemin est visible dans les [sources QtWayland 5.15](https://github.com/qt/qtwayland/blob/5.15/src/client/qwaylandintegration.cpp).
+
+Pour ce cas précis (Qt5, session/plateforme Wayland, `QT_IM_MODULE=ibus`), le démarrage retire cette sélection **dans le processus du débogueur uniquement**, afin que Qt choisisse son contexte de saisie Wayland natif et son repli `compose`. Le clavier et la composition disponibles dépendent alors du compositeur ; les fonctionnalités propres au plugin IBus ne sont plus garanties. `--qt-system-input` conserve la configuration IBus d'origine, avec son avertissement éventuel. Les autres méthodes de saisie, X11 explicitement choisi et Qt6 conservent leur configuration. Aucun réglage de session ni paquet système n'est modifié.
+
+Pour identifier un autre avertissement, le diagnostic s'installe avant `QApplication` et ajoute une pile d'appel aux messages ciblés sous Linux/glibc :
+
+```sh
+./build-gui/pico-debugger --qt-diagnostics
+# Comparaison avec le plugin de saisie système :
+./build-gui/pico-debugger --qt-diagnostics --qt-system-input
+```
 
 Qt5 suffit pour utiliser cette version. CMake sait sélectionner Qt6 si son SDK est installé, sans changer le moteur C++11 ; l'interface Qt6 utilise C++17. Sélection explicite, dans un dossier de build distinct :
 

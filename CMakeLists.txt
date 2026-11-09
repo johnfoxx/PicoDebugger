@@ -13,7 +13,10 @@ add_library(picodbg_core
     src/core/chip.cpp src/core/memory.cpp src/core/elf.cpp
     src/core/thumb.cpp src/core/cpu.cpp src/core/debugger.cpp
     src/core/timer.cpp src/core/peripherals.cpp src/core/peripheral_bus.cpp
-    src/core/serial.cpp src/core/pwm.cpp)
+    src/core/serial.cpp src/core/pwm.cpp
+    src/core/registers/catalog_details.cpp src/core/registers/adc.cpp
+    src/core/registers/i2c.cpp src/core/registers/dma.cpp src/core/registers/pio.cpp
+    src/core/registers/serial_fields.cpp)
 target_include_directories(picodbg_core PUBLIC include)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(picodbg_core PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
@@ -38,13 +41,14 @@ if(PICODBG_GUI)
     endif()
     if(QT_FOUND)
         find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
-        add_library(picodbg_widgets src/qt/main_window.cpp src/qt/peripheral_panel.cpp)
+        add_library(picodbg_widgets src/qt/main_window.cpp src/qt/peripheral_panel.cpp src/qt/choice_box.cpp
+            src/qt/register_inspector.cpp)
         target_include_directories(picodbg_widgets PUBLIC src/qt)
         target_link_libraries(picodbg_widgets PUBLIC picodbg_core Qt${QT_VERSION_MAJOR}::Widgets)
         if(QT_VERSION_MAJOR EQUAL 6)
             target_compile_features(picodbg_widgets PUBLIC cxx_std_17)
         endif()
-        add_executable(pico-debugger src/qt/main.cpp)
+        add_executable(pico-debugger src/qt/main.cpp src/qt/qt_diagnostics.cpp)
         target_compile_definitions(pico-debugger PRIVATE PICODBG_VERSION="${PROJECT_VERSION}")
         target_link_libraries(pico-debugger PRIVATE picodbg_widgets)
     else()
@@ -81,6 +85,12 @@ if(BUILD_TESTING)
         target_link_libraries(picodbg_gui_tests PRIVATE picodbg_widgets)
         add_test(NAME qt_interactions COMMAND picodbg_gui_tests)
         set_tests_properties(qt_interactions PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 15)
+        if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND QT_VERSION_MAJOR EQUAL 5)
+            add_executable(picodbg_popup_tests tests/test_popup_activation.cpp)
+            target_link_libraries(picodbg_popup_tests PRIVATE picodbg_widgets ${CMAKE_DL_LIBS})
+            add_test(NAME qt_popup_activation COMMAND picodbg_popup_tests)
+            set_tests_properties(qt_popup_activation PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 10)
+        endif()
     endif()
 endif()
 install(TARGETS pico-debugger-cli RUNTIME DESTINATION bin)

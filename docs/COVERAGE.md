@@ -2,6 +2,8 @@
 
 L'objectif initial est un débogueur complet, fiable sur le matériel réel. **Cette première implémentation ne satisfait pas encore cet objectif de fidélité complète.** La présence d'un périphérique dans la cartographie n'implique pas son émulation.
 
+Le profil Pico 2 réutilise actuellement le moteur Thumb du RP2040 avec quelques extensions (MOVW/MOVT, CBZ/CBNZ). Ce n'est pas un moteur ARMv8-M complet. Les ajouts de timers, UART, SPI, PWM et de descriptions de registres ne complètent ni Thumb-2 ni la gestion des exceptions M33 : une IRQ visible en attente ne signifie pas que son handler peut s'exécuter. Les mentions « partiel » et « expérimental » sont donc conservées, et le dialogue **Aide → Couverture et limites** explicite ces obstacles.
+
 | Élément | RP2040 | RP2350 ARM |
 |---|---|---|
 | Deux contextes CPU/registres/piles | Oui | Oui, CPU partiel |
@@ -61,7 +63,7 @@ Les quatre lignes IRQ alimentent les deux contextes NVIC. Un niveau maintenu ne 
 
 La source watchdog/horloges n'est **pas** émulée : le timer avance sans initialisation du tick matériel. DBGPAUSE accepte les bits documentés et le module peut recevoir un masque de cœurs arrêtés, mais l'ordonnanceur n'émule pas les signaux de debug matériel. La pause hôte fige tout le temps virtuel. Les accès MMIO étroits, alias W1C, délais APB et comportements réservés restent hors couverture. Les tests sont fonctionnels ; pas de comparaison sur silicium effectuée.
 
-Le panneau **Périphériques** recense les blocs RP2040 et RP2350, y compris ceux sans modèle. Filtrage par nom, registre ou adresse ; fenêtre détachable avec `Ctrl+P`. Double-cliquer sur un bloc ouvre une petite fenêtre indépendante, avec son propre contexte cœur. Les tableaux montrent adresses, valeurs, accès et champs connus. Les modèles ajoutés pour TIMER0/1, UART/SPI/PWM, RESETS, SIO/PPB et scratch WATCHDOG exposent leur état réel dans le moteur ; les blocs absents restent signalés. Aucun import exhaustif des registres/SVD n'est encore livré.
+Le panneau **Périphériques** recense les blocs RP2040 et RP2350, y compris ceux sans modèle. Filtrage par nom, registre, champ ou adresse ; fenêtre détachable avec `Ctrl+P`. Double-cliquer sur un bloc ouvre une petite fenêtre indépendante, avec son propre contexte cœur. Les tableaux montrent adresses, valeurs, accès et champs connus. Un inspecteur dédié décode les valeurs et leur signification. ADC, I2C, DMA et PIO sont maintenant décrits sans être émulés ; les modèles TIMER0/1, UART/SPI/PWM, RESETS, SIO/PPB et scratch WATCHDOG exposent leur état disponible. Le catalogue contient 587/783 registres et 1 653/2 373 champs (RP2040/RP2350, alias compris), sans prétendre être exhaustif. USB, horloges et plusieurs autres blocs ont encore une description de registre absente ou incomplète ; aucun import SVD n'est livré.
 
 Les particularités RP2350, la couverture exacte de chaque nouveau modèle, le démarrage ELF direct, les fenêtres UART et la correction Wayland sont détaillés dans [BOOT_AND_PERIPHERALS.md](BOOT_AND_PERIPHERALS.md). Le CPU M33 reste incomplet : rendre une IRQ visible dans NVIC ne rend pas son handler exécutable.
 

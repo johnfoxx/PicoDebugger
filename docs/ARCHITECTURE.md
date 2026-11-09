@@ -33,6 +33,12 @@ Les petites fenêtres possèdent des `PeripheralPanel` fixés à un nom et un s�
 
 `window_policy.hpp` centralise l'affichage sans demande d'activation Wayland. La restriction du détachement par glisser-déposer concerne Qt5/Wayland et évite un appel interne à Qt ; elle ne masque aucun avertissement.
 
+`ChoiceBox` conserve le comportement de `QComboBox` et diffère la restitution du focus jusqu'au retour effectif du focus à sa fenêtre propriétaire. `qt_input_policy.hpp` traite le démarrage prématuré du plugin IBus sous Qt5/Wayland avant la création de `QApplication`, avec une option de désactivation du contournement. `qt_diagnostics` est un outil optionnel de trace des avertissements, installé avant les plugins Qt ; il ne filtre aucun message.
+
+Les descriptions complémentaires sont réparties par famille dans `src/core/registers/` (ADC, I2C, DMA, PIO, série). Les champs contiennent position, largeur, description et valeurs symboliques ; le moteur C++11 les décode indépendamment de Qt. Ajouter une description ne change jamais la couverture du modèle ni le comportement du bus. Les tests vérifient adresses uniques, champs sans chevauchement et différences RP2040/RP2350.
+
+`RegisterInspector` est une vue sans accès au bus. `PeripheralPanel` lui transmet la valeur brute du même snapshot que le tableau, ou un état indisponible. Ne jamais remplacer un état inconnu par une valeur de reset. Le filtre agit sur les lignes de registres ; les fenêtres indépendantes conservent leur filtre, leur sélection et leur contexte.
+
 ## Correspondance source C++
 
 `sourceHint(address)` fournit un symbole précédent + offset, pas une ligne C++. La GUI réserve une zone à côté de l'assembleur. La prochaine couche devra charger DWARF, gérer chemins de compilation et répertoires fournis par l'utilisateur, puis résoudre adresse → fichier/ligne/colonne.

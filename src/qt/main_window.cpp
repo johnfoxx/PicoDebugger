@@ -1,6 +1,7 @@
 #include "main_window.hpp"
 #include "peripheral_panel.hpp"
 #include "window_policy.hpp"
+#include "choice_box.hpp"
 #include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
@@ -127,7 +128,7 @@ void MainWindow::buildUi() {
     auto* demo = file->addAction("Exemple intégré"); connect(demo, &QAction::triggered, this, [this] { loadDemo(); });
     file->addSeparator(); connect(file->addAction("Quitter"), &QAction::triggered, this, &QWidget::close);
     toolbar->addAction(open); toolbar->addAction(demo); toolbar->addSeparator();
-    chip_ = new QComboBox; chip_->addItems({"Pico / RP2040", "Pico 2 / RP2350 (expérimental)"});
+    chip_ = new ChoiceBox; chip_->addItems({"Pico / RP2040", "Pico 2 / RP2350 (expérimental)"});
     chip_->setObjectName("chipSelector");
     toolbar->addWidget(chip_);
     connect(chip_, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this, [this](int index) {
@@ -135,7 +136,7 @@ void MainWindow::buildUi() {
         previousValid_ = false; fillMapping(); refresh(); log("Profil changé : charger un ELF pour ce profil.");
     });
     toolbar->addSeparator();
-    core_ = new QComboBox; core_->addItems({"Contexte : cœur 0", "Contexte : cœur 1"}); toolbar->addWidget(core_);
+    core_ = new ChoiceBox; core_->addItems({"Contexte : cœur 0", "Contexte : cœur 1"}); toolbar->addWidget(core_);
     core_->setObjectName("coreSelector");
     connect(core_, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this, [this](int index) { selected_ = static_cast<unsigned>(index); refresh(); });
     stepAction_ = debug->addAction("Pas instruction"); stepAction_->setShortcut(QKeySequence(Qt::Key_F10));
@@ -158,7 +159,8 @@ void MainWindow::buildUi() {
         QMessageBox::information(this, "Couverture de cette version",
             "Exécution locale sans carte, ARM/Thumb. Modèle fonctionnel partiel.\n\n"
             "RP2040 : instructions Thumb usuelles, BL, MRS/MSR, pile, HardFault/SVC, SysTick simplifié, timer/alarmes en temps virtuel, SRAM, Flash, FIFO et spinlocks.\n"
-            "RP2350 : mémoire et sous-ensemble Thumb ; Cortex-M33 complet, TrustZone, FPU et exceptions non émulés.\n"
+            "RP2350 / Cortex-M33 : moteur Thumb commun au RP2040, plus MOVW/MOVT et CBZ/CBNZ. Thumb-2 général et IT, division, DSP, FPU, accès exclusifs, MPU et TrustZone absents.\n"
+            "Les registres NVIC/SysTick RP2350 sont consultables, mais toute entrée d'exception/IRQ M33 arrête le moteur : les handlers ne sont pas exécutables.\n"
             "Périphériques partiels des deux profils : timers, UART, SPI loopback, PWM, latches GPIO, resets, NVIC/SysTick et scratch watchdog.\n\n"
             "Pas de Boot ROM, SDK complet, DMA, PIO, USB, horloges ni timing cycle par cycle. Un accès hors couverture arrête l'exécution.\n"
             "Le cœur 1 se lance explicitement ; le protocole de lancement ROM n'est pas émulé.\n"
@@ -428,9 +430,9 @@ void MainWindow::openPeripheral(const QString& name) {
     window->setObjectName("deviceWindow_" + name);
     window->setAttribute(Qt::WA_DeleteOnClose); prepareInspectionWindow(window);
     window->setWindowTitle(name + " — " + chip_->currentText());
-    window->resize(780, name.startsWith("UART") ? 650 : 470);
+    window->resize(880, name.startsWith("UART") ? 790 : 650);
     auto* layout = new QVBoxLayout(window);
-    auto* context = new QComboBox; context->setObjectName("inspectionCore");
+    auto* context = new ChoiceBox; context->setObjectName("inspectionCore");
     context->addItems({"Contexte : cœur 0", "Contexte : cœur 1"}); context->setCurrentIndex(static_cast<int>(selected_));
     layout->addWidget(context);
     auto* panel = new PeripheralPanel(window, name); layout->addWidget(panel, 1);
@@ -481,7 +483,7 @@ void MainWindow::addMemoryWatch() {
     setRunning(false);
     QDialog dialog(this); dialog.setWindowTitle("Watchpoint mémoire"); QFormLayout layout(&dialog);
     QLineEdit address("0x20000000"); QSpinBox length; length.setRange(1, 65536); length.setValue(4);
-    QComboBox mode; mode.addItems({"Écriture", "Lecture", "Lecture et écriture"}); QPushButton add("Ajouter");
+    ChoiceBox mode; mode.addItems({"Écriture", "Lecture", "Lecture et écriture"}); QPushButton add("Ajouter");
     layout.addRow("Adresse / symbole", &address); layout.addRow("Octets", &length); layout.addRow("Accès", &mode); layout.addRow(&add);
     connect(&add, &QPushButton::clicked, &dialog, &QDialog::accept);
     if (dialog.exec() != QDialog::Accepted) return;
@@ -496,7 +498,7 @@ void MainWindow::addExpression() {
 void MainWindow::launchCore() {
     setRunning(false);
     QDialog dialog(this); dialog.setWindowTitle("Démarrage explicite — sans Boot ROM"); QFormLayout layout(&dialog);
-    QComboBox core; core.addItems({"Cœur 0", "Cœur 1"}); core.setCurrentIndex(1);
+    ChoiceBox core; core.addItems({"Cœur 0", "Cœur 1"}); core.setCurrentIndex(1);
     QLineEdit entry("core1_entry"), sp("0x20042000"); QPushButton launch("Démarrer à l'arrêt");
     layout.addRow("Cœur", &core); layout.addRow("Entrée Thumb (bit 0 = 1)", &entry); layout.addRow("SP initial", &sp); layout.addRow(&launch);
     connect(&launch, &QPushButton::clicked, &dialog, &QDialog::accept);

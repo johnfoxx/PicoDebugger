@@ -1,12 +1,17 @@
 #include "main_window.hpp"
 #include "window_policy.hpp"
+#include "qt_diagnostics.hpp"
+#include "qt_input_policy.hpp"
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QStyleFactory>
 #include <QTimer>
 
 int main(int argc, char** argv) {
+    const bool diagnostics = installQtDiagnostics(argc, argv);
+    prepareQtInputMethod(argc, argv);
     QApplication app(argc, argv);
+    if (diagnostics) reportQtEnvironment();
     QApplication::setApplicationName("PicoDebugger");
     QApplication::setOrganizationName("PicoDebugger");
     QApplication::setApplicationVersion(PICODBG_VERSION);
@@ -17,6 +22,8 @@ int main(int argc, char** argv) {
     parser.addOption({"demo", "Ouvrir l'exemple intégré à l'arrêt"});
     parser.addOption({"chip", "Profil matériel : rp2040 ou rp2350", "chip", "rp2040"});
     parser.addOption({"smoke-test", "Fermer automatiquement après initialisation (validation de la GUI)"});
+    parser.addOption({"qt-diagnostics", "Tracer les avertissements Qt de focus et de QSocketNotifier (y compris au démarrage)"});
+    parser.addOption({"qt-system-input", "Conserver QT_IM_MODULE sous Qt5/Wayland, y compris IBus (désactive le contournement de démarrage)"});
     parser.addPositionalArgument("elf", "Exécutable ELF32 ARM", "[elf]");
     parser.process(app);
     if (parser.value("chip") != "rp2040" && parser.value("chip") != "rp2350") parser.showHelp(1);

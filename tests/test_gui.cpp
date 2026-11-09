@@ -1,4 +1,5 @@
 #include "main_window.hpp"
+#include <QAbstractItemView>
 #include <QAction>
 #include <QApplication>
 #include <QComboBox>
@@ -6,6 +7,7 @@
 #include <QDialog>
 #include <QElapsedTimer>
 #include <QLineEdit>
+#include <QKeyEvent>
 #include <QPixmap>
 #include <QPushButton>
 #include <QPointer>
@@ -58,7 +60,8 @@ int main(int argc, char** argv) {
                                  "stackTable", "mappingTable", "peripheralsTable", "watchesTable", "pointsTable"}) {
             auto* view = find<QTableWidget>(window, name);
             require(view->isVisible() && !view->visibleRegion().isEmpty(), "An essential panel is hidden");
-            require(view->viewport()->width() >= 40 && view->viewport()->height() >= 30, "Panel viewport collapsed");
+            if (view->viewport()->width() < 40 || view->viewport()->height() < 30)
+                throw std::runtime_error(std::string("Panel viewport collapsed: ") + name);
         }
         auto* regs = find<QTableWidget>(window, "registers0Table");
         auto* assembly = find<QTableWidget>(window, "assemblyTable");
@@ -115,11 +118,28 @@ int main(int argc, char** argv) {
         find<QPushButton>(window, "openDeviceWindowButton")->click();
         QPointer<QDialog> uartWindow = find<QDialog>(window, "deviceWindow_UART0");
         require(uartWindow->isVisible() && uartWindow->findChild<QPlainTextEdit*>("uartOutput"), "UART mini window/output missing");
+        auto* uartRegisters = uartWindow->findChild<QTableWidget*>("peripheralsTable");
+        uartRegisters->setCurrentCell(2, 0); // UARTFR at reset: RXFE=1, TXFE=1.
+        auto* uartFields = uartWindow->findChild<QTableWidget*>("registerFieldsTable");
+        require(uartFields && uartFields->rowCount() == 5 && uartFields->item(1, 2)->text() == "1", "UART bit values not decoded");
+        require(uartFields->item(1, 3)->text().contains("FIFO RX vide : Oui"), "UART bit meaning missing");
         uartWindow->findChild<QLineEdit*>("uartInput")->setText("R");
         uartWindow->findChild<QPushButton*>("uartSend")->click(); // Disabled receiver: report zero accepted bytes.
         const auto i2c = devices->findItems("I2C0", Qt::MatchExactly, 0);
         require(i2c.size() == 1, "I2C inventory missing"); devices->setCurrentItem(i2c.front());
-        require(peripheralRegisters->rowCount() == 0 && i2c.front()->text(1) == "Non émulé", "Unmodelled I2C must remain explicit");
+        require(peripheralRegisters->rowCount() >= 30 && i2c.front()->text(1) == "Non émulé", "I2C descriptions must not claim emulation");
+        require(peripheralRegisters->item(0, 1)->text() == "Non émulé", "I2C description must not fabricate a reset value");
+        auto* regFilter = find<QLineEdit>(window, "registerFilter");
+        regFilter->setText("IC_STATUS");
+        require(peripheralRegisters->isRowHidden(0), "Register filter did not hide unrelated rows");
+        require(peripheralRegisters->item(peripheralRegisters->currentRow(), 0)->text() == "IC_STATUS", "Register filter did not select matching register");
+        auto* i2cFields = find<QTableWidget>(window, "registerFieldsTable");
+        require(i2cFields->rowCount() == 7 && i2cFields->item(0, 2)->text() == "—", "Unknown register bits must remain unavailable");
+        regFilter->setText("no_such_register");
+        require(i2cFields->rowCount() == 0, "Empty filter result must clear bit details");
+        regFilter->setText("IC_STATUS");
+        require(i2cFields->rowCount() == 7, "Restoring a filter must restore bit details");
+        regFilter->clear();
         filter->clear(); devices->setCurrentItem(timer);
         find<QPushButton>(window, "openDeviceWindowButton")->click();
         QPointer<QDialog> timerWindow = find<QDialog>(window, "deviceWindow_TIMER");
@@ -141,7 +161,17 @@ int main(int argc, char** argv) {
         if (argc == 2) require(window.grab().save(QString::fromLocal8Bit(argv[1])), "Cannot save GUI screenshot");
         // Profiles have different register maps. Rebuild the catalog and clear
         // any values belonging to the previous session rather than reusing them.
-        find<QComboBox>(window, "chipSelector")->setCurrentIndex(1);
+        // Reproduce selection through the popup: setCurrentIndex alone never
+        // exercised the Qt5/Wayland activation regression reported by users.
+        auto* chipSelector = find<QComboBox>(window, "chipSelector");
+        chipSelector->showPopup();
+        auto* choiceView = chipSelector->view();
+        require(choiceView->isVisible(), "Chip popup not visible");
+        QKeyEvent nextChip(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+        QKeyEvent chooseChip(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+        QApplication::sendEvent(choiceView, &nextChip);
+        QApplication::sendEvent(choiceView, &chooseChip);
+        require(chipSelector->currentIndex() == 1 && !choiceView->isVisible(), "Chip selection through popup failed");
         QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
         require(uartWindow.isNull(), "Profile change must close windows from the old target");
         require(devices->topLevelItemCount() >= 60, "RP2350 catalog not rebuilt");

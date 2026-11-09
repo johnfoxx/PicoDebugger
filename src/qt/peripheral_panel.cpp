@@ -1,6 +1,9 @@
 #include "peripheral_panel.hpp"
+#include "register_inspector.hpp"
 #include <QFontDatabase>
 #include <QHeaderView>
+#include <QHBoxLayout>
+#include <QItemSelectionModel>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
@@ -39,11 +42,32 @@ PeripheralPanel::PeripheralPanel(QWidget* parent, const QString& pinnedDevice) :
     registers_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
     registers_->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
     registers_->horizontalHeader()->setStretchLastSection(false);
+    registerFilter_ = new QLineEdit; registerFilter_->setObjectName("registerFilter");
+    registerFilter_->setPlaceholderText("Filtrer les registres : nom, adresse ou champ…");
+    auto* registerPane = new QWidget; auto* registerLayout = new QVBoxLayout(registerPane);
+    registerLayout->setContentsMargins(0, 0, 0, 0);
+    auto* registerTools = new QHBoxLayout;
+    registerTools->addWidget(registerFilter_, 1);
+    registerLayout->addLayout(registerTools); registerLayout->addWidget(registers_, 1);
+    inspector_ = new RegisterInspector;
     detail_ = new QLabel; detail_->setWordWrap(true); detail_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    auto* split = new QSplitter(Qt::Vertical); split->addWidget(catalog_); split->addWidget(registers_);
-    split->setSizes({120, 310});
-    auto* open = new QPushButton("Ouvrir dans une petite fenêtre"); open->setObjectName("openDeviceWindowButton");
-    layout->addWidget(filter_); layout->addWidget(open); layout->addWidget(context_); layout->addWidget(split, 1); layout->addWidget(detail_);
+    // The overview's narrow dock needs room for live values. Full prose stays
+    // in independent windows; the overview exposes the same text as a tooltip.
+    detail_->setVisible(!pinnedDevice_.isEmpty());
+    auto* split = new QSplitter(Qt::Vertical); split->addWidget(catalog_); split->addWidget(registerPane); split->addWidget(inspector_);
+    split->setSizes({100, 260, 220});
+    auto* open = new QPushButton("↗ Fenêtre"); open->setObjectName("openDeviceWindowButton");
+    open->setToolTip("Ouvrir le périphérique dans une fenêtre indépendante, déplaçable sur un autre écran");
+    auto* bits = new QPushButton("Bits"); bits->setObjectName("registerDetailsButton"); bits->setCheckable(true);
+    bits->setToolTip("Afficher les champs et la signification des bits du registre sélectionné");
+    registerTools->addWidget(bits);
+    bits->setChecked(!pinnedDevice_.isEmpty()); inspector_->setVisible(bits->isChecked());
+    auto* tools = new QHBoxLayout; tools->addWidget(filter_, 1); tools->addWidget(open);
+    layout->addLayout(tools); layout->addWidget(context_); layout->addWidget(split, 1); layout->addWidget(detail_);
+    connect(bits, &QPushButton::toggled, inspector_, &QWidget::setVisible);
+    connect(registerFilter_, &QLineEdit::textChanged, this, [this] { filterRegisters(); });
+    connect(registers_, &QTableWidget::itemSelectionChanged, this, [this] { refreshRegisterDetails(); });
+    connect(registers_, &QTableWidget::cellDoubleClicked, this, [bits](int, int) { bits->setChecked(true); });
     connect(open, &QPushButton::clicked, this, [this] { if (openDevice && selected_ >= 0) openDevice(selectedDevice()); });
     connect(catalog_, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem*, int) { if (openDevice && selected_ >= 0) openDevice(selectedDevice()); });
     if (!pinnedDevice_.isEmpty()) { filter_->hide(); catalog_->hide(); open->hide(); }
@@ -82,18 +106,23 @@ void PeripheralPanel::applyFilter() {
         auto* item = catalog_->topLevelItem(i);
         const auto& device = devices_.at(static_cast<size_t>(item->data(0, Qt::UserRole).toInt()));
         QString searchable = q(device.name + " " + device.coverage + " " + hex(device.base));
-        for (const auto& reg : device.registers) searchable += " " + q(reg.name + " " + hex(reg.address));
+        for (const auto& reg : device.registers) {
+            searchable += " " + q(reg.name + " " + hex(reg.address));
+            for (const auto& field : reg.fields) searchable += " " + q(field.name);
+        }
         item->setHidden(!searchable.contains(needle, Qt::CaseInsensitive));
     }
 }
 void PeripheralPanel::selectDevice() {
     auto* item = catalog_->currentItem();
     selected_ = item ? item->data(0, Qt::UserRole).toInt() : -1;
+    inspector_->clear();
     registers_->setRowCount(0);
     if (selected_ < 0) { detail_->clear(); return; }
     const auto& device = devices_.at(static_cast<size_t>(selected_));
     detail_->setText(q(device.name + " @ " + hex(device.base) + " — " + device.note) +
         (device.registers.empty() ? "\nRegistres non décrits dans cette version ; aucune valeur n'est inventée." : "\nLecture d'inspection sans effet de bord."));
+    context_->setToolTip(detail_->text());
     registers_->setRowCount(static_cast<int>(device.registers.size()));
     for (size_t i = 0; i < device.registers.size(); ++i) {
         const auto& reg = device.registers[i];
@@ -103,7 +132,7 @@ void PeripheralPanel::selectDevice() {
             registers_->setItem(static_cast<int>(i), col, value);
         }
     }
-    refreshValues();
+    filterRegisters(); refreshValues();
 }
 void PeripheralPanel::refreshValues() {
     if (!debugger_ || selected_ < 0) return;
@@ -117,12 +146,13 @@ void PeripheralPanel::refreshValues() {
         fields->setText(q(reg.note));
         QString text, tooltip = q(reg.note);
         bool numeric = false;
+        uint32_t raw = 0;
         if (!debugger_->loaded()) text = "Pas d'image";
         else if (device.coverage == "Non émulé") text = "Non émulé";
         else if (reg.access == "WO") text = "Écriture seule";
         else {
             try {
-                const uint32_t raw = debugger_->memory.peek(reg.address, 4, core_);
+                raw = debugger_->memory.peek(reg.address, 4, core_);
                 text = q(hex(raw)); numeric = true;
                 const auto decoded = fieldText(reg, raw);
                 fields->setText(decoded.isEmpty() ? q(reg.note) : decoded);
@@ -132,5 +162,36 @@ void PeripheralPanel::refreshValues() {
         const bool changed = numeric && value->data(Qt::UserRole).toBool() && value->text() != text;
         value->setForeground(QColor(changed ? "#ffd780" : numeric ? "#dce6f0" : "#e5ac74"));
         value->setText(text); value->setToolTip(tooltip); value->setData(Qt::UserRole, numeric);
+        value->setData(Qt::UserRole + 1, numeric ? QVariant(raw) : QVariant());
     }
+    refreshRegisterDetails();
+}
+void PeripheralPanel::filterRegisters() {
+    if (selected_ < 0) return;
+    const auto& device = devices_.at(static_cast<size_t>(selected_));
+    const auto needle = registerFilter_->text().trimmed();
+    int first = -1;
+    for (size_t i = 0; i < device.registers.size(); ++i) {
+        const auto& reg = device.registers[i];
+        QString text = q(reg.name + " " + hex(reg.address));
+        for (const auto& field : reg.fields) text += " " + q(field.name);
+        const bool visible = text.contains(needle, Qt::CaseInsensitive);
+        registers_->setRowHidden(static_cast<int>(i), !visible);
+        if (visible && first < 0) first = static_cast<int>(i);
+    }
+    if (registers_->currentRow() < 0 || registers_->isRowHidden(registers_->currentRow()) || registers_->selectedItems().isEmpty()) {
+        if (first >= 0) registers_->setCurrentCell(first, 0, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+        else { registers_->clearSelection(); inspector_->clear(); }
+    }
+    refreshRegisterDetails();
+}
+void PeripheralPanel::refreshRegisterDetails() {
+    const int row = registers_->currentRow();
+    if (selected_ < 0 || row < 0 || registers_->isRowHidden(row)) { inspector_->clear(); return; }
+    const auto& device = devices_.at(static_cast<size_t>(selected_));
+    if (static_cast<size_t>(row) >= device.registers.size()) { inspector_->clear(); return; }
+    auto* value = registers_->item(row, 1);
+    if (!value) return;
+    inspector_->setRegister(device.registers[static_cast<size_t>(row)]);
+    inspector_->setValue(value->data(Qt::UserRole).toBool(), value->data(Qt::UserRole + 1).toUInt(), value->text());
 }

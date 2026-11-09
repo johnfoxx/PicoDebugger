@@ -8,6 +8,7 @@ class QLabel;
 class QLineEdit;
 class QTableWidget;
 class QTreeWidget;
+class RegisterInspector;
 
 class PeripheralPanel : public QWidget {
 public:
@@ -23,12 +24,16 @@ private:
     int selected_ = -1;
     std::vector<picodbg::PeripheralDescription> devices_;
     QLineEdit* filter_;
+    QLineEdit* registerFilter_;
     QLabel* context_;
     QLabel* detail_;
     QTreeWidget* catalog_;
     QTableWidget* registers_;
+    RegisterInspector* inspector_;
     void rebuildCatalog();
     void applyFilter();
     void selectDevice();
     void refreshValues();
+    void filterRegisters();
+    void refreshRegisterDetails();
 };

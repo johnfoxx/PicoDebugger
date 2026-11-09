@@ -154,6 +154,8 @@ La version **v0.2.0** porte ce total à **11 tests CTest**, dont neuf suites mot
 
 L'extension Pico 2 ajoute les suites `devices` et `elf_peripheral_boot` : **13 tests avec Qt5**, dont 11 hors GUI, également exécutés sous ASan/UBSan. Le test ELF est disponible si Python3 est détecté par CMake. Les petites fenêtres sont testées pour leur contexte, leur rafraîchissement et leur cycle de fermeture.
 
+L'inspection détaillée ajoute une quatorzième suite sur Linux/Qt5 : choix clavier/souris sans demande d'activation de fenêtre, retour du focus et contournement IBus. Les petites fenêtres présentent désormais les bits et leurs significations ; le catalogue décrit aussi ADC/I2C/DMA/PIO, même lorsqu'aucun état simulé n'est disponible. Voir [inspection, Wayland et diagnostic Qt](docs/BOOT_AND_PERIPHERALS.md).
+
 Quand Qt est présent, CTest ajoute un test de démarrage et un test d'interactions graphiques : visibilité simultanée des panneaux, pas, breakpoint, exécution, reset et restauration de l'agencement. Pour produire une capture lors de ce dernier test :
 
 ```sh

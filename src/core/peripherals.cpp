@@ -1,4 +1,5 @@
 #include "picodbg/peripherals.hpp"
+#include "registers/catalog_details.hpp"
 #include <algorithm>
 
 namespace picodbg {
@@ -6,6 +7,11 @@ uint32_t fieldValue(uint32_t value, const RegisterField& field) {
     if (!field.width || field.width > 32 || field.lsb > 31 || field.width > 32 - field.lsb)
         throw Error(ErrorKind::InvalidArgument, "Champ de registre invalide");
     return field.width == 32 ? value : (value >> field.lsb) & ((1u << field.width) - 1u);
+}
+std::string fieldMeaning(uint32_t registerValue, const RegisterField& field) {
+    const auto value = fieldValue(registerValue, field);
+    for (const auto& meaning : field.meanings) if (meaning.value == value) return meaning.text;
+    return field.meanings.empty() ? field.description : "Valeur non décrite pour ce champ";
 }
 namespace {
 void timerRegisters(PeripheralDescription& device, bool pico2) {
@@ -118,6 +124,7 @@ std::vector<PeripheralDescription> peripheralCatalog(Chip chip) {
             for (unsigned i = 0; i < 8; ++i) add(device, 0xc + 4u * i, ("SCRATCH" + std::to_string(i)).c_str(), "RW", "Registre scratch ; compteur et reset watchdog non émulés");
             device.coverage = "Partiel (scratch uniquement)";
         }
+        describePeripheralRegisters(chip, device);
         result.push_back(device);
     }
     std::sort(result.begin(), result.end(), [](const PeripheralDescription& a, const PeripheralDescription& b) { return a.name < b.name; });

@@ -81,9 +81,37 @@ void catalogTests() {
         const auto devices = peripheralCatalog(chip);
         check(devices.size() >= (chip == Chip::RP2040 ? 35u : 60u), "Hardware inventory is populated");
         std::set<std::string> names; std::set<uint32_t> bases;
+        size_t registerCount = 0, fieldCount = 0;
         for (const auto& device : devices) {
+            registerCount += device.registers.size();
             check(names.insert(device.name).second && bases.insert(device.base).second, "Unique peripheral names and bases");
-            for (const auto& reg : device.registers) for (const auto& field : reg.fields) fieldValue(0xffffffff, field);
+            std::set<uint32_t> addresses;
+            for (const auto& reg : device.registers) {
+                fieldCount += reg.fields.size();
+                check(addresses.insert(reg.address).second && (reg.address & 3u) == 0, "Register addresses must be unique and aligned");
+                uint32_t described = 0;
+                for (const auto& field : reg.fields) {
+                    const uint32_t maximum = fieldValue(0xffffffff, field);
+                    const uint32_t mask = maximum << field.lsb;
+                    check((described & mask) == 0, "Register fields must not overlap");
+                    described |= mask;
+                    for (const auto& meaning : field.meanings) check(meaning.value <= maximum, "Symbolic field value outside bit width");
+                }
+            }
+            if (device.name == "ADC" || device.name == "I2C0" || device.name == "DMA" || device.name == "PIO0") {
+                check(!device.registers.empty() && device.coverage == "Non émulé", "Describing hardware never installs an emulator model");
+                Memory memory(chip);
+                bool unavailable = false;
+                try { memory.peek(device.base, 4); }
+                catch (const Error& e) { unavailable = e.kind == ErrorKind::Unsupported; }
+                check(unavailable, "Catalog entries must not fabricate live register values");
+            }
+            if (device.name == "DMA") check(device.registers.back().address == device.base + (chip == Chip::RP2350 ? 0x3fcu : 0x2fcu), "DMA channel count/stride is chip-specific");
+            if (device.name == "PIO0") check(device.registers.back().address == device.base + (chip == Chip::RP2350 ? 0x184u : 0x140u), "PIO IRQ register positions differ on RP2350");
+            if (device.name == "UART0") {
+                const auto& wlen = device.registers.at(5).fields.at(5);
+                check(fieldMeaning(3u << 5, wlen) == "8 bits", "UART word-length decoding");
+            }
             if (device.name == "TIMER")
                 check(device.base == 0x40054000 && device.registers.back().address == 0x40054040, "RP2040 TIMER/INTS mapping");
             if (device.name == "TIMER1")
@@ -94,6 +122,8 @@ void catalogTests() {
             check(profile.regions[i - 1].end <= profile.regions[i].begin, "Memory map windows must not overlap");
         check(names.count("SIO") && names.count("UART0") && names.count("DMA") && names.count("PIO0"), "Unimplemented devices stay visible");
         if (chip == Chip::RP2350) check(names.count("TIMER1") && names.count("PIO2") && names.count("OTP_DATA") && names.count("SIO_NONSEC"), "RP2350-specific inventory");
+        std::cout << (chip == Chip::RP2350 ? "RP2350" : "RP2040") << ": " << devices.size()
+                  << " blocks, " << registerCount << " registers, " << fieldCount << " fields described\n";
     }
     check(fieldValue(0x80000000, {"TOP", 31, 1}) == 1, "Top-bit field extraction");
     check(fieldValue(0xdeadbeef, {"WORD", 0, 32}) == 0xdeadbeef, "32-bit field without shift overflow");

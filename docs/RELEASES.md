@@ -1,5 +1,18 @@
 # Versions
 
+## Après l'extension Pico 2 — inspection et correctifs Qt, 2026-11-09
+
+- Correction du chemin Qt5 de fermeture des listes déroulantes : retour du focus différé jusqu'au focus réel de la fenêtre, sans filtrage d'avertissement. Sélecteurs de puce/cœur et dialogues concernés.
+- Cause du message QSocketNotifier identifiée dans la trace utilisateur : initialisation IBus avant le dispatcher de Qt5/Wayland. Contournement limité au processus, préférence pour la saisie Wayland native, option `--qt-system-input` pour conserver IBus.
+- Option `--qt-diagnostics` : versions Qt, plateforme, saisie et pile des avertissements ciblés dès le démarrage.
+- Descriptions ADC, I2C, DMA et PIO des deux profils, sans les annoncer comme émulés ; différences des champs et adresses RP2350 prises en compte. Catalogue : 587/783 registres et 1 653/2 373 champs, alias DMA compris.
+- Détails des bits et significations symboliques (UART, SPI notamment), recherche de registre/champ/adresse, surlignage des valeurs modifiées et réutilisation du snapshot sans lectures MMIO supplémentaires.
+- Fenêtres périphériques indépendantes avec tableaux de registres et de champs ; détails repliables, agencement principal compact et documentation du fonctionnement.
+- Code séparé par famille de registre et composant d'inspection ; explicitation des limites M33 dans l'aide et la documentation.
+- Validation : 14 suites Qt5 réussies (après correction de l'agencement, la suite graphique a été relancée séparément) ; test de non-régression instrumenté des choix clavier/souris, du focus et de la politique IBus ; 11 017 vérifications de la suite périphériques réussies sous ASan/UBSan, détection des fuites désactivée ; parcours ELF UART TX/RX et captures des fenêtres. Qt6 et le compositeur Wayland natif ne sont pas validés depuis l'environnement de développement.
+
+Les tags existants restent inchangés. Le Cortex-M33 et l'émulation globale du Pico 2 restent incomplets.
+
 ## Après v0.2.0 — extension Pico 2, 2026-11-09
 
 - Modèles TIMER0/TIMER1 RP2350, verrou LOCKED et sélection SOURCE en temps virtuel.
