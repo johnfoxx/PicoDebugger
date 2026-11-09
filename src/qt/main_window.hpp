@@ -2,6 +2,7 @@
 #include "picodbg/debugger.hpp"
 #include <QByteArray>
 #include <QMainWindow>
+#include <QPointer>
 #include <array>
 #include <memory>
 
@@ -21,6 +22,7 @@ public:
     MainWindow();
     void loadFile(const QString& path);
     void loadDemo();
+    void selectChip(picodbg::Chip chip);
 private:
     std::unique_ptr<picodbg::Debugger> debugger_;
     std::array<std::array<uint32_t, 21>, 2> previous_{};
@@ -40,6 +42,16 @@ private:
     QTableWidget* stack_;
     QTableWidget* mapping_;
     PeripheralPanel* peripherals_;
+    struct Inspection {
+        QPointer<QWidget> window;
+        PeripheralPanel* panel;
+        QComboBox* core;
+        QPlainTextEdit* output;
+        int uart;
+    };
+    std::vector<Inspection> inspections_;
+    void openPeripheral(const QString& name);
+    void closeInspections();
     QTableWidget* watches_;
     QTableWidget* points_;
     QLineEdit* memoryAddress_;

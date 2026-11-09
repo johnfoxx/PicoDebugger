@@ -2,6 +2,7 @@
 #include "picodbg/debugger.hpp"
 #include "picodbg/peripherals.hpp"
 #include <QWidget>
+#include <functional>
 
 class QLabel;
 class QLineEdit;
@@ -10,9 +11,12 @@ class QTreeWidget;
 
 class PeripheralPanel : public QWidget {
 public:
-    explicit PeripheralPanel(QWidget* parent = nullptr);
+    explicit PeripheralPanel(QWidget* parent = nullptr, const QString& pinnedDevice = {});
     void updateTarget(const picodbg::Debugger& debugger, unsigned core);
+    std::function<void(const QString&)> openDevice;
+    QString selectedDevice() const;
 private:
+    QString pinnedDevice_;
     const picodbg::Debugger* debugger_ = nullptr;
     picodbg::Chip chip_ = picodbg::Chip::RP2040;
     unsigned core_ = 0;

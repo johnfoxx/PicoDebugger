@@ -31,6 +31,7 @@ public:
     Stop step(unsigned core);
     Stop run(size_t budget);
     void pause();
+    size_t injectUart(unsigned index, const std::string& bytes);
     uint32_t evaluate(const std::string& expression, unsigned core = 0) const;
     void addWatchpoint(uint32_t address, uint32_t length, bool read, bool write);
     void clearWatchpoints() { watchpoints.clear(); }

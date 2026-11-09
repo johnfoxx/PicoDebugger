@@ -3,6 +3,7 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPushButton>
 #include <QSignalBlocker>
 #include <QSplitter>
 #include <QTableWidget>
@@ -19,7 +20,7 @@ QString fieldText(const RegisterDescription& reg, uint32_t value) {
     return fields.join("  ");
 }
 }
-PeripheralPanel::PeripheralPanel(QWidget* parent) : QWidget(parent) {
+PeripheralPanel::PeripheralPanel(QWidget* parent, const QString& pinnedDevice) : QWidget(parent), pinnedDevice_(pinnedDevice) {
     auto* layout = new QVBoxLayout(this); layout->setContentsMargins(4, 4, 4, 4);
     filter_ = new QLineEdit; filter_->setObjectName("peripheralFilter");
     filter_->setPlaceholderText("Rechercher un périphérique, registre ou adresse…");
@@ -41,7 +42,11 @@ PeripheralPanel::PeripheralPanel(QWidget* parent) : QWidget(parent) {
     detail_ = new QLabel; detail_->setWordWrap(true); detail_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     auto* split = new QSplitter(Qt::Vertical); split->addWidget(catalog_); split->addWidget(registers_);
     split->setSizes({120, 310});
-    layout->addWidget(filter_); layout->addWidget(context_); layout->addWidget(split, 1); layout->addWidget(detail_);
+    auto* open = new QPushButton("Ouvrir dans une petite fenêtre"); open->setObjectName("openDeviceWindowButton");
+    layout->addWidget(filter_); layout->addWidget(open); layout->addWidget(context_); layout->addWidget(split, 1); layout->addWidget(detail_);
+    connect(open, &QPushButton::clicked, this, [this] { if (openDevice && selected_ >= 0) openDevice(selectedDevice()); });
+    connect(catalog_, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem*, int) { if (openDevice && selected_ >= 0) openDevice(selectedDevice()); });
+    if (!pinnedDevice_.isEmpty()) { filter_->hide(); catalog_->hide(); open->hide(); }
     connect(filter_, &QLineEdit::textChanged, this, [this] { applyFilter(); });
     connect(catalog_, &QTreeWidget::itemSelectionChanged, this, [this] { selectDevice(); });
 }
@@ -63,10 +68,13 @@ void PeripheralPanel::rebuildCatalog() {
         item->setData(0, Qt::UserRole, static_cast<int>(i));
         item->setToolTip(0, q(hex(device.base) + " — " + device.note));
         item->setForeground(1, QColor(device.coverage == "Non émulé" ? "#e5ac74" : "#8bd6bb"));
-        if (device.name == "SIO") initial = item;
+        if (q(device.name) == (pinnedDevice_.isEmpty() ? QString("SIO") : pinnedDevice_)) initial = item;
     }
     if (initial) catalog_->setCurrentItem(initial);
     applyFilter(); selectDevice();
+}
+QString PeripheralPanel::selectedDevice() const {
+    return selected_ < 0 ? QString() : q(devices_.at(static_cast<size_t>(selected_)).name);
 }
 void PeripheralPanel::applyFilter() {
     const auto needle = filter_->text().trimmed();

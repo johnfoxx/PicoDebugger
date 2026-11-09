@@ -1,6 +1,6 @@
 #pragma once
 #include "picodbg/chip.hpp"
-#include "picodbg/timer.hpp"
+#include "picodbg/peripheral_bus.hpp"
 #include <array>
 #include <deque>
 #include <functional>
@@ -9,7 +9,7 @@
 namespace picodbg {
 struct SystemRegisters {
     uint32_t vtor = 0;
-    uint32_t enabled = 0, pending = 0, active = 0;
+    uint64_t enabled = 0, pending = 0, active = 0;
     uint32_t systickCtrl = 0, systickLoad = 0, systickValue = 0;
     bool systickPending = false, pendSv = false, systickCountFlag = false;
 };
@@ -27,6 +27,9 @@ public:
     void tick(unsigned core);
     void advanceTime(uint64_t virtualMicroseconds);
     bool hasScheduledPeripheralEvent() const;
+    bool receiveUart(unsigned index, uint8_t byte);
+    const std::string& uartOutput(unsigned index) const { return peripherals_.uartOutput(index); }
+    void updateInterrupts();
     SystemRegisters& system(unsigned core) { return system_.at(core); }
     const SystemRegisters& system(unsigned core) const { return system_.at(core); }
     std::function<void(const MemoryAccess&)> onAccess;
@@ -37,8 +40,7 @@ private:
     std::array<std::deque<uint32_t>, 2> fifo_;
     std::array<bool, 32> locks_;
     std::array<uint32_t, 2> fifoErrors_;
-    uint32_t gpioOut_ = 0, gpioOe_ = 0;
-    Timer timer_;
+    PeripheralBus peripherals_;
     uint32_t ramOffset(uint32_t address) const;
     uint32_t readImpl(uint32_t address, unsigned size, unsigned core, Access access, bool inspect);
     uint32_t readDevice(uint32_t address, unsigned core, bool inspect);

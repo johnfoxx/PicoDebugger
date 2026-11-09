@@ -23,16 +23,20 @@ Les liens de datasheets peuvent servir une révision plus récente à la même a
 
 Ces en-têtes portent une licence BSD-3-Clause. Les métadonnées du projet décrivent les registres utilisés ; elles ne constituent pas un import exhaustif du SDK ou d'un SVD. Le catalogue décrit les blocs matériels même quand leurs registres n'ont pas encore été ajoutés.
 
+Extension Pico 2, consultation du 8–9 novembre 2026 : [UART](https://github.com/raspberrypi/pico-sdk/blob/2.2.0/src/rp2350/hardware_regs/include/hardware/regs/uart.h), [SPI](https://github.com/raspberrypi/pico-sdk/blob/2.2.0/src/rp2350/hardware_regs/include/hardware/regs/spi.h), [PWM](https://github.com/raspberrypi/pico-sdk/blob/2.2.0/src/rp2350/hardware_regs/include/hardware/regs/pwm.h), [SIO](https://github.com/raspberrypi/pico-sdk/blob/2.2.0/src/rp2350/hardware_regs/include/hardware/regs/sio.h), [IRQ](https://github.com/raspberrypi/pico-sdk/blob/2.2.0/src/rp2350/hardware_regs/include/hardware/regs/intctrl.h), [RESETS RP2350](https://github.com/raspberrypi/pico-sdk/blob/2.2.0/src/rp2350/hardware_regs/include/hardware/regs/resets.h), [RESETS RP2040](https://github.com/raspberrypi/pico-sdk/blob/2.2.0/src/rp2040/hardware_regs/include/hardware/regs/resets.h), [WATCHDOG scratch](https://github.com/raspberrypi/pico-sdk/blob/2.2.0/src/rp2350/hardware_regs/include/hardware/regs/watchdog.h). Les IRQ série ne sont pas aux mêmes indices sur les deux puces ; le RP2350 nécessite deux banques NVIC.
+
+Le [manuel ARM PL011 DDI0183G, §2.8](https://documentation-service.arm.com/static/5e8e36c2fd977155116a90b5) précise les transitions de seuil des FIFO et l'acquittement des interruptions : un UART initialement vide ne doit pas produire spontanément une IRQ TX. Ce comportement fait l'objet d'un test dédié. Les sources Qt5 expliquant le message Wayland sont référencées dans [BOOT_AND_PERIPHERALS.md](BOOT_AND_PERIPHERALS.md).
+
 ## Choix issus de cette lecture
 
 - Le timer RP2040 possède un compteur partagé de 64 bits, une lecture haute mémorisée et quatre comparateurs sur la partie basse. Son tick matériel dépend du watchdog et des horloges (§4.6). Le modèle remplace explicitement cette source par des quanta virtuels.
 - Les alias d'écriture RP2040 utilisent les décalages `0x1000` XOR, `0x2000` SET, `0x3000` CLR (§2.1.2). Ici seuls les registres RW du timer sont couverts ; les alias de registres à effets de bord sont refusés.
 - Les écritures MMIO étroites ont des règles propres au bus (§2.1.4). Elles restent hors couverture : un accès octet/demi-mot ne doit pas être transformé arbitrairement en mise à jour partielle d'un registre.
-- Les timers RP2350 ajoutent `LOCKED` et `SOURCE` et déplacent les registres IRQ. Leurs métadonnées sont distinctes et leur exécution reste refusée ; on ne réutilise pas implicitement le modèle RP2040.
+- Les timers RP2350 ajoutent `LOCKED` et `SOURCE` et déplacent les registres IRQ. Le modèle sélectionne ces particularités explicitement ; les sources de temps restent virtuelles, sans simulation du bloc TICKS/clk_sys.
 
 ## Récupération locale
 
-La consultation en ligne est distincte de la présence de fichiers dans le dépôt. Le script suivant récupère les deux PDF et les quatre en-têtes dans un cache ignoré par Git :
+La consultation en ligne est distincte de la présence de fichiers dans le dépôt. Le script suivant récupère les deux PDF et les en-têtes référencés pour les deux puces dans un cache ignoré par Git :
 
 ```sh
 python3 scripts/fetch-reference-docs.py --list

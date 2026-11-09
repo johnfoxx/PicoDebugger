@@ -1,5 +1,18 @@
 # Versions
 
+## Après v0.2.0 — extension Pico 2, 2026-11-09
+
+- Modèles TIMER0/TIMER1 RP2350, verrou LOCKED et sélection SOURCE en temps virtuel.
+- UART0/UART1 : FIFO RX/TX, loopback, états/masques/acquittements IRQ, seuils par franchissement, timeout virtuel et injection RX ; affichage TX dans la GUI.
+- SPI0/SPI1 en mode maître loopback, FIFO et IRQ ; PWM à 8/12 slices avec diviseur, double buffering, wrap et IRQ.
+- RESETS pour les modèles présents ; scratch WATCHDOG ; GPIO SIO propres au Pico 2 ; banques NVIC pour IRQ0..51 et SysTick RP2350. Les exceptions M33 restent explicitement absentes.
+- Plusieurs petites fenêtres de périphériques, contexte cœur indépendant, fermeture sans affecter les autres, rafraîchissement après pas/reset et fermeture au changement de profil.
+- Politique d'affichage Wayland sans demande d'activation, évitement du chemin de drag des docks Qt5 qui appelle `activateWindow()` ; sélection Qt5/Qt6 par CMake, version GUI issue de CMake.
+- Option graphique `--chip rp2350`, diagnostic explicite du démarrage ELF direct, ELF de démonstration périphériques pour les deux puces, tests fonctionnels et graphiques étendus.
+- Validation : 13 tests CTest Qt5 réussis, 11 tests hors GUI sous ASan/UBSan (fuites désactivées), parcours ELF + TX/RX dans la GUI et captures inspectées. Qt6 et Wayland natif restent non testés.
+
+Voir [les capacités, limites et instructions d'utilisation](BOOT_AND_PERIPHERALS.md). Cette extension n'est pas une émulation complète du RP2350 ; le tag `v0.2.0` reste inchangé.
+
 ## v0.2.0 — 2026-11-08
 
 Liste des ajouts et corrections depuis **v0.1.0** (`8bb5af8`). Comparaison Git : `git diff v0.1.0..v0.2.0` ; historique : `git log --oneline v0.1.0..v0.2.0`. L'implémentation est portée par le commit `3b97877`, suivi du commit de préparation de cette version.

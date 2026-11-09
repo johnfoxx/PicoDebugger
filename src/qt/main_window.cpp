@@ -1,5 +1,6 @@
 #include "main_window.hpp"
 #include "peripheral_panel.hpp"
+#include "window_policy.hpp"
 #include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
@@ -66,6 +67,12 @@ QWidget* row(const QList<QWidget*>& widgets) {
 }
 QDockWidget* dock(QMainWindow* parent, const QString& name, QWidget* content, Qt::DockWidgetArea area) {
     auto* panel = new QDockWidget(name, parent); panel->setObjectName(name); panel->setWidget(content);
+    prepareInspectionWindow(panel);
+    // Qt5 calls activateWindow() internally at the end of a floating dock drag.
+    // Dedicated windows remain available through buttons, without that path.
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+    if (waylandDesktop()) panel->setFeatures(panel->features() & ~QDockWidget::DockWidgetFloatable);
+#endif
     parent->addDockWidget(area, panel); parent->menuBar()->findChild<QMenu*>("views")->addAction(panel->toggleViewAction());
     return panel;
 }
@@ -124,7 +131,7 @@ void MainWindow::buildUi() {
     chip_->setObjectName("chipSelector");
     toolbar->addWidget(chip_);
     connect(chip_, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this, [this](int index) {
-        setRunning(false); debugger_.reset(new Debugger(index == 0 ? Chip::RP2040 : Chip::RP2350));
+        setRunning(false); closeInspections(); debugger_.reset(new Debugger(index == 0 ? Chip::RP2040 : Chip::RP2350));
         previousValid_ = false; fillMapping(); refresh(); log("Profil changé : charger un ELF pour ce profil.");
     });
     toolbar->addSeparator();
@@ -151,7 +158,8 @@ void MainWindow::buildUi() {
         QMessageBox::information(this, "Couverture de cette version",
             "Exécution locale sans carte, ARM/Thumb. Modèle fonctionnel partiel.\n\n"
             "RP2040 : instructions Thumb usuelles, BL, MRS/MSR, pile, HardFault/SVC, SysTick simplifié, timer/alarmes en temps virtuel, SRAM, Flash, FIFO et spinlocks.\n"
-            "RP2350 : mémoire et sous-ensemble Thumb ; Cortex-M33 complet, TrustZone, FPU et exceptions non émulés.\n\n"
+            "RP2350 : mémoire et sous-ensemble Thumb ; Cortex-M33 complet, TrustZone, FPU et exceptions non émulés.\n"
+            "Périphériques partiels des deux profils : timers, UART, SPI loopback, PWM, latches GPIO, resets, NVIC/SysTick et scratch watchdog.\n\n"
             "Pas de Boot ROM, SDK complet, DMA, PIO, USB, horloges ni timing cycle par cycle. Un accès hors couverture arrête l'exécution.\n"
             "Le cœur 1 se lance explicitement ; le protocole de lancement ROM n'est pas émulé.\n"
             "Le reset recharge l'ELF et remet la RAM à zéro : ce n'est pas le reset matériel du SoC.\n\n"
@@ -204,6 +212,7 @@ void MainWindow::buildUi() {
     mapping_->setObjectName("mappingTable");
     auto* mappingDock = dock(this, "Cartographie / périphériques", mapping_, Qt::RightDockWidgetArea);
     peripherals_ = new PeripheralPanel;
+    peripherals_->openDevice = [this](const QString& name) { openPeripheral(name); };
     auto* peripheralDock = dock(this, "Périphériques — catalogue matériel", peripherals_, Qt::RightDockWidgetArea);
     splitDockWidget(mappingDock, peripheralDock, Qt::Vertical);
     auto* peripheralWindow = views->addAction("Ouvrir la fenêtre des périphériques");
@@ -211,11 +220,11 @@ void MainWindow::buildUi() {
     peripheralWindow->setShortcut(QKeySequence("Ctrl+P"));
     connect(peripheralWindow, &QAction::triggered, this, [peripheralDock] {
         peripheralDock->setFloating(true); peripheralDock->resize(1120, 900);
-        peripheralDock->show(); peripheralDock->raise();
+        showInspectionWindow(peripheralDock);
     });
     connect(mapping_, &QTableWidget::cellDoubleClicked, this, [this, memoryDock](int line, int) {
         if (!mapping_->item(line, 0)) return;
-        memoryAddress_->setText(mapping_->item(line, 0)->text()); refreshMemory(); memoryDock->raise();
+        memoryAddress_->setText(mapping_->item(line, 0)->text()); refreshMemory(); showInspectionWindow(memoryDock);
     });
     watches_ = table({"Expression", "Valeur", "Contexte"});
     watches_->setObjectName("watchesTable");
@@ -265,6 +274,7 @@ void MainWindow::loadFile(const QString& path) {
         log("ELF chargé : " + path); log(q(debugger_->stop.message)); refresh();
     } catch (const std::exception& e) { failure(e); }
 }
+void MainWindow::selectChip(Chip chip) { chip_->setCurrentIndex(chip == Chip::RP2350 ? 1 : 0); }
 void MainWindow::loadDemo() {
     setRunning(false);
     try { debugger_->loadImage(demoImage()); previousValid_ = false; log("Exemple chargé. Pour le cœur 1 : entrée core1_entry, pile 0x20042000."); refresh(); }
@@ -298,6 +308,7 @@ void MainWindow::runBatch() {
 }
 void MainWindow::refresh() {
     setRunning(running_);
+    banner_->setText(debugger_->loaded() ? "SIMULATION PARTIELLE • ELF DIRECT • SANS BOOT ROM" : "SIMULATION PARTIELLE • ARM / THUMB • HORS LIGNE");
     refreshRegisters(); refreshAssembly(); refreshMemory(); refreshStack(); refreshWatches(); refreshPoints(); refreshPeripherals();
     const QString stamp = QDateTime::currentDateTime().toString("HH:mm:ss.zzz");
     stop_->setText(QString("%1  |  cœur %2  |  %3  |  révision %4  |  %5")
@@ -396,6 +407,56 @@ void MainWindow::refreshWatches() {
 }
 void MainWindow::refreshPeripherals() {
     peripherals_->updateTarget(*debugger_, selected_);
+    for (auto it = inspections_.begin(); it != inspections_.end();) {
+        if (!it->window) { it = inspections_.erase(it); continue; }
+        it->panel->updateTarget(*debugger_, static_cast<unsigned>(it->core->currentIndex()));
+        if (it->output) {
+            const auto& bytes = debugger_->memory.uartOutput(static_cast<unsigned>(it->uart));
+            const auto text = QString::fromLatin1(bytes.data(), static_cast<int>(bytes.size()));
+            if (it->output->toPlainText() != text) it->output->setPlainText(text);
+        }
+        ++it;
+    }
+}
+void MainWindow::closeInspections() {
+    for (auto& inspection : inspections_) if (inspection.window) inspection.window->close();
+    inspections_.clear();
+}
+void MainWindow::openPeripheral(const QString& name) {
+    if (name.isEmpty()) return;
+    auto* window = new QDialog(this, Qt::Window);
+    window->setObjectName("deviceWindow_" + name);
+    window->setAttribute(Qt::WA_DeleteOnClose); prepareInspectionWindow(window);
+    window->setWindowTitle(name + " — " + chip_->currentText());
+    window->resize(780, name.startsWith("UART") ? 650 : 470);
+    auto* layout = new QVBoxLayout(window);
+    auto* context = new QComboBox; context->setObjectName("inspectionCore");
+    context->addItems({"Contexte : cœur 0", "Contexte : cœur 1"}); context->setCurrentIndex(static_cast<int>(selected_));
+    layout->addWidget(context);
+    auto* panel = new PeripheralPanel(window, name); layout->addWidget(panel, 1);
+    QPlainTextEdit* output = nullptr;
+    const int uart = name == "UART0" ? 0 : name == "UART1" ? 1 : -1;
+    if (uart >= 0) {
+        layout->addWidget(new QLabel("Sortie TX — derniers octets émis"));
+        output = new QPlainTextEdit; output->setObjectName("uartOutput"); output->setReadOnly(true); output->setMaximumHeight(130); layout->addWidget(output);
+        auto* input = new QLineEdit; input->setObjectName("uartInput"); input->setPlaceholderText("Octets RX en texte UTF-8 (sans ajout de retour ligne)");
+        auto* send = new QPushButton("Injecter RX"); send->setObjectName("uartSend");
+        layout->addWidget(row({input, send}));
+        auto* result = new QLabel; result->setObjectName("uartInputResult"); layout->addWidget(result);
+        connect(send, &QPushButton::clicked, this, [this, input, result, uart] {
+            setRunning(false);
+            try {
+                const auto bytes = input->text().toUtf8();
+                const auto accepted = debugger_->injectUart(static_cast<unsigned>(uart), std::string(bytes.constData(), static_cast<size_t>(bytes.size())));
+                result->setText(QString("%1 / %2 octets acceptés (UART activé et FIFO disponible)").arg(static_cast<qulonglong>(accepted)).arg(bytes.size()));
+                refresh();
+            } catch (const std::exception& error) { result->setText(error.what()); }
+        });
+        connect(input, &QLineEdit::returnPressed, send, &QPushButton::click);
+    }
+    inspections_.push_back({window, panel, context, output, uart});
+    connect(context, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this, [this] { refreshPeripherals(); });
+    refreshPeripherals(); showInspectionWindow(window);
 }
 void MainWindow::refreshPoints() {
     points_->setRowCount(0);

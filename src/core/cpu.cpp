@@ -61,8 +61,8 @@ void exceptionReturn(Cpu& cpu, Memory& memory, unsigned core, uint32_t token) {
     if (usePsp) cpu.psp = restoredSp; else cpu.msp = restoredSp;
     if (!cpu.handlerMode()) cpu.control = (cpu.control & ~2u) | (usePsp ? 2u : 0u);
     cpu.r[13] = usePsp ? cpu.psp : cpu.msp;
-    if (previousException >= 16 && previousException < 48)
-        memory.system(core).active &= ~(1u << (previousException - 16));
+    if (previousException >= 16 && previousException < 80)
+        memory.system(core).active &= ~(uint64_t(1) << (previousException - 16));
 }
 void branchExchange(Cpu& cpu, Memory& memory, unsigned core, uint32_t address) {
     if ((address & 0xfffffff0u) == 0xfffffff0u) { exceptionReturn(cpu, memory, core, address); return; }
@@ -125,7 +125,7 @@ bool enterException(Cpu& cpu, Memory& memory, unsigned core, unsigned number, ui
         cpu.r[13] = cpu.msp;
         cpu.r[14] = wasHandler ? 0xfffffff1u : wasPsp ? 0xfffffffdu : 0xfffffff9u;
         cpu.xpsr = (cpu.xpsr & ~0x1ffu) | number;
-        if (number >= 16 && number < 48) memory.system(core).active |= 1u << (number - 16);
+        if (number >= 16 && number < 80) memory.system(core).active |= uint64_t(1) << (number - 16);
         cpu.r[15] = vector & ~1u; cpu.sleeping = false;
         return true;
     } catch (const Error& e) {
@@ -142,12 +142,12 @@ StepResult execute(Cpu& cpu, Memory& memory, unsigned core) {
     if (!cpu.primask && !cpu.handlerMode()) {
         unsigned exception = s.systickPending ? 15u : 0u;
         if (s.enabled & s.pending) {
-            for (unsigned i = 0; i < 32; ++i) if ((s.enabled & s.pending) & (1u << i)) { exception = 16u + i; break; }
+            for (unsigned i = 0; i < 64; ++i) if ((s.enabled & s.pending) & (uint64_t(1) << i)) { exception = 16u + i; break; }
             if (s.systickPending) exception = 15; // Default equal priorities: lowest exception number wins.
         }
         if (exception) {
             enterException(cpu, memory, core, exception, cpu.r[15]);
-            if (exception == 15) s.systickPending = false; else s.pending &= ~(1u << (exception - 16));
+            if (exception == 15) s.systickPending = false; else s.pending &= ~(uint64_t(1) << (exception - 16));
             result.exception = true; result.detail = "Entrée exception " + std::to_string(exception); return result;
         }
     }

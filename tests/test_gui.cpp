@@ -3,9 +3,13 @@
 #include <QApplication>
 #include <QComboBox>
 #include <QDockWidget>
+#include <QDialog>
 #include <QElapsedTimer>
 #include <QLineEdit>
 #include <QPixmap>
+#include <QPushButton>
+#include <QPointer>
+#include <QPlainTextEdit>
 #include <QRegion>
 #include <QTableWidget>
 #include <QThread>
@@ -106,8 +110,24 @@ int main(int argc, char** argv) {
         filter->setText("UART0");
         require(timer->isHidden() && !uart->isHidden(), "Peripheral filter mismatch");
         devices->setCurrentItem(uart);
-        require(uart->text(1) == "Non émulé" && peripheralRegisters->rowCount() == 0, "Unsupported peripheral must not invent values");
+        require(uart->text(1).startsWith("Partiel") && peripheralRegisters->rowCount() == 13, "UART register model missing");
+        require(peripheralRegisters->item(2, 1)->text() == "0x00000090", "UART reset flags missing");
+        find<QPushButton>(window, "openDeviceWindowButton")->click();
+        QPointer<QDialog> uartWindow = find<QDialog>(window, "deviceWindow_UART0");
+        require(uartWindow->isVisible() && uartWindow->findChild<QPlainTextEdit*>("uartOutput"), "UART mini window/output missing");
+        uartWindow->findChild<QLineEdit*>("uartInput")->setText("R");
+        uartWindow->findChild<QPushButton*>("uartSend")->click(); // Disabled receiver: report zero accepted bytes.
+        const auto i2c = devices->findItems("I2C0", Qt::MatchExactly, 0);
+        require(i2c.size() == 1, "I2C inventory missing"); devices->setCurrentItem(i2c.front());
+        require(peripheralRegisters->rowCount() == 0 && i2c.front()->text(1) == "Non émulé", "Unmodelled I2C must remain explicit");
         filter->clear(); devices->setCurrentItem(timer);
+        find<QPushButton>(window, "openDeviceWindowButton")->click();
+        QPointer<QDialog> timerWindow = find<QDialog>(window, "deviceWindow_TIMER");
+        require(timerWindow->isVisible() && uartWindow->isVisible(), "Multiple peripheral windows must coexist");
+        auto* timerValues = timerWindow->findChild<QTableWidget*>("peripheralsTable");
+        step->trigger(); require(timerValues->item(10, 1)->text() == "0x00000002", "Mini window values not refreshed");
+        timerWindow->close(); QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        require(timerWindow.isNull() && uartWindow, "Closing a mini window affects only that window");
         find<QAction>(window, "peripheralWindowAction")->trigger();
         QApplication::processEvents();
         bool floating = false;
@@ -122,6 +142,8 @@ int main(int argc, char** argv) {
         // Profiles have different register maps. Rebuild the catalog and clear
         // any values belonging to the previous session rather than reusing them.
         find<QComboBox>(window, "chipSelector")->setCurrentIndex(1);
+        QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        require(uartWindow.isNull(), "Profile change must close windows from the old target");
         require(devices->topLevelItemCount() >= 60, "RP2350 catalog not rebuilt");
         const auto timer1 = devices->findItems("TIMER1", Qt::MatchExactly, 0);
         require(timer1.size() == 1, "RP2350 TIMER1 missing");
@@ -129,13 +151,40 @@ int main(int argc, char** argv) {
         require(peripheralRegisters->rowCount() == 19, "RP2350 timer offsets not described");
         require(peripheralRegisters->item(10, 1)->text() == "Pas d'image", "Old session value survived profile change");
         window.loadDemo();
-        require(peripheralRegisters->item(10, 1)->text() == "Non émulé", "RP2350 timer must not reuse RP2040 values");
+        require(peripheralRegisters->item(10, 1)->text() == "0x00000000", "RP2350 timer reset value");
+        step->trigger(); require(peripheralRegisters->item(10, 1)->text() == "0x00000001", "RP2350 TIMER1 must advance");
+        find<QPushButton>(window, "openDeviceWindowButton")->click();
+        auto* timer1Window = find<QDialog>(window, "deviceWindow_TIMER1");
         find<QComboBox>(window, "coreSelector")->setCurrentIndex(1);
         const auto sio = devices->findItems("SIO", Qt::MatchExactly, 0);
         require(sio.size() == 1, "SIO missing");
         devices->setCurrentItem(sio.front());
         require(peripheralRegisters->item(0, 1)->text() == "0x00000001", "SIO inspection did not select core1 context");
-        std::cout << "GUI checks passed: overview, step, breakpoint, run, reset, catalog, timer, filter, peripheral window, profiles, core context\n";
+        find<QPushButton>(window, "openDeviceWindowButton")->click();
+        auto* sioWindow = find<QDialog>(window, "deviceWindow_SIO");
+        auto* sioContext = sioWindow->findChild<QComboBox*>("inspectionCore");
+        sioContext->setCurrentIndex(0);
+        require(sioWindow->findChild<QTableWidget*>("peripheralsTable")->item(0, 1)->text() == "0x00000000", "Mini window has independent core context");
+        require(peripheralRegisters->item(0, 1)->text() == "0x00000001", "Mini window must not change main context");
+        if (argc == 2) {
+            require(timer1Window->grab().save(QString::fromLocal8Bit(argv[1]) + ".timer1.png"), "Cannot save timer1 mini window");
+            require(sioWindow->grab().save(QString::fromLocal8Bit(argv[1]) + ".sio.png"), "Cannot save SIO mini window");
+        }
+        if (argc == 3) {
+            window.loadFile(QString::fromLocal8Bit(argv[2]));
+            devices->setCurrentItem(devices->findItems("UART0", Qt::MatchExactly, 0).front());
+            find<QPushButton>(window, "openDeviceWindowButton")->click();
+            auto* liveUart = find<QDialog>(window, "deviceWindow_UART0");
+            run->trigger(); waitUntil([run] { return run->isEnabled(); });
+            require(liveUart->findChild<QPlainTextEdit*>("uartOutput")->toPlainText() == "OK", "ELF UART output must reach the mini window");
+            liveUart->findChild<QLineEdit*>("uartInput")->setText("RX");
+            liveUart->findChild<QPushButton*>("uartSend")->click();
+            require(liveUart->findChild<QTableWidget*>("peripheralsTable")->item(0, 1)->text() == "0x00000052", "Injected UART RX must appear without inspection consuming it");
+            QApplication::processEvents();
+            require(liveUart->grab().save(QString::fromLocal8Bit(argv[1]) + ".uart.png"), "Cannot save UART window");
+            require(window.grab().save(QString::fromLocal8Bit(argv[1]) + ".rp2350.png"), "Cannot save live Pico2 view");
+        }
+        std::cout << "GUI checks passed: overview, execution, profiles, live devices, mini windows, contexts, lifecycle\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "GUI FAIL: " << error.what() << '\n';

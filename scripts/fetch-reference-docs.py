@@ -20,7 +20,7 @@ DOCUMENTS = {
     "rp2350-datasheet": ("rp2350-datasheet.pdf", "https://datasheets.raspberrypi.com/rp2350/rp2350-datasheet.pdf"),
 }
 for chip in ("rp2040", "rp2350"):
-    for header in ("addressmap", "timer"):
+    for header in ("addressmap", "timer", "uart", "spi", "pwm", "sio", "intctrl", "resets", "watchdog"):
         DOCUMENTS[chip + "-" + header] = (
             chip + "-" + header + "-sdk-2.2.0.h",
             SDK + "/" + chip + "/hardware_regs/include/hardware/regs/" + header + ".h",

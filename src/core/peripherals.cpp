@@ -20,8 +20,8 @@ void timerRegisters(PeripheralDescription& device, bool pico2) {
     device.registers[11].fields = {{"DBG0", 1, 1}, {"DBG1", 2, 1}};
     device.registers[12].fields = {{"PAUSE", 0, 1}};
     if (pico2) {
-        device.registers.push_back({device.base + 0x34, "LOCKED", "RW", "RP2350 : verrou jusqu'au reset, non émulé", {{"LOCKED", 0, 1}}});
-        device.registers.push_back({device.base + 0x38, "SOURCE", "RW", "RP2350 : tick ou clk_sys, non émulé", {{"CLK_SYS", 0, 1}}});
+        device.registers.push_back({device.base + 0x34, "LOCKED", "RW", "Verrouille les écritures jusqu'au reset du périphérique", {{"LOCKED", 0, 1}}});
+        device.registers.push_back({device.base + 0x38, "SOURCE", "RW", "Tick ou clk_sys ; deux sources virtuelles, arbre d'horloge absent", {{"CLK_SYS", 0, 1}}});
     }
     const uint32_t offset = pico2 ? 0x3cu : 0x34u;
     const char* irqNames[] = {"INTR", "INTE", "INTF", "INTS"};
@@ -30,6 +30,55 @@ void timerRegisters(PeripheralDescription& device, bool pico2) {
         device.registers.push_back({device.base + offset + i * 4u, irqNames[i], irqAccess[i], "Interruptions des quatre alarmes", {}});
         for (unsigned n = 0; n < 4; ++n) device.registers.back().fields.push_back({"ALARM" + std::to_string(n), n, 1});
     }
+}
+void add(PeripheralDescription& device, uint32_t offset, const char* name, const char* access, const char* note) {
+    device.registers.push_back({device.base + offset, name, access, note, {}});
+}
+void serialRegisters(PeripheralDescription& device, bool uart) {
+    const char* note = uart ? "PL011 fonctionnel ; FIFO et temps virtuel, sans signal électrique" : "PL022 fonctionnel ; loopback interne uniquement, sans esclave externe";
+    if (uart) {
+        add(device, 0, "UARTDR", "RW", "RX à la lecture, TX à l'écriture ; inspection sans consommer RX");
+        add(device, 4, "UARTRSR/ECR", "RW", "Erreurs de réception ; écriture efface RSR");
+        add(device, 0x18, "UARTFR", "RO", note);
+        device.registers.back().fields = {{"BUSY", 3, 1}, {"RXFE", 4, 1}, {"TXFF", 5, 1}, {"RXFF", 6, 1}, {"TXFE", 7, 1}};
+        add(device, 0x24, "UARTIBRD", "RW", "Diviseur entier stocké ; baud physique non simulé");
+        add(device, 0x28, "UARTFBRD", "RW", "Diviseur fractionnaire stocké");
+        add(device, 0x2c, "UARTLCR_H", "RW", note);
+        device.registers.back().fields = {{"FEN", 4, 1}, {"WLEN", 5, 2}};
+        add(device, 0x30, "UARTCR", "RW", note);
+        device.registers.back().fields = {{"UARTEN", 0, 1}, {"LBE", 7, 1}, {"TXE", 8, 1}, {"RXE", 9, 1}};
+        add(device, 0x34, "UARTIFLS", "RW", "Seuils des FIFO RX et TX");
+        add(device, 0x38, "UARTIMSC", "RW", "Masque des interruptions");
+        add(device, 0x3c, "UARTRIS", "RO", "RX/TX, timeout virtuel et overflow RX");
+        add(device, 0x40, "UARTMIS", "RO", "Interruptions après masque");
+        add(device, 0x44, "UARTICR", "WO", "Acquittement W1C des interruptions mémorisées");
+        add(device, 0x48, "UARTDMACR", "RW", "DMA désactivé ; activation hors couverture");
+    } else {
+        const char* names[] = {"SSPCR0", "SSPCR1", "SSPDR", "SSPSR", "SSPCPSR", "SSPIMSC", "SSPRIS", "SSPMIS", "SSPICR", "SSPDMACR"};
+        const char* access[] = {"RW", "RW", "RW", "RO", "RW", "RW", "RO", "RO", "WO", "RW"};
+        for (unsigned i = 0; i < 10; ++i) add(device, i * 4u, names[i], access[i], note);
+        device.registers[1].fields = {{"LBM", 0, 1}, {"SSE", 1, 1}, {"MS", 2, 1}};
+        device.registers[3].fields = {{"TFE", 0, 1}, {"TNF", 1, 1}, {"RNE", 2, 1}, {"RFF", 3, 1}, {"BSY", 4, 1}};
+    }
+    device.coverage = "Partiel (FIFO, temps virtuel)"; device.note = note;
+}
+void pwmRegisters(PeripheralDescription& device, bool pico2) {
+    const unsigned count = pico2 ? 12u : 8u;
+    const char* names[] = {"CSR", "DIV", "CTR", "CC", "TOP"};
+    for (unsigned i = 0; i < count; ++i) for (unsigned j = 0; j < 5; ++j) {
+        const auto name = "CH" + std::to_string(i) + "_" + names[j];
+        add(device, i * 0x14u + j * 4u, name.c_str(), "RW", "Compteur virtuel ; CC/TOP bufferisés pendant l'exécution");
+        if (j == 0) device.registers.back().fields = {{"EN", 0, 1}, {"PH_CORRECT", 1, 1}, {"A_INV", 2, 1}, {"B_INV", 3, 1}};
+        if (j == 3) device.registers.back().fields = {{"A", 0, 16}, {"B", 16, 16}};
+    }
+    add(device, count * 0x14u, "EN", "RW", "Activation simultanée des slices");
+    add(device, count * 0x14u + 4u, "INTR", "W1C", "Wrap des compteurs");
+    for (unsigned irq = 0; irq < (pico2 ? 2u : 1u); ++irq) for (unsigned j = 0; j < 3; ++j) {
+        const char* suffix[] = {"INTE", "INTF", "INTS"};
+        const auto name = "IRQ" + std::to_string(irq) + "_" + suffix[j];
+        add(device, count * 0x14u + 8u + irq * 12u + j * 4u, name.c_str(), j == 2 ? "RO" : "RW", "Masque, forçage, état IRQ");
+    }
+    device.coverage = "Partiel (compteurs, IRQ)"; device.note = "PWM virtuel ; pas de pinmux, DREQ ni d'entrée B externe";
 }
 }
 std::vector<PeripheralDescription> peripheralCatalog(Chip chip) {
@@ -54,7 +103,20 @@ std::vector<PeripheralDescription> peripheralCatalog(Chip chip) {
         if (!device.registers.empty()) device.coverage = "Partiel";
         if (device.name == "TIMER" || device.name == "TIMER0" || device.name == "TIMER1") {
             device.registers.clear(); timerRegisters(device, chip == Chip::RP2350);
-            device.coverage = chip == Chip::RP2040 ? "Partiel (temps virtuel)" : "Non émulé";
+            device.coverage = "Partiel (temps virtuel)";
+        }
+        if (device.name == "UART0" || device.name == "UART1") serialRegisters(device, true);
+        if (device.name == "SPI0" || device.name == "SPI1") serialRegisters(device, false);
+        if (device.name == "PWM") pwmRegisters(device, chip == Chip::RP2350);
+        if (device.name == "RESETS") {
+            add(device, 0, "RESET", "RW", "Lignes relâchées au démarrage direct ; reset effectif des modèles présents");
+            add(device, 4, "WDSEL", "RW", "Sélection stockée ; watchdog non exécuté");
+            add(device, 8, "RESET_DONE", "RO", "Complétion immédiate du reset dans le modèle");
+            device.coverage = "Partiel (modèles présents)";
+        }
+        if (device.name == "WATCHDOG") {
+            for (unsigned i = 0; i < 8; ++i) add(device, 0xc + 4u * i, ("SCRATCH" + std::to_string(i)).c_str(), "RW", "Registre scratch ; compteur et reset watchdog non émulés");
+            device.coverage = "Partiel (scratch uniquement)";
         }
         result.push_back(device);
     }

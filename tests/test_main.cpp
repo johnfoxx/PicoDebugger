@@ -43,7 +43,8 @@ void memoryTests() {
     Memory pico2(Chip::RP2350);
     pico2.write(0x20081ffc, 0xfeedbeef, 4);
     check(pico2.read(0x20081ffc, 4, 1) == 0xfeedbeef, "RP2350 RAM size/shared");
-    throws([&] { pico2.read(0xe000e010, 4); }, ErrorKind::Unsupported);
+    check(pico2.read(0xe000e010, 4) == 0, "RP2350 SysTick reset state");
+    throws([&] { pico2.read(0xe000ed28, 4); }, ErrorKind::Unsupported); // Fault status remains unmodelled.
 }
 void arithmeticTests() {
     Memory m;

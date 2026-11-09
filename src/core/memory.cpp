@@ -13,13 +13,13 @@ uint32_t unpack(const std::vector<uint8_t>& data, size_t at, unsigned size) {
     return result;
 }
 }
-Memory::Memory(Chip chip) : description_(describe(chip)), ram_(description_.ramSize), flash_(description_.flashSize, 0xff) { clear(); }
+Memory::Memory(Chip chip) : description_(describe(chip)), ram_(description_.ramSize), flash_(description_.flashSize, 0xff), peripherals_(chip) { clear(); }
 void Memory::clear() {
     std::fill(ram_.begin(), ram_.end(), 0);
     std::fill(flash_.begin(), flash_.end(), 0xff);
     system_ = {}; locks_.fill(false); fifoErrors_.fill(0);
-    fifo_[0].clear(); fifo_[1].clear(); gpioOut_ = gpioOe_ = 0;
-    timer_.reset();
+    fifo_[0].clear(); fifo_[1].clear();
+    peripherals_.reset();
 }
 void Memory::check(uint32_t address, unsigned size, unsigned core) const {
     if (core > 1 || (size != 1 && size != 2 && size != 4))
@@ -97,9 +97,16 @@ void Memory::load(uint32_t address, const std::vector<uint8_t>& bytes) {
     else throw Error(ErrorKind::InvalidImage, "Segment ELF hors Flash/SRAM du profil : " + hex(address), address);
 }
 uint32_t Memory::readDevice(uint32_t address, unsigned core, bool inspect) {
-    if (description_.chip == Chip::RP2040 && address >= 0x40054000 && address < 0x40058000)
-        return timer_.read(address - 0x40054000, inspect);
+    if (peripherals_.handles(address)) return peripherals_.read(address, inspect);
     auto& s = system_[core];
+    if (description_.chip == Chip::RP2350) {
+        switch (address) {
+        case 0xe000e104: case 0xe000e184: return static_cast<uint32_t>(s.enabled >> 32);
+        case 0xe000e204: case 0xe000e284: return static_cast<uint32_t>(s.pending >> 32);
+        case 0xe000e300: return static_cast<uint32_t>(s.active);
+        case 0xe000e304: return static_cast<uint32_t>(s.active >> 32);
+        }
+    }
     switch (address) {
     case 0xd0000000: return core;
     case 0xd0000050: return (fifo_[core].empty() ? 0u : 1u) | (fifo_[1-core].size() < 8 ? 2u : 0u) | fifoErrors_[core];
@@ -117,10 +124,8 @@ uint32_t Memory::readDevice(uint32_t address, unsigned core, bool inspect) {
         if (!inspect) locks_[index] = true;
         return available ? (uint32_t(1) << index) : 0;
     }
-    if (description_.chip == Chip::RP2040) {
+    {
         switch (address) {
-        case 0xd0000010: return gpioOut_;
-        case 0xd0000020: return gpioOe_;
         case 0xe000e010: {
             const auto result = s.systickCtrl | (s.systickCountFlag ? 0x10000u : 0u);
             if (!inspect) s.systickCountFlag = false;
@@ -128,8 +133,8 @@ uint32_t Memory::readDevice(uint32_t address, unsigned core, bool inspect) {
         }
         case 0xe000e014: return s.systickLoad;
         case 0xe000e018: return s.systickValue;
-        case 0xe000e100: case 0xe000e180: return s.enabled;
-        case 0xe000e200: case 0xe000e280: return s.pending;
+        case 0xe000e100: case 0xe000e180: return static_cast<uint32_t>(s.enabled);
+        case 0xe000e200: case 0xe000e280: return static_cast<uint32_t>(s.pending);
         case 0xe000ed08: return s.vtor;
         default: break;
         }
@@ -139,13 +144,17 @@ uint32_t Memory::readDevice(uint32_t address, unsigned core, bool inspect) {
         std::string(region ? "Registre non émulé : " + region->name : "Adresse non cartographiée") + " à " + hex(address), address);
 }
 void Memory::writeDevice(uint32_t address, uint32_t value, unsigned core) {
-    if (description_.chip == Chip::RP2040 && address >= 0x40054000 && address < 0x40058000) {
-        timer_.write(address - 0x40054000, value);
-        // Level lines can pend even without advancing the timer (e.g. INTF).
-        for (auto& s : system_) s.pending |= timer_.interrupts() & ~s.active;
-        return;
-    }
+    if (peripherals_.handles(address)) { peripherals_.write(address, value); updateInterrupts(); return; }
     auto& s = system_[core];
+    if (description_.chip == Chip::RP2350) {
+        const uint64_t high = uint64_t(value & 0xfffffu) << 32;
+        switch (address) {
+        case 0xe000e104: s.enabled |= high; return;
+        case 0xe000e184: s.enabled &= ~high; return;
+        case 0xe000e204: s.pending |= high; return;
+        case 0xe000e284: s.pending &= ~high; return;
+        }
+    }
     if (address == 0xd0000050) { fifoErrors_[core] &= ~(value & 12u); return; }
     if (address == 0xd0000054) {
         if (fifo_[1-core].size() == 8) fifoErrors_[core] |= 4u;
@@ -153,26 +162,18 @@ void Memory::writeDevice(uint32_t address, uint32_t value, unsigned core) {
         return;
     }
     if (address >= 0xd0000100 && address < 0xd0000180) { locks_[(address - 0xd0000100) / 4] = false; return; }
-    if (description_.chip == Chip::RP2040) {
+    {
         switch (address) {
-        case 0xd0000010: gpioOut_ = value; return;
-        case 0xd0000014: gpioOut_ |= value; return;
-        case 0xd0000018: gpioOut_ &= ~value; return;
-        case 0xd000001c: gpioOut_ ^= value; return;
-        case 0xd0000020: gpioOe_ = value; return;
-        case 0xd0000024: gpioOe_ |= value; return;
-        case 0xd0000028: gpioOe_ &= ~value; return;
-        case 0xd000002c: gpioOe_ ^= value; return;
         case 0xe000e010:
             if ((value & 1u) && !(value & 4u)) throw Error(ErrorKind::Unsupported, "Horloge SysTick externe non émulée", address);
             s.systickCtrl = value & 7u; return;
         case 0xe000e014: s.systickLoad = value & 0xffffffu; return;
         case 0xe000e018: s.systickValue = 0; s.systickCountFlag = false; return;
         case 0xe000e100: s.enabled |= value; return;
-        case 0xe000e180: s.enabled &= ~value; return;
+        case 0xe000e180: s.enabled &= ~uint64_t(value); return;
         case 0xe000e200: s.pending |= value; return;
-        case 0xe000e280: s.pending &= ~value; return;
-        case 0xe000ed08: s.vtor = value & 0xffffff00u; return;
+        case 0xe000e280: s.pending &= ~uint64_t(value); return;
+        case 0xe000ed08: s.vtor = value & (description_.chip == Chip::RP2350 ? 0xffffff80u : 0xffffff00u); return;
         default: break;
         }
     }
@@ -181,9 +182,9 @@ void Memory::writeDevice(uint32_t address, uint32_t value, unsigned core) {
 }
 void Memory::tick(unsigned core) {
     auto& s = system_.at(core);
-    if (description_.chip == Chip::RP2040 && (!fifo_[core].empty() || fifoErrors_[core]))
-        s.pending |= (1u << (15u + core)) & ~s.active;
-    if (description_.chip == Chip::RP2040) s.pending |= timer_.interrupts() & ~s.active;
+    if (!fifo_[core].empty() || fifoErrors_[core])
+        s.pending |= (uint64_t(1) << (description_.chip == Chip::RP2040 ? 15u + core : 25u)) & ~s.active;
+    s.pending |= peripherals_.interrupts() & ~s.active;
     if (!(s.systickCtrl & 1u)) return;
     if (s.systickValue == 0) s.systickValue = s.systickLoad;
     else if (--s.systickValue == 0) {
@@ -192,11 +193,13 @@ void Memory::tick(unsigned core) {
     }
 }
 void Memory::advanceTime(uint64_t virtualMicroseconds) {
-    if (description_.chip != Chip::RP2040) return;
-    timer_.advance(virtualMicroseconds);
-    for (auto& s : system_) s.pending |= timer_.interrupts() & ~s.active;
+    peripherals_.advance(virtualMicroseconds); updateInterrupts();
 }
-bool Memory::hasScheduledPeripheralEvent() const {
-    return description_.chip == Chip::RP2040 && timer_.hasScheduledAlarm();
+void Memory::updateInterrupts() {
+    for (auto& s : system_) s.pending |= peripherals_.interrupts() & ~s.active;
+}
+bool Memory::hasScheduledPeripheralEvent() const { return peripherals_.hasEvents(); }
+bool Memory::receiveUart(unsigned index, uint8_t byte) {
+    const bool accepted = peripherals_.receiveUart(index, byte); updateInterrupts(); return accepted;
 }
 }

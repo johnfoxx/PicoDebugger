@@ -139,8 +139,9 @@ void Debugger::reset() {
     memory.system(0).vtor = memory.system(1).vtor = image.hasVectors ? image.vectorAddress : 0;
     terminal_ = watchHit_ = skipBreakpoint_ = false; nextCore_ = 0; ++revision_;
     stop.kind = StopKind::Ready; stop.core = 0; stop.address = entry & ~1u;
-    stop.message = image.hasVectors ? "Reset du modèle : vecteurs ELF, cœur 1 retenu, Boot ROM non exécutée" :
-        "Démarrage direct à e_entry, SP au sommet SRAM (pas de vecteurs identifiés)";
+    stop.message = std::string("ELF direct : PC=") + hex(entry & ~1u) + " SP=" + hex(sp) +
+        (image.hasVectors ? " VTOR=" + hex(image.vectorAddress) : " ; pas de vecteurs identifiés") +
+        " ; Boot ROM non exécutée, resets périphériques relâchés, cœur 1 retenu";
 }
 void Debugger::startCore(unsigned core, uint32_t entry, uint32_t stack) {
     if (terminal_) throw Error(ErrorKind::InvalidArgument, "Reset requis avant de redémarrer un cœur après un arrêt terminal");
@@ -232,6 +233,13 @@ Stop Debugger::run(size_t budget) {
     return stop;
 }
 void Debugger::pause() { if (!terminal_) { stop.kind = StopKind::User; stop.message = "Pause demandée"; } }
+size_t Debugger::injectUart(unsigned index, const std::string& bytes) {
+    if (!loaded_ || terminal_ || index > 1) throw Error(ErrorKind::InvalidArgument, "Session/UART indisponible");
+    size_t accepted = 0;
+    for (unsigned char byte : bytes) if (memory.receiveUart(index, byte)) ++accepted;
+    ++revision_; // An RX overflow also changes state, even if no byte was accepted.
+    return accepted;
+}
 uint32_t Debugger::evaluate(const std::string& expression, unsigned core) const {
     if (core > 1 || expression.size() > 4096) throw Error(ErrorKind::InvalidArgument, "Expression/cœur invalide");
     return Expression(*this, core, expression).evaluate();

@@ -1,4 +1,4 @@
-# Couverture effective — v0.2.0
+# Couverture effective — extension Pico 2 après v0.2.0
 
 L'objectif initial est un débogueur complet, fiable sur le matériel réel. **Cette première implémentation ne satisfait pas encore cet objectif de fidélité complète.** La présence d'un périphérique dans la cartographie n'implique pas son émulation.
 
@@ -13,14 +13,18 @@ L'objectif initial est un débogueur complet, fiable sur le matériel réel. **C
 | ARMv8-M, sécurité, TrustZone, MPU | Non modélisé | Non |
 | FPU, DSP, accès exclusifs, division | Non | Non |
 | HardFault, SVC, cadre d'exception | Modèle de base MSP/PSP | Refus explicite |
-| NVIC | Enable/pending, priorités fixes | Non |
-| SysTick | Temps virtuel, horloge CPU uniquement | Non |
-| SIO CPUID/FIFO/spinlocks | Oui ; IRQ FIFO modélisées | Registres communs, sans IRQ |
-| SIO GPIO OUT/OE et SET/CLR/XOR | Latches de sortie uniquement | Non |
+| NVIC | Enable/pending, priorités fixes | Deux banques, IRQ0..51 ; entrée d'exception refusée |
+| SysTick | Temps virtuel, horloge CPU uniquement | Compteur/état virtuel ; entrée d'exception refusée |
+| SIO CPUID/FIFO/spinlocks | Oui ; IRQ FIFO modélisées | Oui ; IRQ FIFO en attente, pas d'entrée M33 |
+| SIO GPIO OUT/OE et SET/CLR/XOR | Latches de sortie uniquement | Latches bas/hauts aux adresses RP2350 |
 | Broches externes / pinmux | Non | Non |
-| Timer | Compteur 64 bits, quatre alarmes/IRQ ; temps virtuel | TIMER0/1 décrits, non émulés |
-| UART/SPI/I2C/clocks/resets | Non | Non |
-| PIO/DMA/USB/ADC/PWM/watchdog | Non | Non |
+| Timer | Compteur 64 bits, quatre alarmes/IRQ ; temps virtuel | TIMER0/1 indépendants, LOCKED/SOURCE, alarmes/IRQ ; temps virtuel |
+| UART0/1 | FIFO, loopback, TX/RX, IRQ et timeout virtuel | Idem, IRQ33/34 |
+| SPI0/1 | Maître loopback, FIFO et IRQ | Idem, IRQ31/32 |
+| PWM | 8 slices, compteurs/diviseur/wrap/IRQ | 12 slices, deux lignes IRQ |
+| RESETS | Reset des modèles présents, complétion immédiate | Idem, bits propres au RP2350 |
+| WATCHDOG | SCRATCH0..7 uniquement | SCRATCH0..7 uniquement |
+| I2C/clocks/PIO/DMA/USB/ADC | Non | Non |
 | Cache, contrôleur XIP, programmation Flash | Non | Non |
 | RISC-V Hazard3 | Sans objet | Non |
 | UF2/BIN/DWARF/démanglage C++ | Non ; ELF32 ARM + symboles | Idem |
@@ -49,7 +53,7 @@ Les watchpoints s'arrêtent **après** l'instruction, y compris sur les plages q
 
 La pile affichée est brute, sans reconstruction des appels C++. Les symboles proches ne prouvent pas qu'un mot de pile soit une adresse de retour.
 
-## Timer RP2040 et inspection des périphériques
+## Timers et inspection des périphériques
 
 Le module `Timer` couvre les registres de `0x40054000` à `0x40054040` : écriture du temps en deux parties, capture de la partie haute lors de la lecture CPU de TIMELR, lectures brutes, alarmes auto-désarmées, ARMED/INTR W1C, INTE/INTF/INTS et PAUSE. La capture haute est partagée entre les cœurs, comme le périphérique. L'inspection ne modifie pas cette capture. Les alias XOR/SET/CLR des registres RW sont pris en charge.
 
@@ -57,7 +61,9 @@ Les quatre lignes IRQ alimentent les deux contextes NVIC. Un niveau maintenu ne 
 
 La source watchdog/horloges n'est **pas** émulée : le timer avance sans initialisation du tick matériel. DBGPAUSE accepte les bits documentés et le module peut recevoir un masque de cœurs arrêtés, mais l'ordonnanceur n'émule pas les signaux de debug matériel. La pause hôte fige tout le temps virtuel. Les accès MMIO étroits, alias W1C, délais APB et comportements réservés restent hors couverture. Les tests sont fonctionnels ; pas de comparaison sur silicium effectuée.
 
-Le panneau **Périphériques** recense les blocs RP2040 et RP2350, y compris ceux sans modèle. Filtrage par nom, registre ou adresse ; fenêtre détachable avec `Ctrl+P`. Les tableaux montrent adresses, valeurs, accès et champs connus. Seuls SIO/PPB partiels et le timer RP2040 fournissent des valeurs ; les autres blocs affichent leur absence de modèle ou de description. TIMER0/1 du RP2350 ont une description de registres sans valeurs simulées. Aucun import exhaustif des registres/SVD n'est encore livré.
+Le panneau **Périphériques** recense les blocs RP2040 et RP2350, y compris ceux sans modèle. Filtrage par nom, registre ou adresse ; fenêtre détachable avec `Ctrl+P`. Double-cliquer sur un bloc ouvre une petite fenêtre indépendante, avec son propre contexte cœur. Les tableaux montrent adresses, valeurs, accès et champs connus. Les modèles ajoutés pour TIMER0/1, UART/SPI/PWM, RESETS, SIO/PPB et scratch WATCHDOG exposent leur état réel dans le moteur ; les blocs absents restent signalés. Aucun import exhaustif des registres/SVD n'est encore livré.
+
+Les particularités RP2350, la couverture exacte de chaque nouveau modèle, le démarrage ELF direct, les fenêtres UART et la correction Wayland sont détaillés dans [BOOT_AND_PERIPHERALS.md](BOOT_AND_PERIPHERALS.md). Le CPU M33 reste incomplet : rendre une IRQ visible dans NVIC ne rend pas son handler exécutable.
 
 Les bases proviennent des références officielles figées dans [REFERENCES.md](REFERENCES.md). La cartographie présente des fenêtres de décodage, parfois avec des réserves ; elle ne certifie pas la validité de chaque adresse. Les changements de valeur sont surlignés entre rafraîchissements cohérents.
 

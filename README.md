@@ -87,6 +87,19 @@ Panneaux déplaçables/redimensionnables :
 
 **F10** : pas instruction du cœur sélectionné. **F5** : exécuter les cœurs. **Maj+F5** : pause. **Ctrl+R** : reset/restart. **F9** : ajouter un breakpoint. Les tranches d'exécution sont courtes pour garder l'interface réactive. Toutes les vues d'une même révision proviennent du même état du modèle ; l'horodatage est celui de l'hôte, pas le temps matériel.
 
+Après v0.2.0, **double-cliquer sur un périphérique** ouvre une petite fenêtre indépendante : plusieurs fenêtres peuvent rester visibles, avec un contexte cœur propre à chacune. UART0/UART1 proposent une sortie TX et une injection RX. Les modèles couvrent désormais aussi TIMER0/TIMER1 du Pico 2, UART/SPI, PWM, RESETS, les sorties GPIO SIO RP2350, les banques NVIC et les scratch watchdog, avec les limites détaillées dans [Démarrage ELF et périphériques](docs/BOOT_AND_PERIPHERALS.md).
+
+La correction Wayland évite les demandes d'activation et le chemin de détachement par drag de Qt5 qui en émet une. Qt5 reste utilisable ; Qt6 peut être choisi avec `-DPICODBG_QT_MAJOR=6` dans un build séparé si son SDK est installé. L'interface Qt6 n'a pas été validée dans cette session.
+
+Pour essayer un ELF qui accède réellement aux périphériques du Pico 2 :
+
+```sh
+python3 examples/make_peripheral_demo.py build-gui/rp2350-peripherals.elf --chip rp2350
+./build-gui/pico-debugger --chip rp2350 build-gui/rp2350-peripherals.elf
+```
+
+Il démarre directement sur les vecteurs ELF, sans exécuter la ROM, émet `OK` par UART0, utilise PWM/GPIO/timer puis s'arrête sur `BKPT #3`. Un firmware Pico SDK arbitraire peut encore demander des services ROM, instructions ou périphériques absents. Ce mode de démarrage est indiqué dans le bandeau et le diagnostic PC/SP/VTOR.
+
 ## Exécutables et expressions
 
 ```sh
@@ -110,6 +123,9 @@ src/core/chip.cpp   profils mémoire et registres inspectables
 src/core/memory.cpp bus SRAM/Flash, SIO et PPB partiels
 src/core/timer.cpp  timer RP2040 : compteur, alarmes, IRQ en temps virtuel
 src/core/peripherals.cpp catalogue des blocs et métadonnées des registres
+src/core/peripheral_bus.cpp routage des périphériques, resets, GPIO et lignes IRQ
+src/core/serial.cpp UART/SPI : FIFO, transferts et interruptions
+src/core/pwm.cpp    PWM : slices, diviseur, double buffering et IRQ
 src/core/elf.cpp    chargeur ELF borné et symboles
 src/core/thumb.cpp  décodage commun exécution/désassemblage
 src/core/cpu.cpp    instructions, flags, pile, exceptions partielles
@@ -135,6 +151,8 @@ Si LeakSanitizer ne fonctionne pas sous `ptrace`, préfixer la dernière command
 Validation v0.1.0 : moteur et interface **compilés avec Qt 5.15**, 10 tests CTest réussis, dont démarrage et interactions graphiques en mode `offscreen`. Une capture de la vue d'ensemble a été produite et inspectée. Qt6, la compilation croisée ARM et la comparaison sur silicium restent à valider. Voir [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 La version **v0.2.0** porte ce total à **11 tests CTest**, dont neuf suites moteur également exécutées sous ASan/UBSan. Le tag `v0.1.0` conserve la base précédente ; voir [la liste des ajouts depuis ce tag](docs/RELEASES.md).
+
+L'extension Pico 2 ajoute les suites `devices` et `elf_peripheral_boot` : **13 tests avec Qt5**, dont 11 hors GUI, également exécutés sous ASan/UBSan. Le test ELF est disponible si Python3 est détecté par CMake. Les petites fenêtres sont testées pour leur contexte, leur rafraîchissement et leur cycle de fermeture.
 
 Quand Qt est présent, CTest ajoute un test de démarrage et un test d'interactions graphiques : visibilité simultanée des panneaux, pas, breakpoint, exécution, reset et restauration de l'agencement. Pour produire une capture lors de ce dernier test :
 

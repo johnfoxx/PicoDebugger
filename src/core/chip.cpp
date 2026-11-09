@@ -58,8 +58,16 @@ ChipDescription describe(Chip chip) {
     d.regions.push_back({0xd0000000, 0xd0001000ull, "SIO / accès propre au cœur", "MMIO", "CPUID, FIFO, spinlocks ; GPIO sortie RP2040"});
     d.regions.push_back({0xe0000000, pico2 ? 0xe0020000ull : 0xe0100000ull, "PPB / NVIC / SysTick / SCB (par cœur)", "MMIO", "Sous-ensemble ; RP2350 : non émulé"});
     if (pico2) d.regions.push_back({0xe0020000, 0xe0040000ull, "PPB_NONSEC", "MMIO", "Alias non sécurisé ; non émulé"});
-    if (!pico2) for (auto& region : d.regions)
-        if (region.begin == 0x40054000) region.coverage = "Timer 64 bits, 4 alarmes et IRQ ; temps virtuel, mots alignés";
+    for (auto& region : d.regions) {
+        if (region.name == "TIMER" || region.name == "TIMER0" || region.name == "TIMER1") region.coverage = "Timer 64 bits, alarmes/IRQ ; temps virtuel";
+        if (region.name == "UART0" || region.name == "UART1") region.coverage = "PL011 partiel : FIFO RX/TX, IRQ, loopback ; temps virtuel";
+        if (region.name == "SPI0" || region.name == "SPI1") region.coverage = "PL022 partiel : FIFO, loopback interne, IRQ ; pas d'esclave externe";
+        if (region.name == "PWM") region.coverage = "Compteurs, diviseur, wrap/IRQ ; pas de GPIO/DREQ";
+        if (region.name == "RESETS") region.coverage = "Reset des modèles présents ; lignes initialement relâchées (démarrage direct)";
+        if (region.name == "WATCHDOG") region.coverage = "SCRATCH0..7 uniquement ; compteur/reset non émulés";
+        if (region.begin == 0xd0000000) region.coverage = "CPUID, FIFO, spinlocks, latches GPIO ; pinmux et sécurité absents";
+        if (region.begin == 0xe0000000) region.coverage = "SysTick, NVIC enable/pending ; RP2350 : exceptions non émulées";
+    }
     std::sort(d.regions.begin(), d.regions.end(), [](const Region& a, const Region& b) { return a.begin < b.begin; });
     return d;
 }
@@ -75,16 +83,20 @@ std::vector<PeripheralRegister> inspectableRegisters(Chip chip) {
         {0xd0000058, "SIO.FIFO_RD", "Inspection sans dépiler ; zéro si FIFO vide"}
     };
     for (unsigned i = 0; i < 32; ++i) registers.push_back({0xd0000100u + i * 4u, "SIO.SPINLOCK" + std::to_string(i), "Inspection sans acquérir ; 0 = verrou pris"});
-    if (chip == Chip::RP2040) {
-        registers.push_back({0xd0000010, "SIO.GPIO_OUT", "Latch de sortie uniquement ; aucune broche externe simulée"});
-        registers.push_back({0xd0000020, "SIO.GPIO_OE", "Output enable"});
-        registers.push_back({0xe000e010, "SysTick.CSR", "Inspection sans effacer COUNTFLAG ; temps virtuel"});
-        registers.push_back({0xe000e014, "SysTick.RVR", "Valeur de rechargement 24 bits"});
-        registers.push_back({0xe000e018, "SysTick.CVR", "Compteur virtuel ; pas de cycles matériels"});
-        registers.push_back({0xe000e100, "NVIC.ISER", "Interruptions activées (priorités fixes uniquement)"});
-        registers.push_back({0xe000e200, "NVIC.ISPR", "Interruptions en attente"});
-        registers.push_back({0xe000ed08, "SCB.VTOR", "Table des vecteurs du contexte sélectionné"});
+    registers.push_back({0xd0000010, "SIO.GPIO_OUT", "Latch de sortie uniquement ; aucune broche externe simulée"});
+    registers.push_back({chip == Chip::RP2040 ? 0xd0000020u : 0xd0000030u, "SIO.GPIO_OE", "Output enable"});
+    if (chip == Chip::RP2350) {
+        registers.push_back({0xd0000014, "SIO.GPIO_HI_OUT", "GPIO32..47, QSPI/USB latches ; pas de sécurité/pinmux"});
+        registers.push_back({0xd0000034, "SIO.GPIO_HI_OE", "Output enable haut"});
+        registers.push_back({0xe000e104, "NVIC.ISER1", "Interruptions 32..51 activées ; entrée d'exception M33 non émulée"});
+        registers.push_back({0xe000e204, "NVIC.ISPR1", "Interruptions 32..51 en attente"});
     }
+    registers.push_back({0xe000e010, "SysTick.CSR", "Inspection sans effacer COUNTFLAG ; temps virtuel"});
+    registers.push_back({0xe000e014, "SysTick.RVR", "Valeur de rechargement 24 bits"});
+    registers.push_back({0xe000e018, "SysTick.CVR", "Compteur virtuel ; pas de cycles matériels"});
+    registers.push_back({0xe000e100, "NVIC.ISER0", "Interruptions 0..31 activées (priorités fixes)"});
+    registers.push_back({0xe000e200, "NVIC.ISPR0", "Interruptions 0..31 en attente"});
+    registers.push_back({0xe000ed08, "SCB.VTOR", "Table des vecteurs du contexte sélectionné"});
     return registers;
 }
 }

@@ -27,6 +27,12 @@ Périphérique : plage/couverture dans `chip.cpp`, accès CPU/inspection sépar�
 
 `peripherals.hpp/.cpp` décrit le catalogue matériel, les registres connus et leurs champs ; ces métadonnées sont séparées du comportement. `PeripheralPanel` en Qt lit uniquement `peek` : aucun rafraîchissement ne doit acquérir un spinlock, consommer une FIFO, acquitter une IRQ ou capturer la partie haute du timer. Il reconstruit son catalogue au changement de cible et conserve ses lignes lors des rafraîchissements ordinaires. Le panneau est un dock détachable, partagé avec la vue d'ensemble.
 
+L'extension Pico 2 extrait le routage des modèles partagés dans `PeripheralBus` : timers RP2040/RP2350, `Uart`/`Spi` PL011/PL022, `Pwm`, reset et latches GPIO/scratch. Les dispositifs série/PWM signalent des offsets de registre ; le bus les convertit en adresses cibles absolues pour les diagnostics. Les lignes IRQ sont stockées sur 64 bits afin de représenter notamment UART0/1 sur IRQ33/34 du RP2350. Les registres NVIC exposent les deux banques sans prétendre implémenter les exceptions M33.
+
+Les petites fenêtres possèdent des `PeripheralPanel` fixés à un nom et un sélecteur de cœur indépendant. Le contrôleur garde des `QPointer` vers les fenêtres ; leurs contrôles enfants ne sont utilisés qu'après vérification de ce pointeur. Une fermeture supprime la fenêtre, un changement de profil les ferme toutes, un reset met à jour les fenêtres restantes. L'injection UART passe par `Debugger::injectUart`, qui incrémente la révision, y compris lors d'un overflow.
+
+`window_policy.hpp` centralise l'affichage sans demande d'activation Wayland. La restriction du détachement par glisser-déposer concerne Qt5/Wayland et évite un appel interne à Qt ; elle ne masque aucun avertissement.
+
 ## Correspondance source C++
 
 `sourceHint(address)` fournit un symbole précédent + offset, pas une ligne C++. La GUI réserve une zone à côté de l'assembleur. La prochaine couche devra charger DWARF, gérer chemins de compilation et répertoires fournis par l'utilisateur, puis résoudre adresse → fichier/ligne/colonne.
