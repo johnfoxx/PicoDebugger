@@ -27,7 +27,7 @@ QT_QPA_PLATFORM=offscreen ./build-gui/picodbg_gui_tests build-gui/pico2-live.png
 
 ## Petites fenêtres
 
-Dans le catalogue des périphériques, **double-cliquer sur un bloc**, ou le sélectionner et utiliser **Ouvrir dans une petite fenêtre**. Plusieurs fenêtres peuvent rester ouvertes en même temps. Chaque fenêtre possède son propre sélecteur de cœur, conserve son périphérique et se rafraîchit avec le modèle. Fermer une fenêtre ne ferme pas les autres. Un changement de puce ferme les fenêtres de l'ancienne cible pour éviter de présenter des adresses d'un autre profil.
+Dans le catalogue des périphériques, **double-cliquer sur un bloc**, ou le sélectionner et utiliser **↗ Fenêtre**. Plusieurs fenêtres peuvent rester ouvertes en même temps. Chaque fenêtre possède son propre sélecteur de cœur, conserve son périphérique et se rafraîchit avec le modèle. Fermer une fenêtre ne ferme pas les autres. Un changement de puce ferme les fenêtres de l'ancienne cible pour éviter de présenter des adresses d'un autre profil.
 
 Les fenêtres UART0/UART1 comprennent la sortie TX (jusqu'aux derniers 64 Kio environ) et une entrée RX en texte UTF-8. **Injecter RX** met l'exécution en pause et indique le nombre d'octets acceptés. UARTEN/RXE doivent être activés et la FIFO doit avoir de la place. Aucun retour à la ligne n'est ajouté automatiquement. Lire les registres à l'écran ne consomme jamais les octets de la FIFO.
 

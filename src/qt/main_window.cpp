@@ -128,7 +128,10 @@ void MainWindow::buildUi() {
     auto* demo = file->addAction("Exemple intégré"); connect(demo, &QAction::triggered, this, [this] { loadDemo(); });
     file->addSeparator(); connect(file->addAction("Quitter"), &QAction::triggered, this, &QWidget::close);
     toolbar->addAction(open); toolbar->addAction(demo); toolbar->addSeparator();
-    chip_ = new ChoiceBox; chip_->addItems({"Pico / RP2040", "Pico 2 / RP2350 (expérimental)"});
+    chip_ = new ChoiceBox; chip_->addItems({"Pico / RP2040 (partiel)", "Pico 2 / RP2350 (partiel)"});
+    chip_->setItemData(0, "Émulation partielle : Thumb usuel, exceptions de base M0+ ; Boot ROM et nombreux périphériques absents.", Qt::ToolTipRole);
+    chip_->setItemData(1, "Émulation partielle : sous-ensemble Thumb ; Thumb-2 général, exceptions M33, FPU et TrustZone absents.", Qt::ToolTipRole);
+    chip_->setToolTip("Les deux profils sont partiels. Voir Aide → Couverture et limites pour leurs différences.");
     chip_->setObjectName("chipSelector");
     toolbar->addWidget(chip_);
     connect(chip_, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this, [this](int index) {

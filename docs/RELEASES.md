@@ -1,30 +1,73 @@
 # Versions
 
-## Après l'extension Pico 2 — inspection et correctifs Qt, 2026-11-09
+<a id="v0-3-0"></a>
 
-- Correction du chemin Qt5 de fermeture des listes déroulantes : retour du focus différé jusqu'au focus réel de la fenêtre, sans filtrage d'avertissement. Sélecteurs de puce/cœur et dialogues concernés.
-- Cause du message QSocketNotifier identifiée dans la trace utilisateur : initialisation IBus avant le dispatcher de Qt5/Wayland. Contournement limité au processus, préférence pour la saisie Wayland native, option `--qt-system-input` pour conserver IBus.
-- Option `--qt-diagnostics` : versions Qt, plateforme, saisie et pile des avertissements ciblés dès le démarrage.
-- Descriptions ADC, I2C, DMA et PIO des deux profils, sans les annoncer comme émulés ; différences des champs et adresses RP2350 prises en compte. Catalogue : 587/783 registres et 1 653/2 373 champs, alias DMA compris.
-- Détails des bits et significations symboliques (UART, SPI notamment), recherche de registre/champ/adresse, surlignage des valeurs modifiées et réutilisation du snapshot sans lectures MMIO supplémentaires.
-- Fenêtres périphériques indépendantes avec tableaux de registres et de champs ; détails repliables, agencement principal compact et documentation du fonctionnement.
-- Code séparé par famille de registre et composant d'inspection ; explicitation des limites M33 dans l'aide et la documentation.
-- Validation : 14 suites Qt5 réussies (après correction de l'agencement, la suite graphique a été relancée séparément) ; test de non-régression instrumenté des choix clavier/souris, du focus et de la politique IBus ; 11 017 vérifications de la suite périphériques réussies sous ASan/UBSan, détection des fuites désactivée ; parcours ELF UART TX/RX et captures des fenêtres. Qt6 et le compositeur Wayland natif ne sont pas validés depuis l'environnement de développement.
+## v0.3.0 — 2026-11-10
 
-Les tags existants restent inchangés. Le Cortex-M33 et l'émulation globale du Pico 2 restent incomplets.
+Delta depuis **v0.2.0** (`7194dac`). Cette version regroupe l'extension des modèles et fenêtres (`c25e8e9`), les descriptions de registres et corrections Qt (`7755988`), puis la préparation de version avec tutoriel complet et clarification des deux profils.
 
-## Après v0.2.0 — extension Pico 2, 2026-11-09
+```sh
+git log --oneline v0.2.0..v0.3.0
+git diff --stat v0.2.0..v0.3.0
+git diff v0.2.0..v0.3.0
+git show --no-patch v0.3.0
+```
 
-- Modèles TIMER0/TIMER1 RP2350, verrou LOCKED et sélection SOURCE en temps virtuel.
-- UART0/UART1 : FIFO RX/TX, loopback, états/masques/acquittements IRQ, seuils par franchissement, timeout virtuel et injection RX ; affichage TX dans la GUI.
-- SPI0/SPI1 en mode maître loopback, FIFO et IRQ ; PWM à 8/12 slices avec diviseur, double buffering, wrap et IRQ.
-- RESETS pour les modèles présents ; scratch WATCHDOG ; GPIO SIO propres au Pico 2 ; banques NVIC pour IRQ0..51 et SysTick RP2350. Les exceptions M33 restent explicitement absentes.
-- Plusieurs petites fenêtres de périphériques, contexte cœur indépendant, fermeture sans affecter les autres, rafraîchissement après pas/reset et fermeture au changement de profil.
-- Politique d'affichage Wayland sans demande d'activation, évitement du chemin de drag des docks Qt5 qui appelle `activateWindow()` ; sélection Qt5/Qt6 par CMake, version GUI issue de CMake.
-- Option graphique `--chip rp2350`, diagnostic explicite du démarrage ELF direct, ELF de démonstration périphériques pour les deux puces, tests fonctionnels et graphiques étendus.
-- Validation : 13 tests CTest Qt5 réussis, 11 tests hors GUI sous ASan/UBSan (fuites désactivées), parcours ELF + TX/RX dans la GUI et captures inspectées. Qt6 et Wayland natif restent non testés.
+### Ce qui change par rapport à v0.2.0
 
-Voir [les capacités, limites et instructions d'utilisation](BOOT_AND_PERIPHERALS.md). Cette extension n'est pas une émulation complète du RP2350 ; le tag `v0.2.0` reste inchangé.
+| Domaine | v0.2.0 | v0.3.0 |
+|---|---|---|
+| Timers Pico 2 | Registres décrits, sans modèle | TIMER0 et TIMER1 fonctionnels en temps virtuel |
+| UART / SPI / PWM | Sans modèles d'exécution | Modèles partiels pour les deux puces, détaillés ci-dessous |
+| Inspection périphériques | Explorateur unique détachable | Explorateur et plusieurs fenêtres indépendantes, détails des bits et filtres |
+| ADC / I2C / DMA / PIO | Blocs cartographiés | Registres et champs décrits, toujours sans modèle d'exécution |
+| Qt / Wayland | GUI Qt5 ; chemins internes d'activation encore présents | Choix Qt5/6, focus des listes corrigé, contournement IBus ciblé, diagnostics |
+| Information utilisateur | README et notes techniques | Définition précise, tutoriel complet, profils Pico et Pico 2 explicitement « partiels » |
+| Validation CTest Linux/Qt5/Python | 11 suites | 14 suites |
+
+### Modèles et démarrage
+
+- **RP2350 TIMER0/TIMER1** : compteurs, alarmes, IRQ, verrou LOCKED et sélection SOURCE. Le temps reste virtuel ; aucune précision de fréquence matérielle n'est ajoutée.
+- **UART0/UART1 des deux puces** : FIFO RX/TX, loopback interne, états/masques/acquittements IRQ, seuils par franchissement, timeout virtuel, capture TX et injection RX. Pas de timing baud, modem ou DMA.
+- **SPI0/SPI1** : mode maître Motorola en loopback interne, FIFO et IRQ. Pas de simulation d'esclave externe.
+- **PWM** : 8 slices RP2040 / 12 slices RP2350, compteur/diviseur, CC/TOP bufferisés, wrap et IRQ. Pas de signal électrique externe ni d'implémentation complète des modes d'entrée/diviseur.
+- **RESETS** : remise à zéro des modèles timer/UART/SPI/PWM présents ; **WATCHDOG** limité à SCRATCH0..7. Les domaines non modélisés et l'expiration du watchdog restent absents.
+- **Pico 2** : correction des offsets/latches GPIO SIO, banques NVIC pour IRQ0..51 et état SysTick. Les exceptions M33 restent explicitement refusées ; une IRQ visible ne garantit pas l'exécution du handler.
+- Diagnostic explicite du **démarrage ELF direct**, sans Boot ROM ; option graphique `--chip rp2040|rp2350` ; générateur `examples/make_peripheral_demo.py` pour des ELF autonomes UART/PWM/GPIO/timer sur les deux profils.
+
+### Inspection et ergonomie
+
+- **Plusieurs petites fenêtres de périphériques**, ouvertes par double-clic ou **↗ Fenêtre** ; déplacement/redimensionnement indépendants, contexte cœur propre, fermeture sans affecter les autres. Elles se rafraîchissent après pas/reset et se ferment au changement de puce.
+- Tableaux de registres et de **champs de bits** : positions, valeurs et significations symboliques, notamment UART/SPI ; recherche par registre/champ/adresse et détails repliables.
+- Descriptions **ADC, I2C, DMA et PIO** pour les deux puces, avec adresses et champs propres au RP2350. Catalogue livré : RP2040 **38 blocs / 587 registres / 1 653 champs** ; RP2350 **65 / 783 / 2 373**, alias DMA compris. Ce sont des descriptions, sans valeurs inventées pour les blocs non émulés.
+- Surlignage des changements, partage de l'instantané avec les autres vues et inspection sans effets de bord ; aucune lecture MMIO supplémentaire pour décoder les bits.
+- Affichage de la capture **UART TX** et saisie pour **injecter RX** dans la fenêtre UART ; agencement principal compact et détails repliables.
+
+### Qt et maintenance
+
+- Affichage des fenêtres sans demande d'activation ; évitement sous Qt5/Wayland du détachement par glisser-déposer dont le chemin interne appelle `activateWindow()`. **Ctrl+P** et les fenêtres indépendantes restent disponibles.
+- Correction du chemin de fermeture des listes Qt5 : retour du focus différé jusqu'au focus réel de leur fenêtre. Sélecteurs de puce/cœur et dialogues concernés ; les avertissements ne sont pas filtrés.
+- La trace utilisateur a localisé **QSocketNotifier** dans l'initialisation IBus avant le dispatcher Qt5/Wayland. Le contournement, limité au processus et au cas `QT_IM_MODULE=ibus`, laisse Qt choisir sa saisie Wayland native avec repli `compose`. `--qt-system-input` préserve la sélection système.
+- **`--qt-diagnostics`** affiche versions Qt, plateforme, saisie et pile des avertissements ciblés dès le démarrage ; aucun réglage du bureau n'est modifié.
+- Choix **Qt5/Qt6** via `PICODBG_QT_MAJOR`, version GUI issue de CMake. Le moteur reste C++11 ; seule la GUI Qt6 requiert C++17.
+- Séparation du bus périphérique, des modèles série/PWM, des descriptions par famille et du composant Qt d'inspection des registres.
+- **Version CMake 0.3.0** ; menu et noms de profils harmonisés en « partiel » pour RP2040 et RP2350, avec infobulles expliquant les différences CPU.
+- [README](../README.md) réécrit : définition exacte du logiciel, fonctions disponibles et limites. Nouveau [tutoriel complet](TUTORIAL.md) : menus/raccourcis, pas, arrêts, expressions, mémoire/pile, multicœur, fenêtres de périphériques, UART, chargement ELF, dépannage Qt, CLI et cas d'usage.
+
+### Validation
+
+- **14 suites CTest Linux / Qt 5.15.15 / Python 3**, exécutées sur la version préparée. Nouvelles suites depuis v0.2.0 : `devices`, `elf_peripheral_boot`, `qt_popup_activation` ; tests graphiques existants étendus. GUI testée en `offscreen`.
+- Vérification des exemples du tutoriel : pas et compteur, breakpoint avant écriture, watchpoint après écriture, scénario multicœur et ELF périphériques des deux profils. La GUI annonce **PicoDebugger 0.3.0**.
+- Pendant les commits inclus dans cette version : 11 suites hors GUI sous ASan/UBSan et 11 017 vérifications de la suite périphériques, détection des fuites désactivée ; parcours ELF UART TX/RX dans la GUI et captures inspectées.
+- **Qt6, le compositeur Wayland natif et la conformité au silicium ne sont pas validés** par ces contrôles. Les tests de focus sous `offscreen` ne prouvent pas la disparition de tout avertissement sur un bureau Wayland réel.
+
+### Ce qui n'est pas nouveau ou reste absent
+
+Le chargement ELF, les deux contextes CPU, les vues registres/mémoire/pile/assembleur, les breakpoints/watchpoints et les expressions existaient déjà dans v0.2.0. MOVW/MOVT et CBZ/CBNZ ne sont pas des ajouts CPU de cette version.
+
+**Aucun des deux profils n'est complet.** Le RP2040 possède un modèle d'exceptions de base plus avancé ; le RP2350 n'a toujours pas de moteur ARMv8-M complet, de Thumb-2 général, de FPU, de TrustZone ou d'entrées d'exception M33. Boot ROM, nombreux périphériques, accès SWD/GDB à une carte, source C++/DWARF, simulation Wi-Fi et garantie d'exécution de tout firmware SDK restent absents. Voir [la couverture](COVERAGE.md) et [les modèles de périphériques](BOOT_AND_PERIPHERALS.md).
+
+Le tag **annoté `v0.3.0`** porte ce delta ; `v0.2.0` et `v0.1.0` restent inchangés. Commit et tag locaux : aucun dépôt distant n'est configuré.
 
 ## v0.2.0 — 2026-11-08
 

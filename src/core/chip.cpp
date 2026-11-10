@@ -6,7 +6,7 @@ ChipDescription describe(Chip chip) {
     ChipDescription d;
     d.chip = chip;
     const bool pico2 = chip == Chip::RP2350;
-    d.name = pico2 ? "RP2350 / Cortex-M33 (sous-ensemble expérimental)" : "RP2040 / Cortex-M0+ (modèle fonctionnel partiel)";
+    d.name = pico2 ? "RP2350 / Cortex-M33 (modèle fonctionnel partiel)" : "RP2040 / Cortex-M0+ (modèle fonctionnel partiel)";
     d.ramSize = pico2 ? 520u * 1024u : 264u * 1024u;
     d.flashSize = pico2 ? 4u * 1024u * 1024u : 2u * 1024u * 1024u;
     d.regions = {
