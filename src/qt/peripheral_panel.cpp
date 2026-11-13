@@ -24,7 +24,7 @@ QString fieldText(const RegisterDescription& reg, uint32_t value) {
     return fields.join("  ");
 }
 }
-PeripheralPanel::PeripheralPanel(QWidget* parent, const QString& pinnedDevice) : QWidget(parent), pinnedDevice_(pinnedDevice) {
+PeripheralPanel::PeripheralPanel(QWidget* parent, const QString& pinnedDevice, bool expanded) : QWidget(parent), pinnedDevice_(pinnedDevice) {
     auto* layout = new QVBoxLayout(this); layout->setContentsMargins(4, 4, 4, 4);
     filter_ = new QLineEdit; filter_->setObjectName("peripheralFilter");
     filter_->setClearButtonEnabled(true); filter_->setAccessibleName("Rechercher un périphérique");
@@ -53,13 +53,23 @@ PeripheralPanel::PeripheralPanel(QWidget* parent, const QString& pinnedDevice) :
     registerTools->addWidget(registerFilter_, 1);
     registerLayout->addLayout(registerTools);
     inspector_ = new RegisterInspector;
-    auto* registerViews = new QStackedWidget;
-    registerViews->addWidget(registers_); registerViews->addWidget(inspector_);
-    registerLayout->addWidget(registerViews, 1);
+    QStackedWidget* registerViews = nullptr;
+    if (expanded) {
+        auto* details = new QSplitter(Qt::Vertical);
+        details->setObjectName("registerDetailsSplitter"); details->setChildrenCollapsible(false);
+        details->addWidget(registers_); details->addWidget(inspector_);
+        details->setSizes({300, 220}); registerLayout->addWidget(details, 1);
+        registers_->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Stretch);
+    } else {
+        registerViews = new QStackedWidget;
+        registerViews->addWidget(registers_); registerViews->addWidget(inspector_);
+        registerLayout->addWidget(registerViews, 1);
+    }
     detail_ = new QLabel; detail_->setWordWrap(true); detail_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     // Long device prose is available from the context tooltip. Keeping it
     // outside the layout leaves room for values/fields on a laptop screen.
     detail_->hide();
+    if (expanded) { detail_->show(); detail_->setMaximumHeight(48); }
     auto* split = new QSplitter(Qt::Horizontal); split->setChildrenCollapsible(false);
     split->addWidget(catalog_); split->addWidget(registerPane); split->setSizes({210, 620});
     open_ = new QPushButton("Inspecter"); open_->setObjectName("openDeviceWindowButton");
@@ -68,10 +78,17 @@ PeripheralPanel::PeripheralPanel(QWidget* parent, const QString& pinnedDevice) :
     bits->setToolTip("Afficher les champs et la signification des bits du registre sélectionné");
     registerTools->addWidget(bits);
     auto* tools = new QHBoxLayout; tools->addWidget(filter_, 1); tools->addWidget(open_);
+    if (pinnedDevice_.isEmpty() && !expanded) {
+        auto* separate = new QPushButton("↗ Fenêtre"); separate->setObjectName("openPeripheralExplorerButton");
+        separate->setToolTip("Ouvrir la fenêtre des périphériques et garder le code visible (Ctrl+Maj+I)");
+        tools->addWidget(separate);
+        connect(separate, &QPushButton::clicked, this, [this] { if (openExplorer) openExplorer(); });
+    }
     empty_ = new QLabel("Aucun périphérique ne correspond. Effacez le filtre pour retrouver le catalogue.");
     empty_->setWordWrap(true); empty_->hide(); empty_->setObjectName("peripheralEmptyState");
     layout->addLayout(tools); layout->addWidget(context_); layout->addWidget(empty_); layout->addWidget(split, 1); layout->addWidget(detail_);
-    connect(bits, &QPushButton::toggled, this, [registerViews, bits](bool checked) {
+    if (expanded) { bits->hide(); open_->setText("Isoler ce périphérique"); }
+    else connect(bits, &QPushButton::toggled, this, [registerViews, bits](bool checked) {
         registerViews->setCurrentIndex(checked ? 1 : 0); bits->setText(checked ? "Registres" : "Bits");
     });
     connect(registerFilter_, &QLineEdit::textChanged, this, [this] { filterRegisters(); });
@@ -133,7 +150,7 @@ void PeripheralPanel::selectDevice() {
     open_->setEnabled(selected_ >= 0);
     inspector_->clear();
     registers_->setRowCount(0);
-    if (selected_ < 0) { detail_->clear(); return; }
+    if (selected_ < 0) { detail_->clear(); context_->setToolTip({}); if (selectionChanged) selectionChanged({}); return; }
     const auto& device = devices_.at(static_cast<size_t>(selected_));
     detail_->setText(q(device.name + " @ " + hex(device.base) + " — " + device.note) +
         (device.registers.empty() ? "\nRegistres non décrits dans cette version ; aucune valeur n'est inventée." : "\nLecture d'inspection sans effet de bord."));
@@ -149,6 +166,15 @@ void PeripheralPanel::selectDevice() {
         }
     }
     filterRegisters(); refreshValues();
+    if (selectionChanged) selectionChanged(selectedDevice());
+}
+void PeripheralPanel::focusDevice(const QString& name) {
+    const bool general = name.isEmpty();
+    filter_->setVisible(general); catalog_->setVisible(general); open_->setVisible(general);
+    if (general) { applyFilter(); return; }
+    filter_->clear(); registerFilter_->clear();
+    const auto matches = catalog_->findItems(name, Qt::MatchExactly, 0);
+    if (!matches.isEmpty()) catalog_->setCurrentItem(matches.front());
 }
 void PeripheralPanel::refreshValues() {
     if (!debugger_ || selected_ < 0) return;

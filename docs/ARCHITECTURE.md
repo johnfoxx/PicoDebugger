@@ -41,6 +41,12 @@ Les descriptions complémentaires sont réparties par famille dans `src/core/reg
 
 `RegisterInspector` est une vue sans accès au bus. `PeripheralPanel` lui transmet la valeur brute du même snapshot que le tableau, ou un état indisponible. Ne jamais remplacer un état inconnu par une valeur de reset. Le filtre agit sur les lignes de registres ; les fenêtres indépendantes conservent leur filtre, leur sélection et leur contexte.
 
+`BoardDescription` décrit Pico/Pico W/Pico 2/Pico 2 W séparément de `ChipDescription`. `Debugger(Board)` choisit le bus RP2040/RP2350 correspondant ; l'ancien constructeur `Debugger(Chip)` reste compatible et sélectionne la carte sans Wi-Fi. Le CYW43 externe est une information de câblage, sans adresse MMIO fictive.
+
+`PeripheralExplorer` possède une fenêtre autonome avec son contexte cœur et son choix de périphérique. Il réutilise `PeripheralPanel` en mode étendu, qui affiche registres et champs dans un splitter, et `UartTerminal`, partagé avec les inspecteurs existants. `BoardPanel` fournit les mêmes informations de carte dans les deux fenêtres. Les callbacks retournent au contrôleur principal pour toutes les mutations.
+
+`Debugger::virtualTime()` compte les quanta depuis reset. `clockQuantum()` applique la même politique aux périphériques et SysTick en pas/exécution et en avance avec CPU figés. `runFor` respecte le budget d'ordonnancement et les arrêts habituels ; `advanceTime` ne fait pas entrer les CPU dans les handlers. `VirtualTimePanel` émet une demande ; le contrôleur l'exécute par petits lots et conserve la durée restante. La commande Pause, un changement de cible ou un chargement annule cette durée. Les tests `boards`, `virtual_time` et `qt_session` couvrent ces comportements, en complément des régressions existantes.
+
 ## Correspondance source C++
 
 `sourceHint(address)` fournit un symbole précédent + offset, pas une ligne C++. La GUI réserve une zone à côté de l'assembleur. La prochaine couche devra charger DWARF, gérer chemins de compilation et répertoires fournis par l'utilisateur, puis résoudre adresse → fichier/ligne/colonne.

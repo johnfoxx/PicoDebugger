@@ -17,21 +17,23 @@ Ce guide décrit les fonctions disponibles et l'interface réorganisée après v
 11. [Cas d'usage](#11-cas-dusage)
 12. [CLI et automatisation](#12-cli-et-automatisation)
 
+Pour les ajouts après v0.4.0 : [fenêtre de périphériques et navigation](INTERFACE.md), [temps virtuel](VIRTUAL_TIME.md), [cartes W et compatibilité ELF](BOARDS.md).
+
 ## 1. Première session et commandes de la GUI
 
 ```sh
 ./build-gui/pico-debugger --demo
 ```
 
-La fenêtre s'ouvre maximisée. Garder **Pico / RP2040 (partiel)** et **Contexte : cœur 0** pour les chapitres 1 à 6. Le cœur 0 est arrêté avant la première instruction ; le cœur 1 est **RETENU**. La sélection d'un cœur ne le démarre pas.
+La fenêtre s'ouvre maximisée. Garder **Pico / RP2040** et **Contexte : cœur 0** pour les chapitres 1 à 6. Le cœur 0 est arrêté avant la première instruction ; le cœur 1 est **RETENU**. La sélection d'un cœur ne le démarre pas.
 
-Les deux profils du sélecteur sont partiels : celui du RP2040 possède un modèle d'exceptions plus avancé, celui du RP2350 refuse encore les entrées d'exception M33. L'aide détaille les autres différences. Ce libellé porte sur la simulation du logiciel, pas sur la fiabilité de la carte physique.
+Les quatre cartes du sélecteur utilisent deux modèles de puces partiels : celui du RP2040 possède un modèle d'exceptions plus avancé, celui du RP2350 refuse encore les entrées d'exception M33. L'aide détaille les autres différences. Ce libellé porte sur la simulation du logiciel, pas sur la fiabilité de la carte physique.
 
 | Action | Accès |
 |---|---|
 | Charger un ELF | **Fichier → Ouvrir un ELF…**, barre d'outils, `Ctrl+O` sous Linux |
 | Recharger l'exemple intégré | **Fichier → Exemple intégré**, barre d'outils |
-| Choisir la puce / le contexte cœur | Les deux listes de la barre d'outils |
+| Choisir la carte / le contexte cœur | Les deux listes de la barre d'outils |
 | Pas instruction du cœur sélectionné | **Débogage → Pas instruction**, `F10` |
 | Exécuter tous les cœurs démarrés | **Débogage → Exécuter les cœurs**, `F5` |
 | Pause | **Débogage → Pause**, `Maj+F5` |
@@ -42,6 +44,9 @@ Les deux profils du sélecteur sont partiels : celui du RP2040 possède un modè
 | Afficher/masquer un panneau | Entrée correspondante du menu **Vues** |
 | Restaurer la disposition initiale | **Vues → Rétablir la disposition initiale**, `Ctrl+Maj+0` |
 | Ouvrir le catalogue périphériques | **Vues → Catalogue des périphériques**, `Ctrl+P` ou `Ctrl+2` |
+| Ouvrir la fenêtre autonome des périphériques | **Vues → Fenêtre des périphériques…**, `Ctrl+Maj+I` |
+| Avancer le temps virtuel | **Vues → Temps virtuel**, `Ctrl+6` |
+| Voir les connexions de la carte | **Vues → Carte et câblage**, `Ctrl+7` |
 | Rassembler les inspecteurs détachés | **Vues → Rassembler les inspecteurs**, `Ctrl+Maj+P` |
 | Ajouter une expression | **Débogage → Ajouter une expression surveillée…**, `Ctrl+E` |
 | Choisir Code / Mémoire / Pile / Console | `Ctrl+1` / `Ctrl+3` / `Ctrl+4` / `Ctrl+5` |

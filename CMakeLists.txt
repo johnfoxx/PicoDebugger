@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(PicoDebugger VERSION 0.4.0 LANGUAGES CXX)
+project(PicoDebugger VERSION 0.5.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -10,7 +10,7 @@ set(PICODBG_QT_MAJOR "AUTO" CACHE STRING "Qt major version: AUTO, 5 or 6")
 set_property(CACHE PICODBG_QT_MAJOR PROPERTY STRINGS AUTO 5 6)
 
 add_library(picodbg_core
-    src/core/chip.cpp src/core/memory.cpp src/core/elf.cpp
+    src/core/chip.cpp src/core/board.cpp src/core/memory.cpp src/core/elf.cpp
     src/core/thumb.cpp src/core/cpu.cpp src/core/debugger.cpp
     src/core/timer.cpp src/core/peripherals.cpp src/core/peripheral_bus.cpp
     src/core/serial.cpp src/core/pwm.cpp
@@ -46,7 +46,8 @@ if(PICODBG_GUI)
             find_package(Qt6 REQUIRED COMPONENTS Widgets)
         endif()
         add_library(picodbg_widgets src/qt/main_window.cpp src/qt/peripheral_panel.cpp src/qt/choice_box.cpp
-            src/qt/register_inspector.cpp src/qt/inspection_workspace.cpp src/qt/peripheral_inspection.cpp)
+            src/qt/register_inspector.cpp src/qt/inspection_workspace.cpp src/qt/peripheral_inspection.cpp
+            src/qt/board_panel.cpp src/qt/uart_terminal.cpp src/qt/peripheral_explorer.cpp src/qt/virtual_time_panel.cpp)
         target_include_directories(picodbg_widgets PUBLIC src/qt)
         target_link_libraries(picodbg_widgets PUBLIC picodbg_core Qt${QT_VERSION_MAJOR}::Widgets)
         if(QT_VERSION_MAJOR EQUAL 6)
@@ -62,6 +63,11 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(picodbg_session_tests tests/test_session.cpp)
+    target_link_libraries(picodbg_session_tests PRIVATE picodbg_core)
+    add_test(NAME boards COMMAND picodbg_session_tests boards)
+    add_test(NAME virtual_time COMMAND picodbg_session_tests time)
+    set_tests_properties(boards virtual_time PROPERTIES TIMEOUT 20)
     add_executable(picodbg_tests tests/test_main.cpp)
     target_link_libraries(picodbg_tests PRIVATE picodbg_core)
     foreach(suite memory arithmetic control load_store exceptions decoder debugger elf)
@@ -89,6 +95,10 @@ if(BUILD_TESTING)
         target_link_libraries(picodbg_gui_tests PRIVATE picodbg_widgets)
         add_test(NAME qt_interactions COMMAND picodbg_gui_tests)
         set_tests_properties(qt_interactions PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 15)
+        add_executable(picodbg_session_gui_tests tests/test_session_gui.cpp)
+        target_link_libraries(picodbg_session_gui_tests PRIVATE picodbg_widgets)
+        add_test(NAME qt_session COMMAND picodbg_session_gui_tests)
+        set_tests_properties(qt_session PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 20)
         if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND QT_VERSION_MAJOR EQUAL 5)
             add_executable(picodbg_popup_tests tests/test_popup_activation.cpp)
             target_link_libraries(picodbg_popup_tests PRIVATE picodbg_widgets ${CMAKE_DL_LIBS})

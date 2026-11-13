@@ -24,7 +24,23 @@ Sans ELF, la page d'accueil propose **Ouvrir un ELF** et **Essayer l'exemple**. 
 
 Pour comparer deux contextes du même périphérique, utiliser **⋯ → Dupliquer l'inspection**, puis choisir un autre cœur dans la copie. Chacune peut être détachée. L'ouverture normale évite les doublons accidentels ; la duplication reste explicite.
 
-Un changement de puce ferme tous les inspecteurs, onglets et fenêtres. Reset et chargement d'un autre ELF dans le même profil actualisent les vues existantes.
+Un changement de carte ferme tous les inspecteurs, onglets et fenêtres. Reset et chargement d'un autre ELF dans le même profil actualisent les vues existantes.
+
+## Garder le code visible avec une fenêtre de périphériques
+
+**Vues → Fenêtre des périphériques…** (`Ctrl+Maj+I`) ouvre un espace indépendant. Le bouton **↗ Fenêtre** du catalogue intégré donne le même accès. L'ouverture répétée retrouve cette fenêtre ; elle ne remplace pas l'onglet actif de la fenêtre principale. Conserver **Code** (`Ctrl+1`) pour suivre l'assembleur en parallèle.
+
+- **Vue générale** : catalogue filtrable à gauche, registres et détails du registre sélectionné à droite. Double-cliquer un bloc ou choisir **Isoler ce périphérique** passe à sa vue dédiée.
+- **Périphérique précis** : le choix **Vue** masque le catalogue pour donner toute la largeur aux registres. Les champs de bits et leurs significations restent visibles sous le tableau, avec un séparateur redimensionnable. Tous les registres décrits restent accessibles par défilement et filtre ; la couverture des descriptions n'est pas exhaustive pour tous les blocs.
+- **Contexte cœur** : indépendant de celui utilisé pour F10 et l'assembleur. Les valeurs suivent les pas, exécutions, resets et avances du temps sans effet de bord.
+- **UART0/1** : un onglet TX/RX apparaît pour le périphérique sélectionné. Changer de vue conserve le texte non envoyé de chaque UART. Injecter RX met l'exécution en pause.
+- **Carte et câblage** : rappelle la carte et ses connexions. Sur W, l'entrée CYW43 mène à ces informations ; son état radio reste non émulé.
+
+Fermer cette fenêtre ne change pas les onglets de l'application. **Rassembler** concerne les inspecteurs détachés depuis les onglets ; cette fenêtre autonome reste indépendante. Un changement de carte la ferme. Les tableaux en onglets conservent leur navigation compacte Registres/Bits.
+
+## Temps virtuel et cartes
+
+**Ctrl+6** ouvre les commandes d'avance en µs/ms, avec exécution du firmware ou CPU figés. Le temps courant reste visible et cliquable dans la barre d'état. **Ctrl+7** affiche le câblage de la carte choisie. Voir [le mode d'emploi du temps](VIRTUAL_TIME.md) et [les quatre cartes](BOARDS.md).
 
 ## Navigation rapide
 
@@ -40,6 +56,9 @@ Un changement de puce ferme tous les inspecteurs, onglets et fenêtres. Reset et
 | Ctrl+3 | Mémoire |
 | Ctrl+4 | Pile du cœur sélectionné |
 | Ctrl+5 | Console et `print` |
+| Ctrl+6 | Temps virtuel |
+| Ctrl+7 | Carte et câblage |
+| Ctrl+Maj+I | Fenêtre indépendante des périphériques |
 | Ctrl+Maj+P | Rassembler les inspecteurs détachés |
 | Ctrl+Maj+0 | Rétablir la disposition initiale, sans fermer les inspecteurs |
 

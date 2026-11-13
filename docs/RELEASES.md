@@ -1,5 +1,19 @@
 # Versions
 
+## v0.5.0 — évolution après v0.4.0 (non taguée)
+
+Le tag annoté **v0.4.0**, commit **7f2fb30**, a été créé avant ces changements avec le changelog complet depuis v0.3.0 dans le commit et l'annotation.
+
+- Fenêtre autonome des périphériques (`Ctrl+Maj+I`) : vue générale ou bloc précis, registres et bits simultanés, contexte cœur indépendant, filtres, UART TX/RX, valeurs synchronisées avec l'assembleur. Les onglets et inspecteurs détachables existants restent disponibles.
+- Commandes graphiques du temps virtuel (`Ctrl+6`) : horloge de session, avance en µs/ms avec firmware ou CPU figés, durée restante, pause interruptible et remise à zéro au reset. Breakpoints, fautes et attente peuvent interrompre le mode firmware ; l'avance avec CPU figés laisse les IRQ pendantes.
+- Quatre cartes : Pico, Pico W, Pico 2, Pico 2 W. Métadonnées de câblage séparées de la puce ; LED GPIO25 ou CYW43 correctement identifiée, informations accessibles avec `Ctrl+7`. La GUI accepte aussi `--board`.
+- Les cartes W partagent la cartographie MMIO du SoC correspondant. Le CYW43 externe et ses GPIO/LED/radio restent non émulés ; aucune compatibilité ELF universelle ni détection automatique de carte n'est annoncée.
+- Modules séparés `BoardDescription`, `BoardPanel`, `PeripheralExplorer`, `UartTerminal` et `VirtualTimePanel`. L'API moteur reste C++11 et indépendante de Qt.
+- Documentation de l'interface et tutoriel actualisés ; nouveaux guides [BOARDS.md](BOARDS.md) et [VIRTUAL_TIME.md](VIRTUAL_TIME.md).
+- Validation : **17 suites CTest Linux/Qt5**, dont trois nouvelles suites pour les cartes, le temps virtuel et les interactions de session. Contrôles graphiques offscreen à 1280×800 et essai UART TX/RX dans la nouvelle fenêtre avec un ELF de démonstration RP2350 sur le profil Pico 2 W ; Qt6, Wayland natif et comparaison sur silicium non validés.
+- Aucun ajout CLI dans cette évolution, conformément au choix utilisateur. La couverture d'émulation CPU et radio reste inchangée.
+
+
 ## v0.4.0 — 2026-11-13
 
 Delta depuis **v0.3.0** (`8975932`). Jalon conservant la refonte ergonomique et l’exemple de boot avant les prochaines évolutions.

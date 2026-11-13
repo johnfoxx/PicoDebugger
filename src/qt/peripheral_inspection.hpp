@@ -4,7 +4,7 @@
 #include <functional>
 
 class QComboBox;
-class QPlainTextEdit;
+class UartTerminal;
 class QPushButton;
 class PeripheralPanel;
 
@@ -23,6 +23,6 @@ private:
     QComboBox* core_;
     PeripheralPanel* panel_;
     QPushButton* detach_;
-    QPlainTextEdit* output_ = nullptr;
+    UartTerminal* terminal_ = nullptr;
     int uart_ = -1;
 };

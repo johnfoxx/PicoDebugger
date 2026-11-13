@@ -4,6 +4,9 @@
 #include "choice_box.hpp"
 #include "inspection_workspace.hpp"
 #include "peripheral_inspection.hpp"
+#include "peripheral_explorer.hpp"
+#include "virtual_time_panel.hpp"
+#include "board_panel.hpp"
 #include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
@@ -165,14 +168,19 @@ void MainWindow::buildUi() {
     demo->setIconText("Exemple");
     file->addSeparator(); connect(file->addAction("Quitter"), &QAction::triggered, this, &QWidget::close);
     toolbar->addAction(open); toolbar->addAction(demo); toolbar->addSeparator();
-    chip_ = new ChoiceBox; chip_->addItems({"Pico / RP2040 (partiel)", "Pico 2 / RP2350 (partiel)"});
-    chip_->setItemData(0, "Émulation partielle : Thumb usuel, exceptions de base M0+ ; Boot ROM et nombreux périphériques absents.", Qt::ToolTipRole);
-    chip_->setItemData(1, "Émulation partielle : sous-ensemble Thumb ; Thumb-2 général, exceptions M33, FPU et TrustZone absents.", Qt::ToolTipRole);
-    chip_->setToolTip("Les deux profils sont partiels. Voir Aide → Couverture et limites pour leurs différences.");
+    chip_ = new ChoiceBox;
+    for (const auto board : {Board::Pico, Board::Pico2, Board::PicoW, Board::Pico2W}) {
+        const auto description = describeBoard(board);
+        chip_->addItem(q(description.name) + (description.chip == Chip::RP2040 ? " / RP2040" : " / RP2350"), static_cast<int>(board));
+        chip_->setItemData(chip_->count() - 1, q(description.name) + " · simulation partielle · " +
+            (description.wireless ? "LED sur CYW43, radio non émulée. " : "LED sur GPIO25. ") +
+            "Choisir un ELF pour cette carte. Voir Carte et câblage et Aide → Couverture et limites.", Qt::ToolTipRole);
+    }
+    chip_->setToolTip("Carte cible ; les quatre profils sont partiels. Le changement de carte vide la session.");
     chip_->setObjectName("chipSelector");
     toolbar->addWidget(chip_);
     connect(chip_, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this, [this](int index) {
-        setRunning(false); closeInspections(); debugger_.reset(new Debugger(index == 0 ? Chip::RP2040 : Chip::RP2350));
+        setRunning(false); closeInspections(); debugger_.reset(new Debugger(static_cast<Board>(chip_->itemData(index).toInt())));
         imageName_.clear(); previousValid_ = false; fillMapping(); refresh(); log("Profil changé : charger un ELF pour ce profil.");
     });
     toolbar->addSeparator();
@@ -184,7 +192,7 @@ void MainWindow::buildUi() {
     connect(stepAction_, &QAction::triggered, this, [this] { singleStep(); });
     runAction_ = debug->addAction("Exécuter les cœurs"); runAction_->setShortcut(QKeySequence(Qt::Key_F5));
     runAction_->setObjectName("runAction");
-    connect(runAction_, &QAction::triggered, this, [this] { setRunning(true); });
+    connect(runAction_, &QAction::triggered, this, [this] { setRunning(false); setRunning(true); refresh(); });
     pauseAction_ = debug->addAction("Pause"); pauseAction_->setShortcut(QKeySequence("Shift+F5"));
     pauseAction_->setObjectName("pauseAction");
     connect(pauseAction_, &QAction::triggered, this, [this] { setRunning(false); debugger_->pause(); refresh(); });
@@ -294,11 +302,15 @@ void MainWindow::buildUi() {
     peripherals_ = new PeripheralPanel;
     peripherals_->setObjectName("peripheralCatalogPage");
     peripherals_->openDevice = [this](const QString& name) { openPeripheral(name); };
+    peripherals_->openExplorer = [this] { openPeripheralExplorer(); };
     workspace_->addFixedPage(peripherals_, "Périphériques");
     auto* peripheralWindow = views->addAction("Catalogue des périphériques");
     peripheralWindow->setObjectName("peripheralWindowAction");
     peripheralWindow->setShortcut(QKeySequence("Ctrl+P"));
     connect(peripheralWindow, &QAction::triggered, this, [this] { workspace_->setCurrentWidget(peripherals_); });
+    auto* explorer = views->addAction("Fenêtre des périphériques…"); explorer->setObjectName("peripheralExplorerAction");
+    explorer->setShortcut(QKeySequence("Ctrl+Shift+I"));
+    connect(explorer, &QAction::triggered, this, [this] { openPeripheralExplorer(); });
     auto* gather = views->addAction("Rassembler les inspecteurs"); gather->setObjectName("gatherInspectorsAction");
     gather->setShortcut(QKeySequence("Ctrl+Shift+P"));
     connect(gather, &QAction::triggered, workspace_, &InspectionWorkspace::gatherInspections);
@@ -344,6 +356,11 @@ void MainWindow::buildUi() {
     inspectionTabs_->addTab(source_, "Source C++");
     inspectionTabs_->setTabVisible(4, false);
     inspectionTabs_->setTabToolTip(4, "Emplacement réservé : import source/DWARF non disponible");
+    virtualTimePanel_ = new VirtualTimePanel;
+    virtualTimePanel_->advanceRequested = [this](uint64_t duration, bool timeOnly) { advanceVirtualTime(duration, timeOnly); };
+    virtualTimePanel_->pauseRequested = [this] { pauseAction_->trigger(); };
+    inspectionTabs_->addTab(virtualTimePanel_, "Temps virtuel");
+    boardPanel_ = new BoardPanel; inspectionTabs_->addTab(boardPanel_, "Carte et câblage");
     // Every secondary view has a stable keyboard/menu route. Selecting a view
     // also reveals its dock, so closing a panel cannot leave a hidden result.
     const auto inspectAction = [this, views](const QString& name, const char* id, const char* shortcut, int index) {
@@ -359,6 +376,8 @@ void MainWindow::buildUi() {
     inspectAction("Console / print / diagnostics", "consoleViewAction", "Ctrl+5", 2);
     inspectAction("Carte mémoire", "mappingViewAction", "", 3);
     inspectAction("Source C++ — prochaine itération", "sourceViewAction", "", 4);
+    inspectAction("Temps virtuel", "virtualTimeViewAction", "Ctrl+6", 5);
+    inspectAction("Carte et câblage", "boardViewAction", "Ctrl+7", 6);
     auto* codeView = views->addAction("Code / assembleur"); codeView->setObjectName("codeViewAction");
     codeView->setShortcut(QKeySequence("Ctrl+1"));
     connect(codeView, &QAction::triggered, this, [this] { workspace_->setCurrentWidget(codePages_); });
@@ -370,6 +389,12 @@ void MainWindow::buildUi() {
     connect(pointView, &QAction::triggered, this, [this] { monitorTabs_->setCurrentIndex(1); showInspectionWindow(monitorDock_); });
     stop_ = new QLabel; stop_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     statusBar()->addWidget(stop_, 1);
+    timeLabel_ = new QLabel; timeLabel_->setObjectName("virtualTimeStatus");
+    timeLabel_->setToolTip("Ouvrir les commandes du temps virtuel (Ctrl+6)");
+    statusBar()->addPermanentWidget(timeLabel_);
+    connect(timeLabel_, &QLabel::linkActivated, this, [this] {
+        inspectionTabs_->setCurrentIndex(5); showInspectionWindow(inspectionDock_);
+    });
     resizeDocks({cpuDock, monitorDock_}, {330, 300}, Qt::Horizontal);
     resizeDocks({inspectionDock_}, {245}, Qt::Vertical);
     overviewState_ = saveState();
@@ -385,6 +410,7 @@ void MainWindow::loadFile(const QString& path) {
     } catch (const std::exception& e) { failure(e); }
 }
 void MainWindow::selectChip(Chip chip) { chip_->setCurrentIndex(chip == Chip::RP2350 ? 1 : 0); }
+void MainWindow::selectBoard(Board board) { chip_->setCurrentIndex(chip_->findData(static_cast<int>(board))); }
 void MainWindow::loadDemo() {
     setRunning(false);
     try { debugger_->loadImage(demoImage()); imageName_ = "Exemple intégré"; previousValid_ = false; log("Exemple chargé. Pour le cœur 1 : entrée core1_entry, pile 0x20042000."); refresh(); }
@@ -397,6 +423,7 @@ void MainWindow::singleStep() {
 }
 void MainWindow::setRunning(bool running) {
     running_ = running && debugger_->loaded() && !debugger_->terminalStop();
+    if (!running_) { remainingTime_ = 0; timeOnly_ = false; }
     if (running_) timer_->start(); else timer_->stop();
     if (stepAction_) {
         stepAction_->setEnabled(!running_ && debugger_->loaded() && !debugger_->terminalStop());
@@ -410,7 +437,19 @@ void MainWindow::runBatch() {
     try {
         QElapsedTimer budget; budget.start();
         do {
-            const Stop result = debugger_->run(200);
+            const uint64_t before = debugger_->virtualTime();
+            Stop result;
+            if (timeOnly_) {
+                debugger_->advanceTime(std::min<uint64_t>(remainingTime_, 200));
+                result = debugger_->stop;
+                result.kind = StopKind::Budget;
+            } else result = remainingTime_ ? debugger_->runFor(remainingTime_, 200) : debugger_->run(200);
+            if (remainingTime_) {
+                remainingTime_ -= debugger_->virtualTime() - before;
+                if (!remainingTime_) {
+                    setRunning(false); log("Durée virtuelle terminée à t = " + QString::number(debugger_->virtualTime()) + " µs"); break;
+                }
+            }
             if (result.kind != StopKind::Budget) { setRunning(false); log(q(result.message)); break; }
         } while (budget.elapsed() < 6);
         refresh();
@@ -419,14 +458,16 @@ void MainWindow::runBatch() {
 void MainWindow::refresh() {
     setRunning(running_);
     const bool loaded = debugger_->loaded();
+    virtualTimePanel_->updateState(debugger_->virtualTime(), remainingTime_, loaded && !debugger_->terminalStop(), running_);
+    timeLabel_->setText(QString("<a href='time' style='color:#8bd6bb'>t = %1 µs</a>").arg(static_cast<qulonglong>(debugger_->virtualTime())));
     codePages_->setCurrentIndex(loaded ? 1 : 0);
     session_->setText(loaded ? imageName_ : "Aucune image chargée"); session_->setToolTip(session_->text());
-    banner_->setText(!loaded ? "HORS LIGNE" : running_ ? "EN EXÉCUTION" : q(stopName(debugger_->stop.kind)));
+    banner_->setText(!loaded ? "HORS LIGNE" : running_ ? (timeOnly_ ? "AVANCE DU TEMPS" : "EN EXÉCUTION") : q(stopName(debugger_->stop.kind)));
     banner_->setStyleSheet(debugger_->terminalStop() ? "color:#ffb591;font-weight:600;" : "color:#8bd6bb;font-weight:600;");
     const QString instructionHint = QString("PC %1 · F10 : une instruction · F5 : continuer").arg(hx(debugger_->cpus[selected_].r[15]));
     guidance_->setText(!loaded ? "Simulation partielle · ARM / Thumb · sans carte"
         : QString("Simulation partielle · ELF direct, sans ROM · cœur sélectionné : %1\n%2")
-            .arg(selected_).arg(running_ ? "États échantillonnés · Maj+F5 pour mettre en pause"
+            .arg(selected_).arg(running_ ? (timeOnly_ ? "CPU figés · périphériques en avance · Maj+F5 pour mettre en pause" : "États échantillonnés · Maj+F5 pour mettre en pause")
                 : debugger_->stop.kind == StopKind::Ready || debugger_->stop.kind == StopKind::Step
                     ? instructionHint : q(debugger_->stop.message)));
     inspectionTabs_->setTabToolTip(1, QString("Pile brute du cœur %1 · pas de déroulage des appels C++").arg(selected_));
@@ -455,7 +496,7 @@ void MainWindow::refreshRegisters() {
             previous_[c][r] = value;
         }
         flags_[c]->setText(!debugger_->loaded() ? QString("Cœur %1 · pas d'image").arg(c) : QString("Cœur %1 · %2 · %4 instructions\n%3").arg(c)
-            .arg(cpu.held ? "RETENU" : cpu.lockup ? "LOCKUP" : cpu.sleeping ? "SOMMEIL" : running_ ? "ACTIF" : "ARRÊTÉ")
+            .arg(cpu.held ? "RETENU" : cpu.lockup ? "LOCKUP" : cpu.sleeping ? "SOMMEIL" : running_ && !timeOnly_ ? "ACTIF" : "ARRÊTÉ")
             .arg(q(cpu.flags())).arg(static_cast<qulonglong>(cpu.instructions)));
     }
     // Measure the actual styled columns, including header padding, rather than
@@ -529,6 +570,7 @@ void MainWindow::refreshStack() {
     }
 }
 void MainWindow::fillMapping() {
+    boardPanel_->setBoard(debugger_->board());
     mapping_->setRowCount(0);
     for (const auto& region : debugger_->memory.description().regions) {
         const int r = mapping_->rowCount(); mapping_->setRowCount(r + 1);
@@ -548,6 +590,7 @@ void MainWindow::refreshWatches() {
 }
 void MainWindow::refreshPeripherals() {
     peripherals_->updateTarget(*debugger_, selected_);
+    if (explorer_) explorer_->updateTarget(*debugger_);
     for (auto it = inspections_.begin(); it != inspections_.end();) {
         if (!*it) { it = inspections_.erase(it); continue; }
         (*it)->updateTarget(*debugger_);
@@ -555,8 +598,28 @@ void MainWindow::refreshPeripherals() {
     }
 }
 void MainWindow::closeInspections() {
+    if (explorer_) { explorer_->close(); explorer_ = nullptr; }
     workspace_->clearInspections();
     inspections_.clear();
+}
+void MainWindow::openPeripheralExplorer() {
+    if (!explorer_) {
+        explorer_ = new PeripheralExplorer(*debugger_, selected_, this);
+        explorer_->setPalette(palette());
+        explorer_->refreshRequested = [this] { refreshPeripherals(); };
+        explorer_->injectUart = [this](unsigned uart, const std::string& bytes) {
+            setRunning(false); debugger_->pause();
+            const auto accepted = debugger_->injectUart(uart, bytes); refresh(); return accepted;
+        };
+        connect(explorer_, &QDialog::finished, this, [this] { explorer_ = nullptr; });
+    }
+    showInspectionWindow(explorer_);
+}
+void MainWindow::advanceVirtualTime(uint64_t duration, bool timeOnly) {
+    setRunning(false);
+    if (!debugger_->loaded() || debugger_->terminalStop()) return;
+    remainingTime_ = duration; timeOnly_ = timeOnly;
+    setRunning(true); refresh();
 }
 void MainWindow::openPeripheral(const QString& name, bool duplicate, int context) {
     if (name.isEmpty() || (!duplicate && workspace_->revealInspection(name))) return;

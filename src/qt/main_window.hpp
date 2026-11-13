@@ -21,6 +21,9 @@ class QTimer;
 class PeripheralPanel;
 class PeripheralInspection;
 class InspectionWorkspace;
+class PeripheralExplorer;
+class VirtualTimePanel;
+class BoardPanel;
 
 class MainWindow : public QMainWindow {
 public:
@@ -28,11 +31,14 @@ public:
     void loadFile(const QString& path);
     void loadDemo();
     void selectChip(picodbg::Chip chip);
+    void selectBoard(picodbg::Board board);
 private:
     std::unique_ptr<picodbg::Debugger> debugger_;
     std::array<std::array<uint32_t, 21>, 2> previous_{};
     bool previousValid_ = false;
     bool running_ = false;
+    bool timeOnly_ = false;
+    uint64_t remainingTime_ = 0;
     unsigned selected_ = 0;
     QByteArray overviewState_;
     QTimer* timer_;
@@ -57,6 +63,12 @@ private:
     QDockWidget* inspectionDock_;
     QDockWidget* cpuDock_;
     QDockWidget* monitorDock_;
+    QPointer<PeripheralExplorer> explorer_;
+    VirtualTimePanel* virtualTimePanel_;
+    BoardPanel* boardPanel_;
+    QLabel* timeLabel_;
+    void openPeripheralExplorer();
+    void advanceVirtualTime(uint64_t duration, bool timeOnly);
     std::vector<QPointer<PeripheralInspection>> inspections_;
     unsigned inspectionSequence_ = 1;
     void openPeripheral(const QString& name, bool duplicate = false, int context = -1);

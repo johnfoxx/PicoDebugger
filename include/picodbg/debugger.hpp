@@ -1,6 +1,7 @@
 #pragma once
 #include "picodbg/cpu.hpp"
 #include "picodbg/elf.hpp"
+#include "picodbg/board.hpp"
 #include <set>
 
 namespace picodbg {
@@ -22,6 +23,7 @@ struct Watchpoint {
 class Debugger {
 public:
     explicit Debugger(Chip chip = Chip::RP2040);
+    explicit Debugger(Board board);
     Debugger(const Debugger&) = delete;
     Debugger& operator=(const Debugger&) = delete;
     void load(const std::string& path);
@@ -30,6 +32,12 @@ public:
     void startCore(unsigned core, uint32_t entry, uint32_t stack);
     Stop step(unsigned core);
     Stop run(size_t budget);
+    // Bounded operations for interactive callers. runFor executes firmware;
+    // advanceTime clocks peripherals/SysTick with both CPU contexts frozen.
+    Stop runFor(uint64_t microseconds, size_t budget = 1000);
+    void advanceTime(uint64_t microseconds);
+    uint64_t virtualTime() const { return virtualTime_; }
+    const BoardDescription& board() const { return board_; }
     void pause();
     size_t injectUart(unsigned index, const std::string& bytes);
     uint32_t evaluate(const std::string& expression, unsigned core = 0) const;
@@ -46,6 +54,9 @@ public:
     std::vector<Watchpoint> watchpoints;
     Stop stop;
 private:
+    BoardDescription board_;
+    uint64_t virtualTime_ = 0;
+    void clockQuantum();
     bool loaded_ = false, terminal_ = false, watchHit_ = false;
     MemoryAccess lastAccess_ = {0, 0, Access::Read, 0};
     uint64_t revision_ = 0;

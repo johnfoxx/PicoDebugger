@@ -99,7 +99,8 @@ private:
     }
 };
 }
-Debugger::Debugger(Chip chip) : memory(chip) {
+Debugger::Debugger(Chip chip) : Debugger(defaultBoard(chip)) {}
+Debugger::Debugger(Board board) : memory(describeBoard(board).chip), board_(describeBoard(board)) {
     memory.onAccess = [this](const MemoryAccess& access) {
         if (access.kind == Access::Execute) return;
         for (const auto& watch : watchpoints) {
@@ -137,11 +138,12 @@ void Debugger::reset() {
     const uint32_t sp = image.hasVectors ? memory.peek(image.vectorAddress, 4) : 0x20000000u + memory.description().ramSize;
     cpus = {}; cpus[0].reset(entry, sp);
     memory.system(0).vtor = memory.system(1).vtor = image.hasVectors ? image.vectorAddress : 0;
-    terminal_ = watchHit_ = skipBreakpoint_ = false; nextCore_ = 0; ++revision_;
+    terminal_ = watchHit_ = skipBreakpoint_ = false; nextCore_ = 0; virtualTime_ = 0; ++revision_;
     stop.kind = StopKind::Ready; stop.core = 0; stop.address = entry & ~1u;
     stop.message = std::string("ELF direct : PC=") + hex(entry & ~1u) + " SP=" + hex(sp) +
         (image.hasVectors ? " VTOR=" + hex(image.vectorAddress) : " ; pas de vecteurs identifiés") +
-        " ; Boot ROM non exécutée, resets périphériques relâchés, cœur 1 retenu";
+        " ; Boot ROM non exécutée, resets périphériques relâchés, cœur 1 retenu ; carte " + board_.name +
+        (board_.wireless ? " ; radio/LED CYW43 non émulées" : "");
 }
 void Debugger::startCore(unsigned core, uint32_t entry, uint32_t stack) {
     if (terminal_) throw Error(ErrorKind::InvalidArgument, "Reset requis avant de redémarrer un cœur après un arrêt terminal");
@@ -169,13 +171,12 @@ Stop Debugger::stepImpl(unsigned core) {
     const uint32_t pc = cpu.r[15];
     stop.kind = StopKind::Step; stop.core = core; stop.address = pc; stop.message = "Pas instruction";
     try {
+        if (virtualTime_ == std::numeric_limits<uint64_t>::max())
+            throw Error(ErrorKind::InvalidArgument, "Temps virtuel maximal atteint ; reset requis");
         const StepResult result = execute(cpu, memory, core);
         // One virtual microsecond per scheduler quantum. This is deliberately
         // independent of the host clock and is not an ARM cycle timing claim.
-        memory.advanceTime(1);
-        // Deterministic virtual quanta, NOT hardware CPU cycles. Both SysTicks
-        // advance even while only one core is selected for manual stepping.
-        memory.tick(0); memory.tick(1);
+        clockQuantum();
         if (result.sendEvent) for (auto& c : cpus) c.event = true;
         if (result.breakpoint) { stop.kind = StopKind::Breakpoint; stop.message = result.detail; }
         else if (result.exception) { stop.kind = StopKind::Step; stop.message = result.detail; }
@@ -208,7 +209,9 @@ Stop Debugger::run(size_t budget) {
         const unsigned core = nextCore_;
         nextCore_ = 1u - nextCore_;
         if (cpus[core].held || cpus[core].lockup) {
-            if ((cpus[0].held || cpus[0].lockup) && (cpus[1].held || cpus[1].lockup)) break;
+            if ((cpus[0].held || cpus[0].lockup) && (cpus[1].held || cpus[1].lockup)) {
+                stop.kind = StopKind::Idle; stop.message = "Aucun cœur exécutable"; return stop;
+            }
             continue;
         }
         const uint32_t pc = cpus[core].r[15];
@@ -233,6 +236,38 @@ Stop Debugger::run(size_t budget) {
     return stop;
 }
 void Debugger::pause() { if (!terminal_) { stop.kind = StopKind::User; stop.message = "Pause demandée"; } }
+void Debugger::clockQuantum() {
+    memory.advanceTime(1);
+    // The same clock policy applies to manual time and instruction execution.
+    // No CPU instructions or interrupt handlers run during a manual advance.
+    memory.tick(0); memory.tick(1); ++virtualTime_;
+}
+void Debugger::advanceTime(uint64_t microseconds) {
+    if (!loaded_ || terminal_) throw Error(ErrorKind::InvalidArgument, "Session indisponible pour avancer le temps");
+    // Keep synchronous calls bounded. Frontends split longer requests and
+    // return to their event loop between chunks, so Pause remains available.
+    if (microseconds > 1000000 || microseconds > std::numeric_limits<uint64_t>::max() - virtualTime_)
+        throw Error(ErrorKind::InvalidArgument, "Avance limitée à 1 000 000 µs par appel, sans débordement");
+    if (!microseconds) return;
+    for (uint64_t i = 0; i < microseconds; ++i) clockQuantum();
+    ++revision_;
+    // Preserve the breakpoint resume token: CPU state has not moved.
+    stop.kind = StopKind::User; stop.message = "CPU figés ; temps virtuel = " + std::to_string(virtualTime_) + " µs";
+}
+Stop Debugger::runFor(uint64_t microseconds, size_t budget) {
+    if (!loaded_) throw Error(ErrorKind::InvalidArgument, "Charger un ELF avant exécution");
+    if (terminal_) return stop;
+    if (microseconds > std::numeric_limits<uint64_t>::max() - virtualTime_)
+        throw Error(ErrorKind::InvalidArgument, "Durée virtuelle débordante");
+    const uint64_t target = virtualTime_ + microseconds;
+    for (size_t i = 0; i < budget && virtualTime_ < target; ++i) {
+        if (run(1).kind != StopKind::Budget) return stop;
+    }
+    if (virtualTime_ == target) {
+        stop.kind = StopKind::User; stop.message = "Durée virtuelle atteinte ; exécution en pause";
+    } else { stop.kind = StopKind::Budget; stop.message = "Durée virtuelle en cours"; }
+    return stop;
+}
 size_t Debugger::injectUart(unsigned index, const std::string& bytes) {
     if (!loaded_ || terminal_ || index > 1) throw Error(ErrorKind::InvalidArgument, "Session/UART indisponible");
     size_t accepted = 0;

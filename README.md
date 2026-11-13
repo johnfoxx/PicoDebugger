@@ -1,10 +1,10 @@
 # PicoDebugger
 
-**PicoDebugger, ou PicoDbg, est un débogueur graphique hors ligne associé à un simulateur fonctionnel partiel des Raspberry Pi Pico/RP2040 et Pico 2/RP2350 en mode ARM/Thumb.** Il exécute des instructions machine sur un modèle logiciel local et permet d'observer les deux contextes CPU, la mémoire, la pile et les périphériques couverts. Aucune carte ni sonde n'est nécessaire.
+**PicoDebugger, ou PicoDbg, est un débogueur graphique hors ligne associé à un simulateur fonctionnel partiel des Raspberry Pi Pico et Pico W (RP2040), Pico 2 et Pico 2 W (RP2350 ARM/Thumb).** Il exécute des instructions machine sur un modèle logiciel local et permet d'observer les deux contextes CPU, la mémoire, la pile et les périphériques couverts. Aucune carte ni sonde n'est nécessaire.
 
 Le moteur est écrit en **C++11**, indépendant de Qt. L'interface principale est une application de bureau **Qt Widgets** ; une CLI complémentaire sert aux scénarios automatisés. Un programme écrit en C ou en C++ peut être chargé une fois compilé en ELF ARM compatible. Le débogueur ne compile pas les sources.
 
-**La simulation est partielle sur les deux profils.** PicoDbg n'offre actuellement ni connexion SWD/GDB à une carte, ni reproduction complète du démarrage et du comportement du silicium. Il ne peut pas exécuter un firmware Pico SDK arbitraire et ne garantit pas qu'une réussite en simulation implique un fonctionnement identique sur la cible physique. L'état affiché est celui du **modèle**, jamais une mesure d'une carte connectée.
+**La simulation est partielle sur les quatre cartes et les deux familles de puces.** PicoDbg n'offre actuellement ni connexion SWD/GDB à une carte, ni reproduction complète du démarrage et du comportement du silicium. Il ne peut pas exécuter un firmware Pico SDK arbitraire et ne garantit pas qu'une réussite en simulation implique un fonctionnement identique sur la cible physique. L'état affiché est celui du **modèle**, jamais une mesure d'une carte connectée.
 
 ## Commencer
 
@@ -13,7 +13,9 @@ Le moteur est écrit en **C++11**, indépendant de Qt. L'interface principale es
 - [Tutoriel rapide](#tutoriel-rapide)
 - [Tutoriel complet : toutes les commandes, fonctions et cas d'usage](docs/TUTORIAL.md)
 - [Organisation de l'interface et inspecteurs détachables](docs/INTERFACE.md)
-- [Delta exact v0.2.0 → v0.3.0](docs/RELEASES.md#v0-3-0)
+- [Versions et changelogs, dont le jalon v0.4.0](docs/RELEASES.md)
+- [Cartes, câblage et compatibilité ELF](docs/BOARDS.md)
+- [Piloter le temps virtuel](docs/VIRTUAL_TIME.md)
 - [Couverture technique détaillée](docs/COVERAGE.md)
 
 ## Installation et lancement
@@ -44,11 +46,11 @@ Lancer un firmware :
 
 ```sh
 ./build-gui/pico-debugger --chip rp2040 /chemin/firmware.elf
-./build-gui/pico-debugger --chip rp2350 /chemin/firmware.elf
+./build-gui/pico-debugger --board pico2_w /chemin/firmware.elf
 ./build-gui/pico-debugger --version
 ```
 
-Le choix de puce est explicite : il n'est pas déduit automatiquement des attributs de l'ELF. L'exécution commence **toujours à l'arrêt**.
+Le choix de carte est explicite : `--board pico|pico_w|pico2|pico2_w`. L'ancienne option `--chip rp2040|rp2350` sélectionne la carte sans Wi-Fi ; les deux options sont exclusives. La carte n'est pas déduite automatiquement des attributs de l'ELF. L'exécution commence **toujours à l'arrêt**.
 
 ## Fonctionnalités et limites
 
@@ -57,22 +59,24 @@ Le choix de puce est explicite : il n'est pas déduit automatiquement des attrib
 | Chargement | ELF32 ARM little-endian, lié (`ET_EXEC`), avec segments `PT_LOAD` et symboles lorsqu'ils sont présents. Pas de chargement UF2/BIN ni d'édition de liens. |
 | Démarrage | Chargement direct de l'image, SP/PC issus des vecteurs reconnus ; sinon `e_entry` et sommet de SRAM, avec diagnostic explicite. Boot ROM et lancement ROM du cœur 1 absents. |
 | Exécution | Pas instruction du cœur sélectionné, exécution alternée des cœurs démarrés, pause, reset/restart et démarrage manuel d'un cœur. Temps virtuel reproductible, sans précision cycle par cycle. |
+| Temps virtuel | Horloge depuis reset, avance choisie en µs/ms avec firmware ou CPU figés, pause interruptible depuis la GUI. |
+| Cartes | Quatre profils, câblage décrit et LED GPIO25/CYW43 distinguée ; radio et LED Wi-Fi non émulées. |
 | CPU | Registres des deux cœurs côte à côte, SP/LR/PC, xPSR, MSP/PSP, CONTROL, PRIMASK, flags NZCV/T/IPSR et états retenu/sommeil/lockup. |
 | Assembleur | Désassemblage Thumb, opcodes, adresses, symbole ELF proche, suivi de PC et navigation par expression. PC désigne la prochaine instruction à exécuter. |
 | Mémoire et pile | Vue hexadécimale/ASCII, cartographie des régions et pile brute à partir du SP du cœur sélectionné. Pas de reconstruction des appels C++. |
 | Arrêts | Breakpoints d'adresse avant instruction ; watchpoints de plage mémoire après accès CPU, en lecture, écriture ou les deux ; arrêt sur `BKPT`. |
 | Expressions | Calculs entiers 32 bits, registres, adresses de symboles, lectures `read8/16/32` et déréférencement. Expressions surveillées par cœur et console `print`. Pas de variables typées, d'affectation ou d'appel de fonction cible. |
 | Périphériques | Catalogue, recherche, adresses nommées, accès, valeurs disponibles, bits et significations symboliques. Inspection sans dépiler les FIFO, acquitter les IRQ ou acquérir les spinlocks. |
-| Interface | Comparaison CPU, espace Code/Périphériques et onglets Mémoire/Pile/Console/Carte. Inspecteurs intégrés, détachables à la demande et rassemblables sans perdre leur contexte. |
+| Interface | Comparaison CPU, espace Code/Périphériques, inspecteurs détachables et fenêtre indépendante (`Ctrl+Maj+I`) : catalogue général ou périphérique précis, registres et bits simultanés. |
 | UART | Capture des octets TX et injection de texte UTF-8 dans RX, pour les deux UART modélisés. |
 | Automatisation | CLI interactive ou batch avec commandes d'exécution et d'inspection ; ELF d'exemple générables sans compilateur ARM. |
 | Source C++ | Symboles ELF seulement. Le panneau « Source C++ — prochaine itération » est un emplacement réservé : aucun import des sources, DWARF, démanglage ni pas source actuellement. |
 
-Les tableaux d'état sont en lecture seule. Les modifications de la cible viennent des instructions exécutées, du chargement/reset, du démarrage explicite d'un cœur ou de l'injection UART. Le rafraîchissement lit un instantané cohérent entre les tranches d'exécution ; il ne constitue pas une trace de chaque instruction ou de chaque transition entre deux rafraîchissements.
+Les tableaux d'état sont en lecture seule. Les modifications de la cible viennent des instructions exécutées, du chargement/reset, du démarrage explicite d'un cœur de l'injection UART ou d'une avance explicite du temps. Le rafraîchissement lit un instantané cohérent entre les tranches d'exécution ; il ne constitue pas une trace de chaque instruction ou de chaque transition entre deux rafraîchissements.
 
 ### Pourquoi les deux profils sont-ils « partiels » ?
 
-L'ancien menu qualifiait seulement le Pico 2 d'« expérimental » parce que son moteur M33 avait davantage de lacunes. Cela ne signifiait pas que le Pico 1 était complet. **v0.3.0 affiche « partiel » pour les deux profils**, avec des infobulles et une aide détaillant leurs différences.
+L'ancien menu qualifiait seulement le Pico 2 d'« expérimental » parce que son moteur M33 avait davantage de lacunes. Cela ne signifiait pas que le Pico 1 était complet. Depuis v0.3.0, les deux familles sont annoncées partielles ; cette indication reste visible dans la session, les infobulles et l’aide, y compris pour les variantes W.
 
 | Couverture CPU | Pico / RP2040 | Pico 2 / RP2350 |
 |---|---|---|
@@ -104,12 +108,14 @@ Voir [Démarrage ELF, périphériques et Qt](docs/BOOT_AND_PERIPHERALS.md) pour 
 
 ## Tutoriel rapide
 
-1. Lancer `./build-gui/pico-debugger --demo`, conserver **Pico / RP2040 (partiel)** et **Contexte : cœur 0**. L'exemple est déjà à l'arrêt.
+1. Lancer `./build-gui/pico-debugger --demo`, conserver **Pico / RP2040** et **Contexte : cœur 0**. L'exemple est déjà à l'arrêt.
 2. Appuyer trois fois sur **F10** : R0 vaut `1`, PC vaut `0x10000206`. Le prochain `STR` n'a pas encore écrit le compteur. Un quatrième pas écrit `1` à `0x20000000`.
 3. Faire **Ctrl+R**, puis **F9**, saisir `0x10000206` et **F5** : arrêt avant cette écriture. **F10** exécute l'instruction. Supprimer ce breakpoint dans **Points d'arrêt / watchpoints**.
 4. Faire **Ctrl+R**, utiliser **Débogage → Ajouter un watchpoint mémoire**, saisir `counter`, taille `4`, accès **Écriture**, puis **F5** : arrêt après la première écriture. Dans **Console** (`Ctrl+5`), `print read32(counter)` affiche `1` sans déclencher le watchpoint.
 5. Ajouter `read32(counter)` avec **Ctrl+E** pour suivre sa valeur. La colonne Surveillance apparaît. Supprimer le watchpoint dans son onglet **Arrêts** pour poursuivre librement jusqu'au `BKPT` de l'exemple.
 6. Faire **Ctrl+P**, puis double-cliquer **TIMER** : son inspecteur s'ouvre en onglet. Sélectionner un registre, utiliser **Bits** et les filtres. **Détacher** ouvre une fenêtre indépendante ; **Rassembler** la ramène dans l'application. La pause fige le temps virtuel.
+7. Pour conserver le code visible, ouvrir **Vues → Fenêtre des périphériques** (`Ctrl+Maj+I`) ; choisir **Vue générale** ou un bloc précis. Les registres et leurs bits restent visibles ensemble.
+8. Faire **Ctrl+6**, choisir une durée et **Exécuter le firmware** ou **CPU figés · périphériques seuls**, puis **Avancer**. Le second mode fait progresser les périphériques et SysTick sans exécuter une instruction ; **Pause** annule la durée restante.
 
 Pour une démonstration Pico 2 avec UART/PWM/GPIO/timer :
 
@@ -126,7 +132,7 @@ Un [exemple C de démarrage puis clignotement de la LED](tests/firmware/boot_bli
 
 ## Validation et maintenance
 
-v0.3.0 comporte **14 suites CTest sur Linux/Qt5 avec Python 3** : moteur, chargement ELF, périphériques, scénario ELF périphériques, démarrage GUI, interactions et régression du focus des listes. Les tests graphiques utilisent `offscreen`. Les vérifications de périphériques ont également été exécutées sous ASan/UBSan ; Qt6, le compositeur Wayland natif et la comparaison au silicium ne sont pas validés par ces tests.
+La version de travail comporte **17 suites CTest sur Linux/Qt5 avec Python 3** : moteur, chargement ELF, périphériques, scénario ELF périphériques, démarrage GUI, interactions, fenêtre indépendante, quatre cartes, temps virtuel et régression du focus des listes. Les tests graphiques utilisent `offscreen`. Les vérifications de périphériques ont également été exécutées sous ASan/UBSan ; Qt6, le compositeur Wayland natif et la comparaison au silicium ne sont pas validés par ces tests.
 
 ```sh
 cmake -S . -B build-sanitize -DPICODBG_GUI=OFF -DPICODBG_SANITIZERS=ON

@@ -1,4 +1,4 @@
-# Couverture effective — v0.3.0
+# Couverture effective — après v0.4.0
 
 L'objectif initial est un débogueur complet, fiable sur le matériel réel. **Cette première implémentation ne satisfait pas encore cet objectif de fidélité complète.** La présence d'un périphérique dans la cartographie n'implique pas son émulation.
 
@@ -61,9 +61,9 @@ Le module `Timer` couvre les registres de `0x40054000` à `0x40054040` : écritu
 
 Les quatre lignes IRQ alimentent les deux contextes NVIC. Un niveau maintenu ne recrée pas une interruption en attente pendant son propre handler ; il est réévalué au retour. Le modèle d'IRQ conserve les limites du NVIC actuel : priorités fixes, pas de préemption externe imbriquée ni de synchronisation cycle par cycle.
 
-La source watchdog/horloges n'est **pas** émulée : le timer avance sans initialisation du tick matériel. DBGPAUSE accepte les bits documentés et le module peut recevoir un masque de cœurs arrêtés, mais l'ordonnanceur n'émule pas les signaux de debug matériel. La pause hôte fige tout le temps virtuel. Les accès MMIO étroits, alias W1C, délais APB et comportements réservés restent hors couverture. Les tests sont fonctionnels ; pas de comparaison sur silicium effectuée.
+La source watchdog/horloges n'est **pas** émulée : le timer avance sans initialisation du tick matériel. DBGPAUSE accepte les bits documentés et le module peut recevoir un masque de cœurs arrêtés, mais l'ordonnanceur n'émule pas les signaux de debug matériel. La pause hôte fige tout le temps virtuel. La commande explicite d’avance avec CPU figés continue les périphériques et SysTick sans simuler un arrêt de debug matériel : les bits DBGPAUSE ne sont donc pas invoqués par ce mode. Voir [VIRTUAL_TIME.md](VIRTUAL_TIME.md). Les accès MMIO étroits, alias W1C, délais APB et comportements réservés restent hors couverture. Les tests sont fonctionnels ; pas de comparaison sur silicium effectuée.
 
-Le panneau **Périphériques** recense les blocs RP2040 et RP2350, y compris ceux sans modèle. Filtrage par nom, registre, champ ou adresse ; fenêtre détachable avec `Ctrl+P`. Double-cliquer sur un bloc ouvre une petite fenêtre indépendante, avec son propre contexte cœur. Les tableaux montrent adresses, valeurs, accès et champs connus. Un inspecteur dédié décode les valeurs et leur signification. ADC, I2C, DMA et PIO sont maintenant décrits sans être émulés ; les modèles TIMER0/1, UART/SPI/PWM, RESETS, SIO/PPB et scratch WATCHDOG exposent leur état disponible. Le catalogue contient 587/783 registres et 1 653/2 373 champs (RP2040/RP2350, alias compris), sans prétendre être exhaustif. USB, horloges et plusieurs autres blocs ont encore une description de registre absente ou incomplète ; aucun import SVD n'est livré.
+Le panneau **Périphériques** recense les blocs RP2040 et RP2350, y compris ceux sans modèle. Filtrage par nom, registre, champ ou adresse ; catalogue intégré avec `Ctrl+P`, fenêtre indépendante avec `Ctrl+Maj+I`. Double-cliquer sur un bloc dans le catalogue intégré ouvre un inspecteur en onglet, détachable avec son propre contexte cœur. La fenêtre indépendante montre registres et champs simultanément. Les tableaux montrent adresses, valeurs, accès et champs connus. Un inspecteur dédié décode les valeurs et leur signification. ADC, I2C, DMA et PIO sont maintenant décrits sans être émulés ; les modèles TIMER0/1, UART/SPI/PWM, RESETS, SIO/PPB et scratch WATCHDOG exposent leur état disponible. Le catalogue contient 587/783 registres et 1 653/2 373 champs (RP2040/RP2350, alias compris), sans prétendre être exhaustif. USB, horloges et plusieurs autres blocs ont encore une description de registre absente ou incomplète ; aucun import SVD n'est livré.
 
 Les particularités RP2350, la couverture exacte de chaque nouveau modèle, le démarrage ELF direct, les fenêtres UART et la correction Wayland sont détaillés dans [BOOT_AND_PERIPHERALS.md](BOOT_AND_PERIPHERALS.md). Le CPU M33 reste incomplet : rendre une IRQ visible dans NVIC ne rend pas son handler exécutable.
 
@@ -74,3 +74,7 @@ Les bases proviennent des références officielles figées dans [REFERENCES.md](
 Avant de parler de compatibilité complète : validation différentielle instructions/flags/exceptions contre une référence indépendante et du silicium ; ROM et boot2 ; lancement multicœur ; horloges, resets et IRQ complètes ; périphériques Pico SDK ; Cortex-M33/ARMv8-M/FPU/sécurité ; tests de firmwares C++ à plusieurs niveaux d'optimisation ; modèles temporels et entrées externes.
 
 Même après ces étapes, une réussite en simulation ne constitue pas une preuve universelle de fonctionnement matériel. Il faut tester le firmware sur sa cible avec ses périphériques et ses contraintes temporelles.
+
+## Cartes sans fil
+
+Les profils Pico W et Pico 2 W sélectionnent respectivement les modèles RP2040 et RP2350 existants. Le câblage et les capacités de carte sont décrits dans [BOARDS.md](BOARDS.md), sans décaler les adresses MMIO du SoC. Le CYW43 externe, ses GPIO, la LED radio et le réseau ne sont pas émulés. Ajouter ces profils ne garantit pas l’exécution des firmwares SDK W ni leur détection automatique depuis un ELF.
