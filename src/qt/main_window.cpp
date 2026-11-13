@@ -2,6 +2,8 @@
 #include "peripheral_panel.hpp"
 #include "window_policy.hpp"
 #include "choice_box.hpp"
+#include "inspection_workspace.hpp"
+#include "peripheral_inspection.hpp"
 #include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
@@ -21,12 +23,16 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QPlainTextEdit>
+#include <QPalette>
 #include <QPushButton>
 #include <QSettings>
 #include <QSpinBox>
 #include <QSplitter>
+#include <QStackedWidget>
+#include <QStyle>
 #include <QStatusBar>
 #include <QTableWidget>
+#include <QTabWidget>
 #include <QTimer>
 #include <QToolBar>
 #include <QVBoxLayout>
@@ -79,15 +85,29 @@ QDockWidget* dock(QMainWindow* parent, const QString& name, QWidget* content, Qt
 }
 }
 MainWindow::MainWindow() : debugger_(new Debugger), timer_(new QTimer(this)) {
-    setWindowTitle("PicoDebugger — ARM / Thumb"); resize(1500, 980);
+    setWindowTitle("PicoDebugger — ARM / Thumb"); resize(1440, 900);
+    // Supply a complete palette as well as widget accents: detached pages,
+    // scrollbars and empty tab-strip areas must not fall back to a light theme.
+    QPalette theme = palette();
+    theme.setColor(QPalette::Window, QColor("#111923")); theme.setColor(QPalette::WindowText, QColor("#dce6f0"));
+    theme.setColor(QPalette::Base, QColor("#131e2b")); theme.setColor(QPalette::AlternateBase, QColor("#192635"));
+    theme.setColor(QPalette::Text, QColor("#dce6f0")); theme.setColor(QPalette::Button, QColor("#213044"));
+    theme.setColor(QPalette::ButtonText, QColor("#dce6f0")); theme.setColor(QPalette::Highlight, QColor("#28536b"));
+    theme.setColor(QPalette::HighlightedText, QColor("#ffffff")); theme.setColor(QPalette::Light, QColor("#40536a"));
+    theme.setColor(QPalette::Midlight, QColor("#304052")); theme.setColor(QPalette::Mid, QColor("#26394b"));
+    theme.setColor(QPalette::Dark, QColor("#0b111a")); theme.setColor(QPalette::Shadow, QColor("#0b111a"));
+    theme.setColor(QPalette::Disabled, QPalette::Text, QColor("#637487"));
+    theme.setColor(QPalette::Disabled, QPalette::ButtonText, QColor("#637487"));
+    setPalette(theme);
     setDockOptions(AnimatedDocks | AllowNestedDocks | AllowTabbedDocks);
-    // Keep the side columns full-height. Memory and console occupy the bottom
-    // of the center column, rather than pushing registers off a short screen.
+    // Three stable regions: CPU comparison, central workspace, monitoring.
+    // Secondary inspection views share a bottom tab strip instead of competing
+    // for height. Docks remain resizable and can be restored in one action.
     setCorner(Qt::BottomLeftCorner, Qt::LeftDockWidgetArea);
     setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
     setStyleSheet(
         "QMainWindow,QDialog,QDockWidget {background:#111923;color:#dce6f0;}"
-        "QWidget {color:#dce6f0;}"
+        "QWidget {background:#111923;color:#dce6f0;}"
         "QMenuBar,QMenu,QToolBar,QStatusBar {background:#182331;}"
         "QMenu::item:selected {background:#28536b;}"
         "QDockWidget::title {background:#213044;padding:7px;font-weight:600;}"
@@ -97,9 +117,19 @@ MainWindow::MainWindow() : debugger_(new Debugger), timer_(new QTimer(this)) {
         "QComboBox QAbstractItemView {background:#213044;color:#dce6f0;selection-background-color:#365f7f;}"
         "QPushButton {background:#29445c;border:1px solid #405b75;border-radius:3px;padding:5px 9px;}"
         "QPushButton:hover {background:#365f7f;}"
-        "QToolButton {padding:7px;} QToolButton:hover {background:#29445c;}"
+        "QToolButton {background:#213044;border:none;border-radius:3px;padding:7px;} QToolButton:hover {background:#29445c;}"
         "QToolButton:disabled {color:#637487;}"
-        "QTabBar::tab {background:#213044;padding:7px;} QTabBar::tab:selected {background:#36516b;}"
+        "QTabWidget::pane {border:1px solid #304052;}"
+        "QTabBar {qproperty-drawBase:0;}"
+        "QTabBar::tab {background:#182331;color:#a5bdd3;padding:8px 12px;border-bottom:2px solid transparent;}"
+        "QTabBar::tab:selected {background:#213044;color:#eff7ff;border-bottom:2px solid #60c5c0;}"
+        "QTabBar::tab:hover {background:#29445c;}"
+        "QLabel#sectionTitle {font-size:16px;font-weight:600;color:#eff7ff;}"
+        "QLabel#sessionTitle {font-size:16px;font-weight:600;}"
+        "QLabel#sessionState {color:#8bd6bb;font-weight:600;}"
+        "QLabel#guidance {color:#a5bdd3;}"
+        "QPushButton:disabled {color:#637487;background:#182331;}"
+        "QLineEdit:focus,QComboBox:focus {border:1px solid #60c5c0;}"
     );
     buildUi();
     connect(timer_, &QTimer::timeout, this, [this] { runBatch(); });
@@ -111,14 +141,19 @@ MainWindow::MainWindow() : debugger_(new Debugger), timer_(new QTimer(this)) {
 void MainWindow::buildUi() {
     auto* file = menuBar()->addMenu("Fichier");
     auto* views = menuBar()->addMenu("Vues"); views->setObjectName("views");
-    auto* overview = views->addAction("Rétablir la vue d'ensemble");
+    auto* overview = views->addAction("Rétablir la disposition initiale");
     overview->setObjectName("overviewAction");
     overview->setShortcut(QKeySequence("Ctrl+Shift+0"));
-    connect(overview, &QAction::triggered, this, [this] { restoreState(overviewState_); });
+    connect(overview, &QAction::triggered, this, [this] {
+        restoreState(overviewState_); workspace_->setCurrentIndex(0);
+        inspectionTabs_->setCurrentIndex(0); monitorTabs_->setCurrentIndex(0);
+        inspectionTabs_->setTabVisible(4, false);
+    });
     views->addSeparator();
     auto* debug = menuBar()->addMenu("Débogage");
     auto* help = menuBar()->addMenu("Aide");
     auto* toolbar = addToolBar("Exécution"); toolbar->setObjectName("execution"); toolbar->setMovable(false);
+    toolbar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon); toolbar->setIconSize(QSize(16, 16));
     auto* open = file->addAction("Ouvrir un ELF…"); open->setShortcut(QKeySequence::Open);
     connect(open, &QAction::triggered, this, [this] {
         setRunning(false);
@@ -126,6 +161,8 @@ void MainWindow::buildUi() {
         if (!path.isEmpty()) loadFile(path);
     });
     auto* demo = file->addAction("Exemple intégré"); connect(demo, &QAction::triggered, this, [this] { loadDemo(); });
+    open->setIcon(style()->standardIcon(QStyle::SP_DialogOpenButton)); open->setIconText("Ouvrir ELF");
+    demo->setIconText("Exemple");
     file->addSeparator(); connect(file->addAction("Quitter"), &QAction::triggered, this, &QWidget::close);
     toolbar->addAction(open); toolbar->addAction(demo); toolbar->addSeparator();
     chip_ = new ChoiceBox; chip_->addItems({"Pico / RP2040 (partiel)", "Pico 2 / RP2350 (partiel)"});
@@ -136,7 +173,7 @@ void MainWindow::buildUi() {
     toolbar->addWidget(chip_);
     connect(chip_, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this, [this](int index) {
         setRunning(false); closeInspections(); debugger_.reset(new Debugger(index == 0 ? Chip::RP2040 : Chip::RP2350));
-        previousValid_ = false; fillMapping(); refresh(); log("Profil changé : charger un ELF pour ce profil.");
+        imageName_.clear(); previousValid_ = false; fillMapping(); refresh(); log("Profil changé : charger un ELF pour ce profil.");
     });
     toolbar->addSeparator();
     core_ = new ChoiceBox; core_->addItems({"Contexte : cœur 0", "Contexte : cœur 1"}); toolbar->addWidget(core_);
@@ -154,10 +191,21 @@ void MainWindow::buildUi() {
     resetAction_ = debug->addAction("Reset / restart"); resetAction_->setShortcut(QKeySequence("Ctrl+R"));
     resetAction_->setObjectName("resetAction");
     connect(resetAction_, &QAction::triggered, this, [this] { setRunning(false); try { debugger_->reset(); previousValid_ = false; refresh(); log(q(debugger_->stop.message)); } catch (const std::exception& e) { failure(e); } });
-    toolbar->addAction(stepAction_); toolbar->addAction(runAction_); toolbar->addAction(pauseAction_); toolbar->addAction(resetAction_);
+    stepAction_->setIcon(style()->standardIcon(QStyle::SP_ArrowRight)); stepAction_->setIconText("Pas · F10");
+    runAction_->setIcon(style()->standardIcon(QStyle::SP_MediaPlay)); runAction_->setIconText("Exécuter · F5");
+    pauseAction_->setIcon(style()->standardIcon(QStyle::SP_MediaPause));
+    resetAction_->setIcon(style()->standardIcon(QStyle::SP_BrowserReload)); resetAction_->setIconText("Reset");
+    stepAction_->setToolTip("Exécuter une instruction du cœur sélectionné (F10)");
+    runAction_->setToolTip("Exécuter les deux cœurs démarrés jusqu'au prochain arrêt (F5)");
+    resetAction_->setToolTip("Recharger l'image et remettre le modèle à son état initial (Ctrl+R)");
+    toolbar->addAction(runAction_); toolbar->addAction(stepAction_); toolbar->addAction(pauseAction_);
+    toolbar->addSeparator(); toolbar->addAction(resetAction_);
     auto* launch = debug->addAction("Démarrer un cœur explicitement…"); connect(launch, &QAction::triggered, this, [this] { launchCore(); });
     auto* bp = debug->addAction("Ajouter un point d'arrêt…"); bp->setShortcut(QKeySequence(Qt::Key_F9)); connect(bp, &QAction::triggered, this, [this] { addBreakpoint(); });
     auto* wp = debug->addAction("Ajouter un watchpoint mémoire…"); connect(wp, &QAction::triggered, this, [this] { addMemoryWatch(); });
+    auto* expressionAction = debug->addAction("Ajouter une expression surveillée…");
+    expressionAction->setShortcut(QKeySequence("Ctrl+E"));
+    connect(expressionAction, &QAction::triggered, this, [this] { addExpression(); });
     connect(help->addAction("Couverture et limites"), &QAction::triggered, this, [this] {
         QMessageBox::information(this, "Couverture de cette version",
             "Exécution locale sans carte, ARM/Thumb. Modèle fonctionnel partiel.\n\n"
@@ -171,8 +219,14 @@ void MainWindow::buildUi() {
             "La pile est une vue mémoire brute, pas une reconstruction des appels C++. Les symboles ELF sont disponibles ; DWARF/source viendra ensuite.\n"
             "Voir README.md et docs/COVERAGE.md dans le projet.");
     });
-    banner_ = new QLabel("SIMULATION PARTIELLE  •  ARM / THUMB  •  HORS LIGNE");
-    banner_->setStyleSheet("background:#49391d;color:#ffda8b;padding:8px;font-weight:600;");
+    session_ = new QLabel; session_->setObjectName("sessionTitle");
+    session_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    banner_ = new QLabel; banner_->setObjectName("sessionState");
+    guidance_ = new QLabel; guidance_->setObjectName("guidance"); guidance_->setWordWrap(true);
+    auto* sessionHeader = new QWidget; auto* sessionLayout = new QVBoxLayout(sessionHeader);
+    sessionLayout->setContentsMargins(10, 8, 10, 4);
+    sessionLayout->addWidget(row({session_, banner_})); sessionLayout->addWidget(guidance_);
+    workspace_ = new InspectionWorkspace;
     assembly_ = table({"", "Adresse", "Opcode", "Instruction", "Symbole ELF"});
     assembly_->setObjectName("assemblyTable");
     assemblyAddress_ = new QLineEdit("pc"); assemblyAddress_->setPlaceholderText("Adresse ou symbole");
@@ -187,60 +241,89 @@ void MainWindow::buildUi() {
         if (!address) return;
         if (debugger_->breakpoints.count(address)) debugger_->breakpoints.erase(address); else debugger_->breakpoints.insert(address);
         refreshAssembly(); refreshPoints();
+        monitorTabs_->setCurrentIndex(1); showInspectionWindow(monitorDock_);
     });
-    auto* assemblyPane = vertical(row({new QLabel("Assembleur — instruction à PC"), assemblyAddress_, disassemble, followPc_}), assembly_);
-    source_ = new QPlainTextEdit; source_->setReadOnly(true); source_->setMaximumWidth(380);
+    assemblyAddress_->setMinimumWidth(80);
+    auto* assemblyPane = vertical(row({new QLabel("Adresse"), assemblyAddress_, disassemble, followPc_}), assembly_);
+    source_ = new QPlainTextEdit; source_->setReadOnly(true);
     source_->setPlainText("Correspondance C++ — itération 2\n\nLes symboles ELF sont affichés à côté des instructions.\n\nL'import des sources et la lecture DWARF seront ajoutés dans une couche séparée.");
-    setCentralWidget(vertical(banner_, assemblyPane));
-    auto* cpuPane = new QSplitter;
+    codePages_ = new QStackedWidget;
+    auto* welcome = new QWidget; auto* welcomeLayout = new QVBoxLayout(welcome);
+    welcomeLayout->setContentsMargins(28, 24, 28, 24); welcomeLayout->addStretch();
+    auto* welcomeTitle = new QLabel("Votre session de débogage"); welcomeTitle->setObjectName("sectionTitle");
+    auto* welcomeText = new QLabel("1. Choisissez Pico ou Pico 2 dans la barre du haut.\n"
+        "2. Ouvrez un ELF, ou explorez l'exemple intégré.\n"
+        "3. Avancez avec F10 ; poursuivez avec F5.\n\n"
+        "Les deux CPU restent visibles. Mémoire, pile et journal sont regroupés en bas.\n"
+        "Dans Périphériques, ouvrez un inspecteur en onglet ; détachez-le si nécessaire.");
+    welcomeText->setWordWrap(true);
+    welcomeLayout->addWidget(welcomeTitle); welcomeLayout->addWidget(welcomeText);
+    auto* welcomeOpen = new QPushButton("Ouvrir un ELF…"); auto* welcomeDemo = new QPushButton("Essayer l'exemple");
+    welcomeOpen->setObjectName("welcomeOpenButton"); welcomeDemo->setObjectName("welcomeDemoButton");
+    connect(welcomeOpen, &QPushButton::clicked, open, &QAction::trigger);
+    connect(welcomeDemo, &QPushButton::clicked, demo, &QAction::trigger);
+    welcomeLayout->addWidget(row({welcomeOpen, welcomeDemo})); welcomeLayout->addStretch();
+    codePages_->addWidget(welcome); codePages_->addWidget(assemblyPane);
+    workspace_->addFixedPage(codePages_, "Code");
+    setCentralWidget(vertical(sessionHeader, workspace_));
+    auto* cpuPane = new QWidget; auto* cpuLayout = new QVBoxLayout(cpuPane);
+    cpuLayout->setContentsMargins(6, 6, 6, 6);
     for (unsigned c = 0; c < 2; ++c) {
-        registers_[c] = table({"Registre", "Valeur"}); flags_[c] = new QLabel; flags_[c]->setWordWrap(true);
-        registers_[c]->setObjectName(QString("registers%1Table").arg(c));
-        // Never squeeze a 32-bit register into an elided value: preserve the
-        // full hexadecimal width, with scrolling if the user narrows the dock.
-        registers_[c]->horizontalHeader()->setStretchLastSection(false);
-        cpuPane->addWidget(vertical(flags_[c], registers_[c]));
+        flags_[c] = new QLabel; flags_[c]->setWordWrap(true);
+        cpuLayout->addWidget(flags_[c]);
     }
-    auto* cpuDock = dock(this, "CPU — deux cœurs", cpuPane, Qt::LeftDockWidgetArea); cpuDock->setMinimumWidth(490);
+    registers_ = table({"Registre", "Cœur 0", "Cœur 1"}); registers_->setObjectName("registersTable");
+    registers_->horizontalHeader()->setStretchLastSection(false);
+    cpuLayout->addWidget(registers_, 1);
+    auto* cpuDock = dock(this, "CPU · comparaison des cœurs", cpuPane, Qt::LeftDockWidgetArea);
+    cpuDock_ = cpuDock;
     memory_ = table({"Adresse", "00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F", "ASCII"});
     memory_->setObjectName("memoryTable");
     memoryAddress_ = new QLineEdit("0x20000000"); memoryLength_ = new QSpinBox; memoryLength_->setRange(16, 4096); memoryLength_->setSingleStep(16); memoryLength_->setValue(256);
     auto* showMemory = new QPushButton("Lire");
     connect(showMemory, &QPushButton::clicked, this, [this] { refreshMemory(); });
     connect(memoryAddress_, &QLineEdit::returnPressed, showMemory, &QPushButton::click);
-    auto* memoryDock = dock(this, "Mémoire partagée", vertical(row({new QLabel("Adresse"), memoryAddress_, new QLabel("Octets"), memoryLength_, showMemory}), memory_), Qt::BottomDockWidgetArea);
+    inspectionTabs_ = new QTabWidget; inspectionTabs_->setObjectName("inspectionTabs"); inspectionTabs_->setDocumentMode(true);
+    inspectionTabs_->addTab(vertical(row({new QLabel("Adresse"), memoryAddress_, new QLabel("Octets"), memoryLength_, showMemory}), memory_), "Mémoire");
+    inspectionDock_ = dock(this, "Inspection", inspectionTabs_, Qt::BottomDockWidgetArea);
     stack_ = table({"", "Adresse pile", "Mot 32 bits", "Symbole proche / région"});
     stack_->setObjectName("stackTable");
-    auto* stackDock = dock(this, "Pile du cœur sélectionné (brute)", stack_, Qt::LeftDockWidgetArea);
-    splitDockWidget(cpuDock, stackDock, Qt::Vertical);
+    inspectionTabs_->addTab(stack_, "Pile");
     mapping_ = table({"Début", "Fin incluse", "Région", "Accès", "Couverture"});
     mapping_->setObjectName("mappingTable");
-    auto* mappingDock = dock(this, "Cartographie / périphériques", mapping_, Qt::RightDockWidgetArea);
     peripherals_ = new PeripheralPanel;
+    peripherals_->setObjectName("peripheralCatalogPage");
     peripherals_->openDevice = [this](const QString& name) { openPeripheral(name); };
-    auto* peripheralDock = dock(this, "Périphériques — catalogue matériel", peripherals_, Qt::RightDockWidgetArea);
-    splitDockWidget(mappingDock, peripheralDock, Qt::Vertical);
-    auto* peripheralWindow = views->addAction("Ouvrir la fenêtre des périphériques");
+    workspace_->addFixedPage(peripherals_, "Périphériques");
+    auto* peripheralWindow = views->addAction("Catalogue des périphériques");
     peripheralWindow->setObjectName("peripheralWindowAction");
     peripheralWindow->setShortcut(QKeySequence("Ctrl+P"));
-    connect(peripheralWindow, &QAction::triggered, this, [peripheralDock] {
-        peripheralDock->setFloating(true); peripheralDock->resize(1120, 900);
-        showInspectionWindow(peripheralDock);
-    });
-    connect(mapping_, &QTableWidget::cellDoubleClicked, this, [this, memoryDock](int line, int) {
+    connect(peripheralWindow, &QAction::triggered, this, [this] { workspace_->setCurrentWidget(peripherals_); });
+    auto* gather = views->addAction("Rassembler les inspecteurs"); gather->setObjectName("gatherInspectorsAction");
+    gather->setShortcut(QKeySequence("Ctrl+Shift+P"));
+    connect(gather, &QAction::triggered, workspace_, &InspectionWorkspace::gatherInspections);
+    connect(mapping_, &QTableWidget::cellDoubleClicked, this, [this](int line, int) {
         if (!mapping_->item(line, 0)) return;
-        memoryAddress_->setText(mapping_->item(line, 0)->text()); refreshMemory(); showInspectionWindow(memoryDock);
+        memoryAddress_->setText(mapping_->item(line, 0)->text()); refreshMemory();
+        inspectionTabs_->setCurrentIndex(0); showInspectionWindow(inspectionDock_);
     });
     watches_ = table({"Expression", "Valeur", "Contexte"});
     watches_->setObjectName("watchesTable");
     auto* addWatch = new QPushButton("+ Expression"); auto* removeWatch = new QPushButton("Supprimer");
     connect(addWatch, &QPushButton::clicked, this, [this] { addExpression(); });
-    connect(removeWatch, &QPushButton::clicked, this, [this] { if (watches_->currentRow() >= 0) watches_->removeRow(watches_->currentRow()); });
-    auto* watchesDock = dock(this, "Expressions surveillées", vertical(row({addWatch, removeWatch}), watches_), Qt::RightDockWidgetArea);
-    splitDockWidget(peripheralDock, watchesDock, Qt::Vertical);
+    connect(removeWatch, &QPushButton::clicked, this, [this] { if (watches_->currentRow() >= 0) watches_->removeRow(watches_->currentRow()); refreshWatches(); });
+    monitorTabs_ = new QTabWidget; monitorTabs_->setObjectName("monitorTabs"); monitorTabs_->setDocumentMode(true);
+    auto* watchTools = vertical(new QLabel("Valeurs suivies, liées à leur cœur"), row({addWatch, removeWatch}));
+    monitorTabs_->addTab(vertical(watchTools, watches_), "Expressions");
+    monitorDock_ = dock(this, "Surveillance", monitorTabs_, Qt::RightDockWidgetArea);
+    // Empty watches and breakpoint lists should not reserve a whole column.
+    // Adding an item or using Views reveals it, without recreating its state.
+    monitorDock_->hide();
     points_ = table({"Type", "Adresse", "Taille / accès"});
     points_->setObjectName("pointsTable");
-    auto* addPoint = new QPushButton("+ Break"); auto* addMemory = new QPushButton("+ Watch"); auto* removePoint = new QPushButton("Supprimer");
+    auto* addPoint = new QPushButton("+ Arrêt"); auto* addMemory = new QPushButton("+ Accès"); auto* removePoint = new QPushButton("Supprimer");
+    addPoint->setToolTip("Breakpoint : arrêter avant une instruction (F9)");
+    addMemory->setToolTip("Watchpoint : arrêter après un accès mémoire CPU");
     connect(addPoint, &QPushButton::clicked, this, [this] { addBreakpoint(); });
     connect(addMemory, &QPushButton::clicked, this, [this] { addMemoryWatch(); });
     connect(removePoint, &QPushButton::clicked, this, [this] {
@@ -250,30 +333,52 @@ void MainWindow::buildUi() {
         else if (value < debugger_->watchpoints.size()) debugger_->watchpoints.erase(debugger_->watchpoints.begin() + value);
         refreshPoints(); refreshAssembly();
     });
-    auto* pointsDock = dock(this, "Points d'arrêt / watchpoints", vertical(row({addPoint, addMemory, removePoint}), points_), Qt::RightDockWidgetArea);
-    splitDockWidget(watchesDock, pointsDock, Qt::Vertical);
+    auto* pointHelp = new QLabel("Instruction (breakpoint) ou accès mémoire (watchpoint)"); pointHelp->setWordWrap(true);
+    monitorTabs_->addTab(vertical(vertical(pointHelp, row({addPoint, addMemory, removePoint})), points_), "Arrêts");
     console_ = new QPlainTextEdit; console_->setReadOnly(true); console_->setMaximumBlockCount(2000); console_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
     console_->setObjectName("consoleView");
     auto* expression = new QLineEdit; expression->setPlaceholderText("print read32(counter), r0 + 4, *sp… Entrée pour évaluer");
     connect(expression, &QLineEdit::returnPressed, this, [this, expression] { evaluate(expression->text()); expression->clear(); });
-    auto* consoleDock = dock(this, "Console / print / diagnostics", vertical(expression, console_), Qt::BottomDockWidgetArea);
-    splitDockWidget(memoryDock, consoleDock, Qt::Vertical);
-    // Source import is a future feature. Keep it available through the Views
-    // menu, without reserving screen area needed by live chip inspection.
-    auto* sourceDock = dock(this, "Source C++ — prochaine itération", source_, Qt::RightDockWidgetArea);
-    sourceDock->hide();
+    inspectionTabs_->addTab(vertical(expression, console_), "Console");
+    inspectionTabs_->addTab(mapping_, "Carte mémoire");
+    inspectionTabs_->addTab(source_, "Source C++");
+    inspectionTabs_->setTabVisible(4, false);
+    inspectionTabs_->setTabToolTip(4, "Emplacement réservé : import source/DWARF non disponible");
+    // Every secondary view has a stable keyboard/menu route. Selecting a view
+    // also reveals its dock, so closing a panel cannot leave a hidden result.
+    const auto inspectAction = [this, views](const QString& name, const char* id, const char* shortcut, int index) {
+        auto* action = views->addAction(name); action->setObjectName(id);
+        if (*shortcut) action->setShortcut(QKeySequence(shortcut));
+        connect(action, &QAction::triggered, this, [this, index] {
+            inspectionTabs_->setTabVisible(index, true);
+            inspectionTabs_->setCurrentIndex(index); showInspectionWindow(inspectionDock_);
+        });
+    };
+    inspectAction("Mémoire", "memoryViewAction", "Ctrl+3", 0);
+    inspectAction("Pile du cœur sélectionné", "stackViewAction", "Ctrl+4", 1);
+    inspectAction("Console / print / diagnostics", "consoleViewAction", "Ctrl+5", 2);
+    inspectAction("Carte mémoire", "mappingViewAction", "", 3);
+    inspectAction("Source C++ — prochaine itération", "sourceViewAction", "", 4);
+    auto* codeView = views->addAction("Code / assembleur"); codeView->setObjectName("codeViewAction");
+    codeView->setShortcut(QKeySequence("Ctrl+1"));
+    connect(codeView, &QAction::triggered, this, [this] { workspace_->setCurrentWidget(codePages_); });
+    auto* catalogView = views->addAction("Périphériques"); catalogView->setShortcut(QKeySequence("Ctrl+2"));
+    connect(catalogView, &QAction::triggered, peripheralWindow, &QAction::trigger);
+    auto* watchView = views->addAction("Expressions surveillées"); watchView->setObjectName("watchesViewAction");
+    connect(watchView, &QAction::triggered, this, [this] { monitorTabs_->setCurrentIndex(0); showInspectionWindow(monitorDock_); });
+    auto* pointView = views->addAction("Points d'arrêt / watchpoints"); pointView->setObjectName("pointsViewAction");
+    connect(pointView, &QAction::triggered, this, [this] { monitorTabs_->setCurrentIndex(1); showInspectionWindow(monitorDock_); });
     stop_ = new QLabel; stop_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     statusBar()->addWidget(stop_, 1);
-    resizeDocks({cpuDock, mappingDock}, {510, 420}, Qt::Horizontal);
-    resizeDocks({cpuDock, stackDock}, {580, 240}, Qt::Vertical);
-    resizeDocks({mappingDock, peripheralDock, watchesDock, pointsDock}, {180, 370, 145, 145}, Qt::Vertical);
-    resizeDocks({memoryDock, consoleDock}, {230, 130}, Qt::Vertical);
+    resizeDocks({cpuDock, monitorDock_}, {330, 300}, Qt::Horizontal);
+    resizeDocks({inspectionDock_}, {245}, Qt::Vertical);
     overviewState_ = saveState();
 }
 void MainWindow::loadFile(const QString& path) {
     setRunning(false);
     try {
         debugger_->load(path.toStdString()); previousValid_ = false;
+        imageName_ = QFileInfo(path).fileName();
         QSettings().setValue("lastDirectory", QFileInfo(path).absolutePath());
         setWindowTitle("PicoDebugger — " + QFileInfo(path).fileName());
         log("ELF chargé : " + path); log(q(debugger_->stop.message)); refresh();
@@ -282,7 +387,7 @@ void MainWindow::loadFile(const QString& path) {
 void MainWindow::selectChip(Chip chip) { chip_->setCurrentIndex(chip == Chip::RP2350 ? 1 : 0); }
 void MainWindow::loadDemo() {
     setRunning(false);
-    try { debugger_->loadImage(demoImage()); previousValid_ = false; log("Exemple chargé. Pour le cœur 1 : entrée core1_entry, pile 0x20042000."); refresh(); }
+    try { debugger_->loadImage(demoImage()); imageName_ = "Exemple intégré"; previousValid_ = false; log("Exemple chargé. Pour le cœur 1 : entrée core1_entry, pile 0x20042000."); refresh(); }
     catch (const std::exception& e) { failure(e); }
 }
 void MainWindow::singleStep() {
@@ -313,7 +418,18 @@ void MainWindow::runBatch() {
 }
 void MainWindow::refresh() {
     setRunning(running_);
-    banner_->setText(debugger_->loaded() ? "SIMULATION PARTIELLE • ELF DIRECT • SANS BOOT ROM" : "SIMULATION PARTIELLE • ARM / THUMB • HORS LIGNE");
+    const bool loaded = debugger_->loaded();
+    codePages_->setCurrentIndex(loaded ? 1 : 0);
+    session_->setText(loaded ? imageName_ : "Aucune image chargée"); session_->setToolTip(session_->text());
+    banner_->setText(!loaded ? "HORS LIGNE" : running_ ? "EN EXÉCUTION" : q(stopName(debugger_->stop.kind)));
+    banner_->setStyleSheet(debugger_->terminalStop() ? "color:#ffb591;font-weight:600;" : "color:#8bd6bb;font-weight:600;");
+    const QString instructionHint = QString("PC %1 · F10 : une instruction · F5 : continuer").arg(hx(debugger_->cpus[selected_].r[15]));
+    guidance_->setText(!loaded ? "Simulation partielle · ARM / Thumb · sans carte"
+        : QString("Simulation partielle · ELF direct, sans ROM · cœur sélectionné : %1\n%2")
+            .arg(selected_).arg(running_ ? "États échantillonnés · Maj+F5 pour mettre en pause"
+                : debugger_->stop.kind == StopKind::Ready || debugger_->stop.kind == StopKind::Step
+                    ? instructionHint : q(debugger_->stop.message)));
+    inspectionTabs_->setTabToolTip(1, QString("Pile brute du cœur %1 · pas de déroulage des appels C++").arg(selected_));
     refreshRegisters(); refreshAssembly(); refreshMemory(); refreshStack(); refreshWatches(); refreshPoints(); refreshPeripherals();
     const QString stamp = QDateTime::currentDateTime().toString("HH:mm:ss.zzz");
     stop_->setText(QString("%1  |  cœur %2  |  %3  |  révision %4  |  %5")
@@ -322,26 +438,42 @@ void MainWindow::refresh() {
     stop_->setToolTip(stop_->text());
 }
 void MainWindow::refreshRegisters() {
+    registers_->ensurePolished();
+    registers_->setRowCount(21);
     for (unsigned c = 0; c < 2; ++c) {
-        const Cpu& cpu = debugger_->cpus[c]; auto* widget = registers_[c]; widget->setRowCount(21);
+        const Cpu& cpu = debugger_->cpus[c]; auto* widget = registers_;
+        const int column = static_cast<int>(c + 1);
+        widget->horizontalHeaderItem(column)->setText(QString("Cœur %1%2").arg(c).arg(selected_ == c ? " •" : ""));
+        widget->horizontalHeaderItem(column)->setToolTip(selected_ == c ? "Contexte sélectionné pour F10, assembleur et pile" : "Autre cœur ; visible en parallèle");
         for (unsigned r = 0; r < 21; ++r) {
             const uint32_t extras[] = {cpu.xpsr, cpu.msp, cpu.psp, cpu.control, cpu.primask};
             const char* names[] = {"xPSR", "MSP", "PSP", "CONTROL", "PRIMASK"};
             const uint32_t value = r < 16 ? cpu.r[r] : extras[r - 16];
             cell(widget, static_cast<int>(r), 0, r < 16 ? q(registerName(r)) : names[r - 16]);
-            cell(widget, static_cast<int>(r), 1, hx(value));
-            widget->item(static_cast<int>(r), 1)->setForeground(previousValid_ && value != previous_[c][r] ? QColor("#ffd780") : QColor("#dce6f0"));
+            cell(widget, static_cast<int>(r), column, debugger_->loaded() ? hx(value) : QString("—"));
+            widget->item(static_cast<int>(r), column)->setForeground(previousValid_ && value != previous_[c][r] ? QColor("#ffd780") : QColor("#dce6f0"));
             previous_[c][r] = value;
         }
-        flags_[c]->setText(QString("CŒUR %1  •  %2\n%3\n%4 instructions").arg(c)
+        flags_[c]->setText(!debugger_->loaded() ? QString("Cœur %1 · pas d'image").arg(c) : QString("Cœur %1 · %2 · %4 instructions\n%3").arg(c)
             .arg(cpu.held ? "RETENU" : cpu.lockup ? "LOCKUP" : cpu.sleeping ? "SOMMEIL" : running_ ? "ACTIF" : "ARRÊTÉ")
             .arg(q(cpu.flags())).arg(static_cast<qulonglong>(cpu.instructions)));
     }
+    // Measure the actual styled columns, including header padding, rather than
+    // estimating character widths before Qt has applied the desktop's DPI/font.
+    registers_->resizeColumnsToContents();
+    const int width = registers_->horizontalHeader()->length() + 2 * registers_->frameWidth()
+        + style()->pixelMetric(QStyle::PM_ScrollBarExtent);
+    registers_->setMinimumWidth(width); cpuDock_->setMinimumWidth(width + 12);
     previousValid_ = true;
 }
 void MainWindow::refreshAssembly() {
     assembly_->setRowCount(0);
     if (!debugger_->loaded()) return;
+    if (followPc_->isChecked() && debugger_->cpus[selected_].held) {
+        assembly_->setRowCount(1);
+        cell(assembly_, 0, 3, "Cœur retenu — utiliser Débogage → Démarrer un cœur explicitement…");
+        return;
+    }
     try {
         uint32_t at = followPc_->isChecked() ? debugger_->cpus[selected_].r[15] : debugger_->evaluate(assemblyAddress_->text().toStdString(), selected_) & ~1u;
         for (int r = 0; r < 32; ++r) {
@@ -381,6 +513,9 @@ void MainWindow::refreshMemory() {
 }
 void MainWindow::refreshStack() {
     stack_->setRowCount(0); if (!debugger_->loaded()) return;
+    if (debugger_->cpus[selected_].held && !debugger_->cpus[selected_].r[13]) {
+        stack_->setRowCount(1); cell(stack_, 0, 2, "Pile non initialisée · cœur retenu"); return;
+    }
     for (int r = 0; r < 32; ++r) {
         const uint64_t wide = uint64_t(debugger_->cpus[selected_].r[13]) + static_cast<unsigned>(r) * 4u;
         if (wide > 0xffffffffull) break;
@@ -402,6 +537,7 @@ void MainWindow::fillMapping() {
     }
 }
 void MainWindow::refreshWatches() {
+    monitorTabs_->setTabText(0, watches_->rowCount() ? QString("Expressions (%1)").arg(watches_->rowCount()) : "Expressions");
     for (int r = 0; r < watches_->rowCount(); ++r) {
         const auto* item = watches_->item(r, 0); if (!item) continue;
         const unsigned core = item->data(Qt::UserRole).toUInt();
@@ -413,57 +549,36 @@ void MainWindow::refreshWatches() {
 void MainWindow::refreshPeripherals() {
     peripherals_->updateTarget(*debugger_, selected_);
     for (auto it = inspections_.begin(); it != inspections_.end();) {
-        if (!it->window) { it = inspections_.erase(it); continue; }
-        it->panel->updateTarget(*debugger_, static_cast<unsigned>(it->core->currentIndex()));
-        if (it->output) {
-            const auto& bytes = debugger_->memory.uartOutput(static_cast<unsigned>(it->uart));
-            const auto text = QString::fromLatin1(bytes.data(), static_cast<int>(bytes.size()));
-            if (it->output->toPlainText() != text) it->output->setPlainText(text);
-        }
+        if (!*it) { it = inspections_.erase(it); continue; }
+        (*it)->updateTarget(*debugger_);
         ++it;
     }
 }
 void MainWindow::closeInspections() {
-    for (auto& inspection : inspections_) if (inspection.window) inspection.window->close();
+    workspace_->clearInspections();
     inspections_.clear();
 }
-void MainWindow::openPeripheral(const QString& name) {
-    if (name.isEmpty()) return;
-    auto* window = new QDialog(this, Qt::Window);
-    window->setObjectName("deviceWindow_" + name);
-    window->setAttribute(Qt::WA_DeleteOnClose); prepareInspectionWindow(window);
-    window->setWindowTitle(name + " — " + chip_->currentText());
-    window->resize(880, name.startsWith("UART") ? 790 : 650);
-    auto* layout = new QVBoxLayout(window);
-    auto* context = new ChoiceBox; context->setObjectName("inspectionCore");
-    context->addItems({"Contexte : cœur 0", "Contexte : cœur 1"}); context->setCurrentIndex(static_cast<int>(selected_));
-    layout->addWidget(context);
-    auto* panel = new PeripheralPanel(window, name); layout->addWidget(panel, 1);
-    QPlainTextEdit* output = nullptr;
-    const int uart = name == "UART0" ? 0 : name == "UART1" ? 1 : -1;
-    if (uart >= 0) {
-        layout->addWidget(new QLabel("Sortie TX — derniers octets émis"));
-        output = new QPlainTextEdit; output->setObjectName("uartOutput"); output->setReadOnly(true); output->setMaximumHeight(130); layout->addWidget(output);
-        auto* input = new QLineEdit; input->setObjectName("uartInput"); input->setPlaceholderText("Octets RX en texte UTF-8 (sans ajout de retour ligne)");
-        auto* send = new QPushButton("Injecter RX"); send->setObjectName("uartSend");
-        layout->addWidget(row({input, send}));
-        auto* result = new QLabel; result->setObjectName("uartInputResult"); layout->addWidget(result);
-        connect(send, &QPushButton::clicked, this, [this, input, result, uart] {
-            setRunning(false);
-            try {
-                const auto bytes = input->text().toUtf8();
-                const auto accepted = debugger_->injectUart(static_cast<unsigned>(uart), std::string(bytes.constData(), static_cast<size_t>(bytes.size())));
-                result->setText(QString("%1 / %2 octets acceptés (UART activé et FIFO disponible)").arg(static_cast<qulonglong>(accepted)).arg(bytes.size()));
-                refresh();
-            } catch (const std::exception& error) { result->setText(error.what()); }
-        });
-        connect(input, &QLineEdit::returnPressed, send, &QPushButton::click);
-    }
-    inspections_.push_back({window, panel, context, output, uart});
-    connect(context, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this, [this] { refreshPeripherals(); });
-    refreshPeripherals(); showInspectionWindow(window);
+void MainWindow::openPeripheral(const QString& name, bool duplicate, int context) {
+    if (name.isEmpty() || (!duplicate && workspace_->revealInspection(name))) return;
+    const QString suffix = duplicate ? QString::number(++inspectionSequence_) : QString();
+    const QString key = duplicate ? name + "#" + suffix : name;
+    auto* inspection = new PeripheralInspection(name, context < 0 ? selected_ : static_cast<unsigned>(context));
+    inspection->setObjectName("deviceInspection_" + key);
+    inspection->refreshRequested = [this] { refreshPeripherals(); };
+    inspection->detachRequested = [this, key] { workspace_->toggleDetached(key); };
+    inspection->duplicateRequested = [this, name, inspection] { openPeripheral(name, true, static_cast<int>(inspection->core())); };
+    inspection->injectUart = [this](unsigned uart, const std::string& bytes) {
+        setRunning(false);
+        const auto accepted = debugger_->injectUart(uart, bytes); refresh(); return accepted;
+    };
+    inspections_.push_back(inspection);
+    workspace_->addInspection(key, duplicate ? name + " · " + suffix : name, inspection,
+        [inspection](bool detached) { inspection->setDetached(detached); });
+    refreshPeripherals();
 }
 void MainWindow::refreshPoints() {
+    const auto count = debugger_->breakpoints.size() + debugger_->watchpoints.size();
+    monitorTabs_->setTabText(1, count ? QString("Arrêts (%1)").arg(static_cast<qulonglong>(count)) : "Arrêts");
     points_->setRowCount(0);
     for (const auto at : debugger_->breakpoints) {
         const int r = points_->rowCount(); points_->setRowCount(r + 1);
@@ -479,7 +594,7 @@ void MainWindow::addBreakpoint() {
     setRunning(false); bool ok = false;
     const auto text = QInputDialog::getText(this, "Point d'arrêt", "Adresse, registre ou symbole", QLineEdit::Normal, "pc", &ok);
     if (!ok || text.isEmpty()) return;
-    try { debugger_->breakpoints.insert(debugger_->evaluate(text.toStdString(), selected_) & ~1u); refresh(); }
+    try { debugger_->breakpoints.insert(debugger_->evaluate(text.toStdString(), selected_) & ~1u); refresh(); monitorTabs_->setCurrentIndex(1); showInspectionWindow(monitorDock_); }
     catch (const std::exception& e) { failure(e); }
 }
 void MainWindow::addMemoryWatch() {
@@ -490,13 +605,14 @@ void MainWindow::addMemoryWatch() {
     layout.addRow("Adresse / symbole", &address); layout.addRow("Octets", &length); layout.addRow("Accès", &mode); layout.addRow(&add);
     connect(&add, &QPushButton::clicked, &dialog, &QDialog::accept);
     if (dialog.exec() != QDialog::Accepted) return;
-    try { debugger_->addWatchpoint(debugger_->evaluate(address.text().toStdString(), selected_), static_cast<uint32_t>(length.value()), mode.currentIndex() != 0, mode.currentIndex() != 1); refreshPoints(); }
+    try { debugger_->addWatchpoint(debugger_->evaluate(address.text().toStdString(), selected_), static_cast<uint32_t>(length.value()), mode.currentIndex() != 0, mode.currentIndex() != 1); refreshPoints(); monitorTabs_->setCurrentIndex(1); showInspectionWindow(monitorDock_); }
     catch (const std::exception& e) { failure(e); }
 }
 void MainWindow::addExpression() {
     bool ok = false; const auto text = QInputDialog::getText(this, "Expression surveillée", "Expression (sans effet de bord), liée au cœur sélectionné", QLineEdit::Normal, "read32(0x20000000)", &ok);
     if (!ok || text.isEmpty()) return;
     const int r = watches_->rowCount(); watches_->setRowCount(r + 1); cell(watches_, r, 0, text); watches_->item(r, 0)->setData(Qt::UserRole, selected_); refreshWatches();
+    monitorTabs_->setCurrentIndex(0); showInspectionWindow(monitorDock_);
 }
 void MainWindow::launchCore() {
     setRunning(false);

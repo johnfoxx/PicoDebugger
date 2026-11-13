@@ -9,13 +9,18 @@
 class QAction;
 class QCheckBox;
 class QComboBox;
+class QDockWidget;
 class QLabel;
 class QLineEdit;
 class QPlainTextEdit;
 class QSpinBox;
 class QTableWidget;
+class QTabWidget;
+class QStackedWidget;
 class QTimer;
 class PeripheralPanel;
+class PeripheralInspection;
+class InspectionWorkspace;
 
 class MainWindow : public QMainWindow {
 public:
@@ -34,23 +39,27 @@ private:
     QComboBox* chip_;
     QComboBox* core_;
     QLabel* banner_;
+    QLabel* session_;
+    QLabel* guidance_;
+    QString imageName_;
     QLabel* stop_;
-    std::array<QTableWidget*, 2> registers_;
+    QTableWidget* registers_;
     std::array<QLabel*, 2> flags_;
     QTableWidget* assembly_;
     QTableWidget* memory_;
     QTableWidget* stack_;
     QTableWidget* mapping_;
     PeripheralPanel* peripherals_;
-    struct Inspection {
-        QPointer<QWidget> window;
-        PeripheralPanel* panel;
-        QComboBox* core;
-        QPlainTextEdit* output;
-        int uart;
-    };
-    std::vector<Inspection> inspections_;
-    void openPeripheral(const QString& name);
+    InspectionWorkspace* workspace_;
+    QStackedWidget* codePages_;
+    QTabWidget* inspectionTabs_;
+    QTabWidget* monitorTabs_;
+    QDockWidget* inspectionDock_;
+    QDockWidget* cpuDock_;
+    QDockWidget* monitorDock_;
+    std::vector<QPointer<PeripheralInspection>> inspections_;
+    unsigned inspectionSequence_ = 1;
+    void openPeripheral(const QString& name, bool duplicate = false, int context = -1);
     void closeInspections();
     QTableWidget* watches_;
     QTableWidget* points_;

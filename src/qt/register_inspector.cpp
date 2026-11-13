@@ -10,7 +10,9 @@ QString q(const std::string& value) { return QString::fromStdString(value); }
 RegisterInspector::RegisterInspector(QWidget* parent) : QWidget(parent) {
     auto* layout = new QVBoxLayout(this); layout->setContentsMargins(0, 0, 0, 0);
     title_ = new QLabel; title_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    title_->setWordWrap(true); title_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     note_ = new QLabel; note_->setWordWrap(true); note_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    note_->setMaximumHeight(48);
     fields_ = new QTableWidget(0, 4); fields_->setObjectName("registerFieldsTable");
     fields_->setHorizontalHeaderLabels({"Bits", "Champ", "Valeur", "Signification"});
     fields_->verticalHeader()->hide(); fields_->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -41,6 +43,7 @@ void RegisterInspector::setRegister(const picodbg::RegisterDescription& descript
         }
     }
     note_->setText(q(register_.note) + (register_.fields.empty() ? "\nChamps pas encore décrits." : "\nLes bits absents de ce tableau ne sont pas nécessairement réservés."));
+    note_->setToolTip(note_->text());
 }
 void RegisterInspector::setValue(bool available, uint32_t value, const QString& status) {
     if (!selected_) return;

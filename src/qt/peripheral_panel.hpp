@@ -6,6 +6,7 @@
 
 class QLabel;
 class QLineEdit;
+class QPushButton;
 class QTableWidget;
 class QTreeWidget;
 class RegisterInspector;
@@ -27,6 +28,8 @@ private:
     QLineEdit* registerFilter_;
     QLabel* context_;
     QLabel* detail_;
+    QLabel* empty_;
+    QPushButton* open_;
     QTreeWidget* catalog_;
     QTableWidget* registers_;
     RegisterInspector* inspector_;

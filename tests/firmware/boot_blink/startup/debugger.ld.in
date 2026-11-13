@@ -1,0 +1,58 @@
+/* Direct-start ELF only: no boot2, ROM image definition, or UF2 boot image.
+ * .data has a Flash LMA and a RAM VMA so the C startup performs the copy. */
+ENTRY(Reset_Handler)
+
+MEMORY
+{
+    FLASH (rx) : ORIGIN = 0x10000000, LENGTH = @BLINK_FLASH_KIB@K
+    RAM (rwx)  : ORIGIN = 0x20000000, LENGTH = @BLINK_RAM_KIB@K
+}
+
+PHDRS
+{
+    flash PT_LOAD FLAGS(5);
+    data PT_LOAD FLAGS(6);
+    bss PT_LOAD FLAGS(6);
+}
+
+SECTIONS
+{
+    .vectors ORIGIN(FLASH) + 0x200 :
+    {
+        KEEP(*(.vectors))
+    } > FLASH :flash
+
+    .text : ALIGN(4)
+    {
+        *(.text .text.*)
+        *(.rodata .rodata.*)
+        . = ALIGN(4);
+    } > FLASH :flash
+
+    .data : ALIGN(4)
+    {
+        __data_start = .;
+        *(.data .data.*)
+        . = ALIGN(4);
+        __data_end = .;
+    } > RAM AT> FLASH :data
+    __data_load_start = LOADADDR(.data);
+
+    /* BSS has no Flash payload. Give its segment a RAM physical address
+     * explicitly instead of inheriting the .data VMA/LMA displacement. */
+    .bss (NOLOAD) : AT(ADDR(.bss)) ALIGN(4)
+    {
+        __bss_start = .;
+        *(.bss .bss.*)
+        *(COMMON)
+        . = ALIGN(4);
+        __bss_end = .;
+    } > RAM :bss
+
+    __stack_top = ORIGIN(RAM) + LENGTH(RAM);
+    __stack_limit = __stack_top - 4096;
+    ASSERT(__bss_end <= __stack_limit, "RAM overlaps the 4 KiB stack")
+    ASSERT(SIZEOF(.vectors) == 68 * 4, "Expected 32-bit ARM vector entries")
+
+    /DISCARD/ : { *(.comment .note.* .eh_frame* .ARM.exidx* .ARM.extab*) }
+}

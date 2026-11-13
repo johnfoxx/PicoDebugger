@@ -1,5 +1,23 @@
 # Versions
 
+## v0.4.0 — 2026-11-13
+
+Delta depuis **v0.3.0** (`8975932`). Jalon conservant la refonte ergonomique et l’exemple de boot avant les prochaines évolutions.
+
+- Comparaison des deux CPU dans un seul tableau, avec largeur calculée sur les colonnes réelles pour préserver les valeurs hexadécimales complètes.
+- Espace central Code/Périphériques ; Mémoire, Pile, Console et Carte mémoire regroupées en bas. Surveillance apparaît à la demande, avec compteurs d'expressions et de points d'arrêt.
+- Accueil guidé sans image, état de session plus lisible, raccourcis de navigation et commandes d'exécution compactes.
+- Inspecteurs ouverts en onglets et réutilisés à l'ouverture suivante. Détachement explicite, rattachement par bouton ou fermeture de la fenêtre, rassemblement global sans perte de contexte/filtre/saisie UART.
+- Duplication explicite d'un inspecteur pour comparer plusieurs contextes du même périphérique ; nettoyage des onglets et fenêtres au changement de puce.
+- Navigation Registres/Bits, vue UART TX/RX dédiée, retour explicite des recherches sans résultat et thème cohérent des pages détachées.
+- Modules Qt `InspectionWorkspace` et `PeripheralInspection` séparés du contrôleur et du modèle. Qt5.15 minimum ou Qt6 ; couverture d'émulation inchangée.
+- Tests GUI étendus : accueil, navigation, format 1280×800, comparaison CPU, réutilisation, détachement/rassemblement, duplication et nettoyage. Guide [INTERFACE.md](INTERFACE.md) et tutoriel actualisés.
+
+- Exemple autonome `tests/firmware/boot_blink` : application et startup C11, copie `.data`, effacement `.bss`, clignotement GPIO25, variables de suivi ; configurations ELF pour le débogueur et SDK/UF2 pour Pico/Pico 2 sans Wi-Fi, avec CMake, Makefile, tests hôtes et tutoriel.
+- Validation : 14 suites CTest Qt5 et deux tests hôtes du firmware. Parcours graphique offscreen à 1280×800 et UART TX/RX vérifiés. Compilation ARM/UF2 non validée (toolchain/SDK absents) ; Qt6 et bureau Wayland natif non validés.
+- Couverture CPU/périphériques inchangée : temps virtuel lié aux quanta, modèles partiels, pas de Boot ROM, DWARF ni radio Wi-Fi.
+- Tag annoté `v0.4.0` : ce changelog figure également dans son annotation.
+
 <a id="v0-3-0"></a>
 
 ## v0.3.0 — 2026-11-10

@@ -25,13 +25,13 @@ Cette image est un exemple de démarrage direct pour le débogueur ; elle n'est 
 QT_QPA_PLATFORM=offscreen ./build-gui/picodbg_gui_tests build-gui/pico2-live.png build-gui/rp2350-peripherals.elf
 ```
 
-## Petites fenêtres
+## Inspecteurs en onglets et fenêtres à la demande
 
-Dans le catalogue des périphériques, **double-cliquer sur un bloc**, ou le sélectionner et utiliser **↗ Fenêtre**. Plusieurs fenêtres peuvent rester ouvertes en même temps. Chaque fenêtre possède son propre sélecteur de cœur, conserve son périphérique et se rafraîchit avec le modèle. Fermer une fenêtre ne ferme pas les autres. Un changement de puce ferme les fenêtres de l'ancienne cible pour éviter de présenter des adresses d'un autre profil.
+Dans **Périphériques** (`Ctrl+P`), double-cliquer un bloc ou choisir **Inspecter** ouvre son onglet. Une nouvelle ouverture retrouve cet onglet. **Détacher** le transforme en fenêtre indépendante ; **Rattacher**, ou fermer cette fenêtre, le remet dans l'application sans perdre sélection, filtre ou contexte cœur. **Rassembler** / `Ctrl+Maj+P` rattache toutes les fenêtres. **⋯ → Dupliquer l'inspection** permet une comparaison explicite de plusieurs contextes du même bloc.
 
-Les fenêtres UART0/UART1 comprennent la sortie TX (jusqu'aux derniers 64 Kio environ) et une entrée RX en texte UTF-8. **Injecter RX** met l'exécution en pause et indique le nombre d'octets acceptés. UARTEN/RXE doivent être activés et la FIFO doit avoir de la place. Aucun retour à la ligne n'est ajouté automatiquement. Lire les registres à l'écran ne consomme jamais les octets de la FIFO.
+Les inspecteurs UART ont un onglet interne **UART · TX / RX** : capture TX (derniers 64 Kio environ) et saisie RX UTF-8 sans retour ligne ajouté. **Injecter RX** met l'exécution en pause et indique le nombre d'octets acceptés. UARTEN/RXE et l'espace FIFO conditionnent l'acceptation. Revenir à **Registres** pour les valeurs et leurs bits. Lire ces valeurs ne consomme pas la FIFO.
 
-`Ctrl+P` conserve l'explorateur général détachable. `Ctrl+Maj+0` restaure l'agencement principal. Les petites fenêtres restent indépendantes de cet agencement.
+`Ctrl+Maj+0` restaure la disposition initiale sans fermer les inspecteurs. Un changement de puce les ferme tous. Voir [le guide de l'interface](INTERFACE.md) pour les zones et raccourcis.
 
 ## Modèles ajoutés après v0.2.0
 
@@ -39,11 +39,10 @@ Les fenêtres UART0/UART1 comprennent la sortie TX (jusqu'aux derniers 64 Kio en
 
 Le catalogue décrit désormais **587 registres / 1 653 champs pour le RP2040** et **783 registres / 2 373 champs pour le RP2350**, alias DMA compris. Ces nombres mesurent la documentation intégrée, **pas la couverture d'émulation**. Les familles ajoutées sont ADC, I2C0/1, DMA (12/16 canaux et leurs alias) et PIO0/1/2 ; elles restent sans modèle d'exécution. Leurs adresses, accès et champs sont consultables, mais leur valeur reste « Non émulé ». La valeur de reset documentaire n'est jamais utilisée comme état courant.
 
-Dans le panneau **Périphériques**, double-cliquer sur un bloc ou utiliser **↗ Fenêtre** ouvre une fenêtre indépendante, déplaçable et redimensionnable, y compris sur un autre écran. Plusieurs fenêtres peuvent observer le même bloc ou des blocs différents ; leur contexte cœur est indépendant. Elles sont déjà détachées de l'agencement principal. Le catalogue complet reste détachable avec `Ctrl+P`.
+Le catalogue est intégré à l'espace central. Les inspecteurs restent en onglets tant que **Détacher** n'est pas utilisé ; ils conservent un contexte cœur indépendant.
+Dans chaque inspecteur, sélectionner un registre puis **Bits** affiche ses champs : positions des bits, valeur numérique et signification. Exemples : `UARTFR.RXFE=1` signifie « FIFO RX vide : Oui », `UARTLCR_H.WLEN=3` signifie « 8 bits ». Les descriptions matérielles incluent parfois des modes non émulés ; la couverture du bloc et ses limites restent applicables. Les listes de valeurs symboliques sont accessibles dans les infobulles, même si la valeur actuelle est inconnue. Les bits absents d'une description ne sont pas automatiquement considérés comme réservés.
 
-Dans chaque fenêtre, sélectionner un registre affiche ses champs : positions des bits, valeur numérique et signification. Exemples : `UARTFR.RXFE=1` signifie « FIFO RX vide : Oui », `UARTLCR_H.WLEN=3` signifie « 8 bits ». Les descriptions matérielles incluent parfois des modes non émulés ; la couverture du bloc et ses limites restent applicables. Les listes de valeurs symboliques sont accessibles dans les infobulles, même si la valeur actuelle est inconnue. Les bits absents d'une description ne sont pas automatiquement considérés comme réservés.
-
-Le bouton **Bits** replie ce détail ; un double-clic sur un registre le déplie. Le filtre de registres accepte un nom, une adresse ou un champ, par exemple `RXFE`, `CH15` ou `0x40070018`. Les changements sont surlignés. Les détails réutilisent la valeur déjà inspectée, sans lecture MMIO supplémentaire. Aucun champ n'est éditable dans cette version.
+Le bouton **Registres** revient à la liste ; un double-clic sur un registre ouvre également ses bits. Le filtre de registres accepte un nom, une adresse ou un champ, par exemple `RXFE`, `CH15` ou `0x40070018`. Les changements sont surlignés. Les détails réutilisent la valeur déjà inspectée, sans lecture MMIO supplémentaire. Aucun champ n'est éditable dans cette version.
 
 | Bloc | Couverture fonctionnelle | Limites principales |
 |---|---|---|
@@ -66,7 +65,7 @@ Le message `Wayland does not support QWindow::requestActivate()` est émis par l
 
 La première correction ne couvrait pas les listes déroulantes. Le cas de sélection de puce a été reproduit en traçant les appels Qt : `QComboBox::hidePopup()` → fermeture du popup → rétablissement du focus → `QWindow::requestActivate()`. Le nouveau `ChoiceBox` conserve le popup natif et diffère le retour du focus clavier jusqu'à ce que la fenêtre propriétaire ait réellement retrouvé le focus du compositeur. Les sélecteurs de puce, de cœur et les dialogues utilisent ce composant.
 
-Le projet ouvre aussi les fenêtres d'inspection sans demander l'activation sous Wayland et évite `raise()`. Sous Qt5/Wayland, le détachement d'un dock par glisser-déposer reste désactivé pour éviter un autre appel interne de Qt ; `Ctrl+P` et les petites fenêtres restent accessibles. Les avertissements Qt ne sont pas filtrés. Le test Linux/Qt5 `qt_popup_activation` intercepte les appels à `QWindow::requestActivate()` uniquement dans son exécutable, les transmet à Qt et vérifie l'absence de demande lors des choix souris/clavier, de l'annulation et du retour différé du focus. Cette validation reste **offscreen**, sans accès au compositeur Wayland depuis l'environnement de développement.
+Le projet ouvre aussi les fenêtres d'inspection sans demander l'activation sous Wayland et évite `raise()`. Sous Qt5/Wayland, le détachement d'un dock par glisser-déposer reste désactivé pour éviter un autre appel interne de Qt ; les inspecteurs restent détachables par leur bouton **Détacher**. Les avertissements Qt ne sont pas filtrés. Le test Linux/Qt5 `qt_popup_activation` intercepte les appels à `QWindow::requestActivate()` uniquement dans son exécutable, les transmet à Qt et vérifie l'absence de demande lors des choix souris/clavier, de l'annulation et du retour différé du focus. Cette validation reste **offscreen**, sans accès au compositeur Wayland depuis l'environnement de développement.
 
 Le second avertissement, `QSocketNotifier: Can only be used with threads started with QThread`, a été identifié grâce à la trace fournie sur la machine utilisateur : le plugin **IBus** de Qt5 crée un `QFileSystemWatcher` dans le constructeur de l'intégration Wayland, avant la création du dispatcher d'événements. Ce chemin est visible dans les [sources QtWayland 5.15](https://github.com/qt/qtwayland/blob/5.15/src/client/qwaylandintegration.cpp).
 

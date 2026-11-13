@@ -1,4 +1,4 @@
-# PicoDebugger — v0.3.0
+# PicoDebugger
 
 **PicoDebugger, ou PicoDbg, est un débogueur graphique hors ligne associé à un simulateur fonctionnel partiel des Raspberry Pi Pico/RP2040 et Pico 2/RP2350 en mode ARM/Thumb.** Il exécute des instructions machine sur un modèle logiciel local et permet d'observer les deux contextes CPU, la mémoire, la pile et les périphériques couverts. Aucune carte ni sonde n'est nécessaire.
 
@@ -12,12 +12,13 @@ Le moteur est écrit en **C++11**, indépendant de Qt. L'interface principale es
 - [Fonctionnalités et limites](#fonctionnalités-et-limites)
 - [Tutoriel rapide](#tutoriel-rapide)
 - [Tutoriel complet : toutes les commandes, fonctions et cas d'usage](docs/TUTORIAL.md)
+- [Organisation de l'interface et inspecteurs détachables](docs/INTERFACE.md)
 - [Delta exact v0.2.0 → v0.3.0](docs/RELEASES.md#v0-3-0)
 - [Couverture technique détaillée](docs/COVERAGE.md)
 
 ## Installation et lancement
 
-Prérequis : CMake ≥ 3.16, un compilateur C++11 et les fichiers de développement Qt Widgets 5 ou 6. Python 3 permet de générer les ELF d'exemple et d'exécuter le test d'intégration ELF. Avec Qt6, seule la couche graphique requiert C++17 ; le moteur reste en C++11.
+Prérequis : CMake ≥ 3.16, un compilateur C++11 et les fichiers de développement Qt Widgets 5.15 ou 6. Python 3 permet de générer les ELF d'exemple et d'exécuter le test d'intégration ELF. Avec Qt6, seule la couche graphique requiert C++17 ; le moteur reste en C++11.
 
 Depuis la racine du dépôt, avec Qt déjà installé :
 
@@ -51,7 +52,7 @@ Le choix de puce est explicite : il n'est pas déduit automatiquement des attrib
 
 ## Fonctionnalités et limites
 
-| Fonction | Ce que fournit v0.3.0 |
+| Fonction | Ce que fournit l'application |
 |---|---|
 | Chargement | ELF32 ARM little-endian, lié (`ET_EXEC`), avec segments `PT_LOAD` et symboles lorsqu'ils sont présents. Pas de chargement UF2/BIN ni d'édition de liens. |
 | Démarrage | Chargement direct de l'image, SP/PC issus des vecteurs reconnus ; sinon `e_entry` et sommet de SRAM, avec diagnostic explicite. Boot ROM et lancement ROM du cœur 1 absents. |
@@ -62,7 +63,7 @@ Le choix de puce est explicite : il n'est pas déduit automatiquement des attrib
 | Arrêts | Breakpoints d'adresse avant instruction ; watchpoints de plage mémoire après accès CPU, en lecture, écriture ou les deux ; arrêt sur `BKPT`. |
 | Expressions | Calculs entiers 32 bits, registres, adresses de symboles, lectures `read8/16/32` et déréférencement. Expressions surveillées par cœur et console `print`. Pas de variables typées, d'affectation ou d'appel de fonction cible. |
 | Périphériques | Catalogue, recherche, adresses nommées, accès, valeurs disponibles, bits et significations symboliques. Inspection sans dépiler les FIFO, acquitter les IRQ ou acquérir les spinlocks. |
-| Fenêtres | Panneaux simultanés, redimensionnables ; fenêtres indépendantes de périphériques, contexte cœur propre, détails des bits repliables. |
+| Interface | Comparaison CPU, espace Code/Périphériques et onglets Mémoire/Pile/Console/Carte. Inspecteurs intégrés, détachables à la demande et rassemblables sans perdre leur contexte. |
 | UART | Capture des octets TX et injection de texte UTF-8 dans RX, pour les deux UART modélisés. |
 | Automatisation | CLI interactive ou batch avec commandes d'exécution et d'inspection ; ELF d'exemple générables sans compilateur ARM. |
 | Source C++ | Symboles ELF seulement. Le panneau « Source C++ — prochaine itération » est un emplacement réservé : aucun import des sources, DWARF, démanglage ni pas source actuellement. |
@@ -106,9 +107,9 @@ Voir [Démarrage ELF, périphériques et Qt](docs/BOOT_AND_PERIPHERALS.md) pour 
 1. Lancer `./build-gui/pico-debugger --demo`, conserver **Pico / RP2040 (partiel)** et **Contexte : cœur 0**. L'exemple est déjà à l'arrêt.
 2. Appuyer trois fois sur **F10** : R0 vaut `1`, PC vaut `0x10000206`. Le prochain `STR` n'a pas encore écrit le compteur. Un quatrième pas écrit `1` à `0x20000000`.
 3. Faire **Ctrl+R**, puis **F9**, saisir `0x10000206` et **F5** : arrêt avant cette écriture. **F10** exécute l'instruction. Supprimer ce breakpoint dans **Points d'arrêt / watchpoints**.
-4. Faire **Ctrl+R**, cliquer **+ Watch**, saisir `counter`, taille `4`, accès **Écriture**, puis **F5** : arrêt après la première écriture. La console graphique accepte `print read32(counter)` ; elle affiche `1` sans déclencher le watchpoint.
-5. Ajouter `read32(counter)` avec **+ Expression** pour suivre sa valeur. Supprimer le watchpoint pour poursuivre librement jusqu'au `BKPT` de l'exemple.
-6. Double-cliquer sur **TIMER** dans le catalogue : sa fenêtre indépendante montre l'état du modèle. Sélectionner un registre, utiliser **Bits** et les filtres. La pause du débogueur fige le temps virtuel.
+4. Faire **Ctrl+R**, utiliser **Débogage → Ajouter un watchpoint mémoire**, saisir `counter`, taille `4`, accès **Écriture**, puis **F5** : arrêt après la première écriture. Dans **Console** (`Ctrl+5`), `print read32(counter)` affiche `1` sans déclencher le watchpoint.
+5. Ajouter `read32(counter)` avec **Ctrl+E** pour suivre sa valeur. La colonne Surveillance apparaît. Supprimer le watchpoint dans son onglet **Arrêts** pour poursuivre librement jusqu'au `BKPT` de l'exemple.
+6. Faire **Ctrl+P**, puis double-cliquer **TIMER** : son inspecteur s'ouvre en onglet. Sélectionner un registre, utiliser **Bits** et les filtres. **Détacher** ouvre une fenêtre indépendante ; **Rassembler** la ramène dans l'application. La pause fige le temps virtuel.
 
 Pour une démonstration Pico 2 avec UART/PWM/GPIO/timer :
 
@@ -117,9 +118,11 @@ python3 examples/make_peripheral_demo.py build-gui/rp2350-peripherals.elf --chip
 ./build-gui/pico-debugger --chip rp2350 build-gui/rp2350-peripherals.elf
 ```
 
-Ouvrir **UART0**, puis **F5** : la sortie TX affiche `OK` et le programme atteint `BKPT #3`. Injecter `RX`, sélectionner `UARTDR` : la première valeur RX inspectée est `0x52`. L'inspection ne consomme pas cet octet. Ces ELF sont des exemples de démarrage direct pour le débogueur ; ils ne sont pas livrés comme images UF2 amorçables sur carte.
+Ouvrir **UART0**, choisir son onglet **UART · TX / RX**, puis **F5** : la sortie TX affiche `OK` et le programme atteint `BKPT #3`. Injecter `RX`, revenir à **Registres**, sélectionner `UARTDR` : la première valeur RX inspectée est `0x52`. L'inspection ne consomme pas cet octet. Ces ELF sont des exemples de démarrage direct pour le débogueur ; ils ne sont pas livrés comme images UF2 amorçables sur carte.
 
 Le [tutoriel complet](docs/TUTORIAL.md) développe ce parcours, le multicœur, les autres vues, tous les menus/raccourcis, les expressions, les erreurs, la CLI et les cas d'usage.
+
+Un [exemple C de démarrage puis clignotement de la LED](tests/firmware/boot_blink/README.md) est disponible dans `tests/firmware/boot_blink`, avec CMake et Makefile autonomes. Il propose un ELF de startup C pour PicoDbg et une configuration Pico SDK produisant une UF2 pour Pico/Pico 2 sans Wi-Fi ; les différences entre ces deux démarrages sont documentées.
 
 ## Validation et maintenance
 
