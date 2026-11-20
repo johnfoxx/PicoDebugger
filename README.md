@@ -11,6 +11,8 @@ Le moteur est écrit en **C++11**, indépendant de Qt. L'interface est une appli
 - [Installation et lancement](#installation-et-lancement)
 - [Synthèse du projet et contexte de reprise](SYNTHESE.md)
 - [Fonctionnalités et limites](#fonctionnalités-et-limites)
+- [Cartes prises en charge](#cartes-prises-en-charge)
+- [Couverture d’émulation par carte](#couverture-démulation-par-carte)
 - [Tutoriel rapide](#tutoriel-rapide)
 - [Tutoriel complet : toutes les commandes, fonctions et cas d'usage](docs/TUTORIAL.md)
 - [Organisation de l'interface et inspecteurs détachables](docs/INTERFACE.md)
@@ -73,35 +75,70 @@ Le choix de carte est explicite : `--board pico|pico_w|pico2|pico2_w`. L'ancienn
 | Exemples | ELF d'exemple générables sans compilateur ARM et tests d'intégration utilisant directement le moteur. |
 | Source C++ | Symboles ELF seulement. Le panneau « Source C++ — prochaine itération » est un emplacement réservé : aucun import des sources, DWARF, démanglage ni pas source actuellement. |
 
-Les tableaux d'état sont en lecture seule. Les modifications de la cible viennent des instructions exécutées, du chargement/reset, du démarrage explicite d'un cœur de l'injection UART ou d'une avance explicite du temps. Le rafraîchissement lit un instantané cohérent entre les tranches d'exécution ; il ne constitue pas une trace de chaque instruction ou de chaque transition entre deux rafraîchissements.
+Les tableaux d'état sont en lecture seule. Les modifications de la cible viennent des instructions exécutées, du chargement/reset, du démarrage explicite d'un cœur, de l'injection UART ou d'une avance explicite du temps. Le rafraîchissement lit un instantané cohérent entre les tranches d'exécution ; il ne constitue pas une trace de chaque instruction ou de chaque transition entre deux rafraîchissements.
 
-### Pourquoi les deux profils sont-ils « partiels » ?
+### Cartes prises en charge
 
-L'ancien menu qualifiait seulement le Pico 2 d'« expérimental » parce que son moteur M33 avait davantage de lacunes. Cela ne signifiait pas que le Pico 1 était complet. Depuis v0.3.0, les deux familles sont annoncées partielles ; cette indication reste visible dans la session, les infobulles et l’aide, y compris pour les variantes W.
+Les quatre cibles sont sélectionnables dans le GUI ou avec `--board`. **Toutes restent des simulations partielles**, y compris les modèles RP2040. Les capacités ci-dessous sont celles des profils du simulateur.
 
-| Couverture CPU | Pico / RP2040 | Pico 2 / RP2350 |
-|---|---|---|
-| Deux contextes et SRAM partagée | Oui, 264 Kio de SRAM | Oui, 520 Kio de SRAM |
-| Flash du profil | 2 Mio, lecture XIP | 4 Mio, lecture XIP |
-| Instructions | Thumb court usuel, BL, MRS/MSR partiels et barrières | Même socle, plus MOVW/MOVT et CBZ/CBNZ |
-| Exceptions | Modèle de base HardFault/SVC, empilement et retour | Entrée d'exception M33 explicitement refusée |
-| Limites supplémentaires M33 | Sans objet pour ces extensions | Thumb-2 général, IT, division, DSP, FPU, accès exclusifs, MPU et TrustZone absents |
+| Carte | Valeur de `--board` | CPU ciblé par le modèle | SRAM / Flash | LED intégrée et limite du modèle |
+|---|---|---|---|---|
+| Raspberry Pi Pico | `pico` | RP2040 / Cortex-M0+ | 264 Kio / 2 Mio | GPIO25 : registre de sortie observable, sans simulation électrique de la LED. |
+| Raspberry Pi Pico W | `pico_w` | RP2040 / Cortex-M0+ | 264 Kio / 2 Mio | CYW43, WL_GPIO0 : LED non émulée. GPIO25 sert à la sélection radio. |
+| Raspberry Pi Pico 2 | `pico2` | RP2350 / Cortex-M33 | 520 Kio / 4 Mio | GPIO25 : registre de sortie observable, sans simulation électrique de la LED. |
+| Raspberry Pi Pico 2 W | `pico2_w` | RP2350 / Cortex-M33 | 520 Kio / 4 Mio | CYW43, WL_GPIO0 : LED non émulée. GPIO25 sert à la sélection radio. |
 
-Les deux profils partagent ces limites : Boot ROM, horloges et nombreux périphériques absents, NVIC et timing incomplets, absence de validation de conformité au silicium. Le détail des instructions, fautes, exceptions, alias mémoire et hypothèses temporelles figure dans [COVERAGE.md](docs/COVERAGE.md). Le RP2350 RISC-V/Hazard3 n'est pas pris en charge.
+Pico W utilise le même modèle RP2040 que Pico ; Pico 2 W utilise le même modèle RP2350 que Pico 2. Leurs informations de câblage diffèrent, mais ces profils W n'ajoutent aucune émulation du CYW43, du Wi-Fi ou du Bluetooth. Le RP2350 est pris en charge uniquement en ARM/Thumb ; son mode RISC-V/Hazard3 n'est pas émulé.
 
-### Périphériques : description et émulation sont distinctes
+### Couverture d'émulation par carte
 
-| Famille | État du modèle |
-|---|---|
-| TIMER RP2040 ; TIMER0/1 RP2350 | Compteurs, alarmes, masques/forçages IRQ, temps virtuel ; LOCKED/SOURCE sur RP2350. |
-| UART0/1 | FIFO, TX/RX, loopback interne, seuils/IRQ, timeout virtuel ; pas de baud physique, modem ni DMA. |
-| SPI0/1 | Maître Motorola en loopback interne, FIFO et IRQ ; pas d'esclave externe simulé. |
-| PWM | 8/12 slices, compteurs/diviseur, CC/TOP bufferisés, wrap et IRQ ; pas de forme d'onde sur des broches externes. |
-| SIO | CPUID, FIFO inter-cœurs, spinlocks et latches GPIO de sortie ; pas de pinmux ni de signaux électriques. |
-| RESETS / WATCHDOG | Reset des modèles présents ; WATCHDOG limité aux SCRATCH0..7, sans expiration/reset watchdog. |
-| NVIC / SysTick | Sous-ensemble d'état et temps virtuel ; afficher une IRQ RP2350 ne rend pas son handler M33 exécutable. |
-| ADC / I2C / DMA / PIO | Registres et champs décrits, **sans modèle d'exécution** ; valeurs courantes indisponibles. |
-| Autres blocs | Inventoriés ; descriptions et modèles incomplets ou absents, notamment USB, horloges et contrôleurs Flash/cache. |
+Les statuts portent sur **la fonction précise de chaque ligne**, et non sur la conformité de toute la carte :
+
+- **Supportée** : émulation disponible dans le modèle logiciel, dans le périmètre indiqué.
+- **Partielle** : un sous-ensemble fonctionne ; des modes ou comportements matériels manquent.
+- **Aucune — pas d'émulation** : fonction non émulée, même si ses registres sont décrits dans le catalogue.
+- **Sans objet** : composant ou architecture absent de la carte concernée.
+
+« Supportée » ne signifie pas reproduction cycle par cycle ni validation sur silicium. Le chargement d'un ELF compatible ne garantit pas que toutes ses instructions et tous ses accès périphériques pourront s'exécuter.
+
+#### CPU, mémoire et démarrage
+
+| Fonction | Pico | Pico W | Pico 2 | Pico 2 W | Commentaire / détails |
+|---|---|---|---|---|---|
+| Instructions CPU ARM/Thumb | Partielle | Partielle | Partielle | Partielle | Thumb court usuel, BL, MRS/MSR partiels et barrières. RP2350 : ajout de MOVW/MOVT et CBZ/CBNZ au moteur commun ; pas de moteur Cortex-M33 complet. |
+| Deux contextes CPU, registres et piles | Supportée | Supportée | Supportée | Supportée | État propre à chaque cœur, SRAM commune ; les limites du jeu d'instructions restent celles de la ligne précédente. |
+| Exécution multicœur | Partielle | Partielle | Partielle | Partielle | Alternance déterministe des cœurs démarrés ; cœur 1 initialement retenu, lancement manuel. Pas d'arbitrage de bus, de contention ni de démarrage ROM multicœur. |
+| SRAM : lecture, écriture, exécution | Supportée | Supportée | Supportée | Supportée | 264 Kio sur RP2040 avec alias non entrelacés ; 520 Kio sur RP2350 en vue linéaire. Aucun timing d'accès matériel. |
+| Flash : lecture et exécution de l'image chargée | Supportée | Supportée | Supportée | Supportée | 2 Mio sur Pico/Pico W, 4 Mio sur Pico 2/Pico 2 W ; octets fournis par l'ELF. |
+| Programmation Flash, cache et contrôleur XIP | Aucune | Aucune | Aucune | Aucune | La lecture de l'image Flash ne simule ni son contrôleur, ni l'effacement, ni la programmation. |
+| Entrée et retour d'exception CPU | Partielle | Partielle | Aucune | Aucune | RP2040 : modèle de base HardFault/SVC et IRQ couvertes, cadres MSP/PSP. RP2350 : entrée/retour M33 refusés ; une IRQ visible ne rend pas son handler exécutable. |
+| Extensions Cortex-M33 : Thumb-2 général, IT, division, DSP, FPU, accès exclusifs, MPU, TrustZone | Sans objet | Sans objet | Aucune | Aucune | Hors couverture RP2350. Les extensions limitées citées plus haut ne constituent pas une prise en charge générale d'ARMv8-M. |
+| CPU RISC-V / Hazard3 | Sans objet | Sans objet | Aucune | Aucune | Seul le mode ARM/Thumb du RP2350 est ciblé. |
+| Boot ROM, boot2 et boot matériel complet | Aucune | Aucune | Aucune | Aucune | Démarrage direct depuis les vecteurs ELF ou `e_entry`, toujours à l'arrêt ; pas de démarrage sécurisé RP2350 ni de compatibilité générale Pico SDK. |
+| Horloge de session et avance du temps virtuel | Supportée | Supportée | Supportée | Supportée | Avance en µs/ms avec firmware ou CPU figés, pause et reset. Un quantum représente 1 µs virtuelle ; aucune précision au cycle CPU réel. |
+
+Le détail des instructions, fautes, exceptions, alias mémoire et hypothèses temporelles figure dans [COVERAGE.md](docs/COVERAGE.md).
+
+#### Périphériques et composants de carte
+
+| Fonction | Pico | Pico W | Pico 2 | Pico 2 W | Commentaire / détails |
+|---|---|---|---|---|---|
+| TIMER | Partielle | Partielle | Partielle | Partielle | RP2040 : un TIMER ; RP2350 : TIMER0/1 indépendants, LOCKED/SOURCE. Compteurs 64 bits, quatre alarmes par timer et IRQ ; sources d'horloge virtuelles, sans arbre d'horloge matériel. |
+| UART0/1 | Partielle | Partielle | Partielle | Partielle | FIFO TX/RX, capture TX, injection RX, loopback interne, seuils/IRQ et timeout virtuel. Pas de baud physique, modem, IrDA, DMA ni simulation complète des erreurs de trame. |
+| SPI0/1 | Partielle | Partielle | Partielle | Partielle | Maître Motorola 4–16 bits, FIFO et IRQ, uniquement en loopback interne. Pas d'esclave externe, de mode esclave ni de DMA. |
+| PWM | Partielle | Partielle | Partielle | Partielle | 8 slices sur RP2040, 12 sur RP2350 ; compteurs, diviseur, CC/TOP bufferisés, wrap et IRQ. Pas de forme d'onde sur broche, d'entrée B ni de DREQ/DMA. |
+| SIO : CPUID, FIFO inter-cœurs, spinlocks, GPIO | Partielle | Partielle | Partielle | Partielle | Identifiant de cœur, échanges FIFO, verrous et registres GPIO OUT/OE avec SET/CLR/XOR ; registres bas/hauts aux adresses RP2350. Pas de pinmux, d'entrées électriques, d'interpolateurs ni de doorbells RP2350. |
+| Commande de la LED intégrée | Partielle | Aucune | Partielle | Aucune | Pico/Pico 2 : seul le latch GPIO25 est observable. Sur W, la LED dépend de WL_GPIO0 du CYW43 non émulé ; écrire GPIO25 ne la commande pas. |
+| RESETS | Partielle | Partielle | Partielle | Partielle | Reset et maintien en reset des modèles TIMER/UART/SPI/PWM ; complétion immédiate, lignes initialement relâchées. Pas de reset global matériel ni de domaines d'alimentation. |
+| WATCHDOG | Partielle | Partielle | Partielle | Partielle | Registres SCRATCH0..7 uniquement ; compteur, expiration et reset watchdog absents. |
+| NVIC / SysTick / SCB | Partielle | Partielle | Partielle | Partielle | Enable/pending, compteur virtuel, VTOR et état propre à chaque cœur ; priorités configurables absentes. RP2350 : deux banques pour IRQ0..51, sans exécution des exceptions M33. |
+| ADC / I2C0/1 / DMA / PIO | Aucune | Aucune | Aucune | Aucune | Registres et champs décrits, sans conversions ADC, transferts I2C/DMA ni exécution PIO. PIO0/1 sur RP2040 ; PIO0/1/2 sur RP2350. Valeurs courantes indisponibles. |
+| USB, horloges / PLL, gestion de l'alimentation | Aucune | Aucune | Aucune | Aucune | Blocs inventoriés, descriptions incomplètes ou absentes. Pas de trafic USB, de fréquences physiques ni de simulation de l'alimentation. |
+| Broches, pinmux et composants externes | Aucune | Aucune | Aucune | Aucune | Connexions de carte décrites, sans signaux électriques ni capteurs/actionneurs externes simulés. |
+| CYW43, Wi-Fi et Bluetooth | Sans objet | Aucune | Sans objet | Aucune | Composant radio externe des cartes W ; câblage documenté, sans modèle de puce ni de réseau. |
+| Autres blocs propres au RP2350 : HSTX, OTP, TRNG, SHA256 | Sans objet | Sans objet | Aucune | Aucune | Présence dans la cartographie uniquement ; aucun comportement émulé. |
+
+**Une description de registre n'est pas une émulation.** Le catalogue peut afficher le nom, l'adresse et les champs d'un bloc sans fournir de valeur courante ni permettre au firmware de l'utiliser. Les autres blocs inventoriés, notamment RTC sur RP2040 et CoreSight, restent sans modèle d'exécution. Un accès ou un mode hors couverture peut arrêter l'exécution avec un diagnostic « non émulé ».
 
 Le catalogue contient **38 blocs / 587 registres / 1 653 champs pour RP2040**, et **65 blocs / 783 registres / 2 373 champs pour RP2350**, alias DMA compris. Ces nombres comptent les descriptions, pas les fonctionnalités émulées. Les états inconnus ne sont pas remplacés par zéro ou par une valeur de reset. Le Wi-Fi, le Bluetooth et les composants externes ne sont pas simulés.
 
