@@ -2,7 +2,7 @@
 
 **PicoDebugger, ou PicoDbg, est un débogueur graphique hors ligne associé à un simulateur fonctionnel partiel des Raspberry Pi Pico et Pico W (RP2040), Pico 2 et Pico 2 W (RP2350 ARM/Thumb).** Il exécute des instructions machine sur un modèle logiciel local et permet d'observer les deux contextes CPU, la mémoire, la pile et les périphériques couverts. Aucune carte ni sonde n'est nécessaire.
 
-Le moteur est écrit en **C++11**, indépendant de Qt. L'interface principale est une application de bureau **Qt Widgets** ; une CLI complémentaire sert aux scénarios automatisés. Un programme écrit en C ou en C++ peut être chargé une fois compilé en ELF ARM compatible. Le débogueur ne compile pas les sources.
+Le moteur est écrit en **C++11**, indépendant de Qt. L'interface est une application de bureau **Qt Widgets**. Un programme écrit en C ou en C++ peut être chargé une fois compilé en ELF ARM compatible. Le débogueur ne compile pas les sources.
 
 **La simulation est partielle sur les quatre cartes et les deux familles de puces.** PicoDbg n'offre actuellement ni connexion SWD/GDB à une carte, ni reproduction complète du démarrage et du comportement du silicium. Il ne peut pas exécuter un firmware Pico SDK arbitraire et ne garantit pas qu'une réussite en simulation implique un fonctionnement identique sur la cible physique. L'état affiché est celui du **modèle**, jamais une mesure d'une carte connectée.
 
@@ -41,7 +41,7 @@ cmake -S . -B build-qt6 -DPICODBG_GUI=ON -DPICODBG_QT_MAJOR=6
 cmake --build build-qt6 -j2
 ```
 
-La version publiée a été compilée et testée avec **Qt 5.15.15** ; Qt6 reste à valider. Une installation Qt absente provoque une erreur de configuration, sans remplacement silencieux de la GUI par la CLI.
+La version publiée a été compilée et testée avec **Qt 5.15.15** ; Qt6 reste à valider. Une installation Qt absente provoque une erreur de configuration. `-DPICODBG_GUI=OFF` permet de compiler uniquement le moteur et ses tests, sans application graphique.
 
 Lancer un firmware :
 
@@ -70,7 +70,7 @@ Le choix de carte est explicite : `--board pico|pico_w|pico2|pico2_w`. L'ancienn
 | Périphériques | Catalogue, recherche, adresses nommées, accès, valeurs disponibles, bits et significations symboliques. Inspection sans dépiler les FIFO, acquitter les IRQ ou acquérir les spinlocks. |
 | Interface | Comparaison CPU, espace Code/Périphériques, inspecteurs détachables et fenêtre indépendante (`Ctrl+Maj+I`) : catalogue général ou périphérique précis, registres et bits simultanés. |
 | UART | Capture des octets TX et injection de texte UTF-8 dans RX, pour les deux UART modélisés. |
-| Automatisation | CLI interactive ou batch avec commandes d'exécution et d'inspection ; ELF d'exemple générables sans compilateur ARM. |
+| Exemples | ELF d'exemple générables sans compilateur ARM et tests d'intégration utilisant directement le moteur. |
 | Source C++ | Symboles ELF seulement. Le panneau « Source C++ — prochaine itération » est un emplacement réservé : aucun import des sources, DWARF, démanglage ni pas source actuellement. |
 
 Les tableaux d'état sont en lecture seule. Les modifications de la cible viennent des instructions exécutées, du chargement/reset, du démarrage explicite d'un cœur de l'injection UART ou d'une avance explicite du temps. Le rafraîchissement lit un instantané cohérent entre les tranches d'exécution ; il ne constitue pas une trace de chaque instruction ou de chaque transition entre deux rafraîchissements.
@@ -127,13 +127,13 @@ python3 examples/make_peripheral_demo.py build-gui/rp2350-peripherals.elf --chip
 
 Ouvrir **UART0**, choisir son onglet **UART · TX / RX**, puis **F5** : la sortie TX affiche `OK` et le programme atteint `BKPT #3`. Injecter `RX`, revenir à **Registres**, sélectionner `UARTDR` : la première valeur RX inspectée est `0x52`. L'inspection ne consomme pas cet octet. Ces ELF sont des exemples de démarrage direct pour le débogueur ; ils ne sont pas livrés comme images UF2 amorçables sur carte.
 
-Le [tutoriel complet](docs/TUTORIAL.md) développe ce parcours, le multicœur, les autres vues, tous les menus/raccourcis, les expressions, les erreurs, la CLI et les cas d'usage.
+Le [tutoriel complet](docs/TUTORIAL.md) développe ce parcours, le multicœur, les autres vues, tous les menus/raccourcis, les expressions, les erreurs et les cas d'usage.
 
 Un [exemple C de démarrage puis clignotement de la LED](tests/firmware/boot_blink/README.md) est disponible dans `tests/firmware/boot_blink`, avec CMake et Makefile autonomes. Il propose un ELF de startup C pour PicoDbg et une configuration Pico SDK produisant une UF2 pour Pico/Pico 2 sans Wi-Fi ; les différences entre ces deux démarrages sont documentées.
 
 ## Validation et maintenance
 
-La version **v0.5.0** comporte **17 suites CTest sur Linux/Qt5 avec Python 3** : moteur, chargement ELF, périphériques, scénario ELF périphériques, démarrage GUI, interactions, fenêtre indépendante, quatre cartes, temps virtuel et régression du focus des listes. Les tests graphiques utilisent `offscreen`. Les vérifications de périphériques ont également été exécutées sous ASan/UBSan ; Qt6, le compositeur Wayland natif et la comparaison au silicium ne sont pas validés par ces tests.
+Le projet conserve **17 suites CTest sur Linux/Qt5 avec Python 3** après le retrait de la CLI : moteur, chargement ELF, périphériques, scénario ELF périphériques, démarrage GUI, interactions, fenêtre indépendante, quatre cartes, temps virtuel et régression du focus des listes. Les tests graphiques utilisent `offscreen`. Les vérifications de périphériques ont également été exécutées sous ASan/UBSan ; Qt6, le compositeur Wayland natif et la comparaison au silicium ne sont pas validés par ces tests.
 
 ```sh
 cmake -S . -B build-sanitize -DPICODBG_GUI=OFF -DPICODBG_SANITIZERS=ON
@@ -148,7 +148,6 @@ Si l'environnement empêche LeakSanitizer de fonctionner, utiliser `ASAN_OPTIONS
 | `include/picodbg/`, `src/core/` | API C++11, CPU, décodeur Thumb, ELF, mémoire, ordonnanceur et modèles de périphériques. |
 | `src/core/registers/` | Descriptions matérielles par famille, indépendantes du comportement des modèles. |
 | `src/qt/` | Fenêtre principale, inspection des périphériques/bits et compatibilité Qt. |
-| `src/cli/` | Interface interactive et batch. |
 | `tests/`, `examples/`, `scripts/` | Vérifications, ELF reproductibles, compilation et collecte des références. |
 
 Documents de référence : [tutoriel](docs/TUTORIAL.md), [architecture](docs/ARCHITECTURE.md), [couverture](docs/COVERAGE.md), [versions et deltas](docs/RELEASES.md), [sources officielles](docs/REFERENCES.md). Les descriptions reposent notamment sur le Pico SDK figé à **2.2.0**. `python3 scripts/fetch-reference-docs.py --list` liste les références sans réseau ; sans `--list`, le script les télécharge sur une machine disposant d'un accès réseau.

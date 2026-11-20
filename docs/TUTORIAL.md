@@ -15,7 +15,6 @@ Ce guide décrit les fonctions disponibles et l'interface réorganisée après v
 9. [Charger son ELF et gérer la session](#9-charger-son-elf-et-gérer-la-session)
 10. [Erreurs, limites et dépannage Qt](#10-erreurs-limites-et-dépannage-qt)
 11. [Cas d'usage](#11-cas-dusage)
-12. [CLI et automatisation](#12-cli-et-automatisation)
 
 Pour les ajouts après v0.4.0 : [fenêtre de périphériques et navigation](INTERFACE.md), [temps virtuel](VIRTUAL_TIME.md), [cartes W et compatibilité ELF](BOARDS.md).
 
@@ -121,7 +120,7 @@ read16(0x10000200)
 (xpsr >> 28) & 0xf
 ```
 
-La console utilise le cœur actuellement sélectionné et affiche le résultat en hexadécimal et en entier non signé. **Elle n'est pas la CLI** : `run`, `reset`, `load` ou `watch` ne sont pas des commandes de cette zone ; utiliser les boutons/menus correspondants. Le journal conserve au plus 2 000 blocs de texte.
+La console utilise le cœur actuellement sélectionné et affiche le résultat en hexadécimal et en entier non signé. Elle accepte les expressions et la commande `print` ; les actions d'exécution, de reset, de chargement et de watchpoint passent par les boutons et menus correspondants. Le journal conserve au plus 2 000 blocs de texte.
 
 | Syntaxe | Sens |
 |---|---|
@@ -292,60 +291,5 @@ Aucun réglage du bureau n'est modifié. Les tests automatisés sont effectués 
 | Étudier un registre matériel | Catalogue, filtre adresse/champ, fenêtre indépendante et vue Bits | Une description ne fournit pas un état si le bloc n'est pas émulé |
 | Tester un pilote UART en polling | Exemple périphériques, sortie TX, injection RX | Pas de timing baud, DMA, modem ni erreurs de trame complètes |
 | Observer timer/PWM/GPIO | Mini-fenêtres simultanées, pas et pause | Temps virtuel, latches/compteurs ; pas de broches physiques |
-| Rejouer des contrôles simples | CLI `--batch`, sorties et code retour | Pas de preuve de conformité matérielle ni d'assertions C++ intégrées à la CLI |
 
 Le logiciel ne convient pas encore à la validation complète d'un produit, au débogage de carte par SWD, aux applications Pico SDK arbitraires, au Wi-Fi/Bluetooth, aux contraintes temps réel physiques ou à l'inspection des variables C++ via DWARF.
-
-## 12. CLI et automatisation
-
-La GUI reste l'interface principale. `pico-debugger-cli` utilise le même moteur et peut automatiser un scénario. Il est produit avec le build GUI ; une compilation volontairement sans Qt est également possible :
-
-```sh
-cmake -S . -B build-core -DPICODBG_GUI=OFF
-cmake --build build-core -j2
-./build-core/pico-debugger-cli --demo
-```
-
-Options CLI : `--chip rp2040|rp2350`, `--demo` **ou** `--elf chemin`, `--batch fichier`, `-h`/`--help`. La CLI n'accepte pas le chemin ELF positionnel ni `--version`. Sans `--batch`, elle lit les commandes interactivement. Les commandes à plusieurs arguments, comme `watch`, séparent ceux-ci par espaces : écrire les expressions d'argument sans espaces ou utiliser des symboles.
-
-| Commande | Effet / bornes |
-|---|---|
-| `load chemin.elf` | Charger un ELF dans le profil courant ; le reste de la ligne est le chemin |
-| `demo` | Charger l'exemple intégré |
-| `core 0` / `core 1` | Choisir le contexte courant |
-| `step [n]`, `s [n]` | Jusqu'à n pas, défaut 1, maximum 1 000 000 ; s'arrête plus tôt sur un arrêt particulier |
-| `run [quanta]`, `c [quanta]` | Budget par commande, défaut 100 000, maximum 100 000 000 ; `Ctrl+C` demande la pause |
-| `reset`, `restart` | Reset du modèle et rechargement de l'image |
-| `launch cœur entrée sp` | Démarrage explicite ; entrée Thumb impaire, SP valide |
-| `regs`, `r` | Registres/flags des deux cœurs |
-| `asm [adresse] [n]` | Défaut PC et 12 instructions ; maximum 4 096 |
-| `mem adresse [octets]` | Hex/ASCII, défaut 128 octets ; maximum 65 536 |
-| `stack [mots]` | Pile brute, défaut 16 mots ; maximum 4 096 |
-| `map` | Régions, permissions et couverture |
-| `break expression` | Breakpoint avant instruction ; bit Thumb normalisé |
-| `delete expression` | Retirer le breakpoint à cette adresse |
-| `watch adresse taille r\|w\|rw` | Watchpoint de plage mémoire après accès |
-| `unwatch` | Retirer tous les watchpoints mémoire |
-| `points` | Lister breakpoints et watchpoints |
-| `print expression`, `p expression` | Calculer dans le contexte courant, sans effet de bord |
-| `display expression` | Réévaluer après chaque commande, dans le cœur **courant** |
-| `undisplay` | Retirer toutes les expressions `display` |
-| `status` | Motif d'arrêt, cœur, adresse et révision |
-| `help`, `h` | Rappel des commandes |
-| `quit`, `q`, `exit` | Terminer la CLI |
-
-Contrairement aux expressions GUI, `display` suit le contexte sélectionné par `core` et n'est pas attaché à son cœur de création. Les compteurs `n` et `quanta` sont des entiers décimaux positifs. Le budget `run` exprime des quanta d'ordonnancement et ne correspond pas nécessairement au nombre d'instructions exécutées.
-
-La CLI ne fournit pas les fenêtres de champs, la capture TX affichée ni l'injection RX de la GUI. Les registres disponibles restent inspectables par `print read32(adresse)`.
-
-### Scénarios reproductibles
-
-```sh
-./build-gui/pico-debugger-cli --demo --batch examples/session.txt
-python3 examples/make_demo.py build-gui/demo.elf
-./build-gui/pico-debugger-cli --chip rp2040 --elf build-gui/demo.elf
-```
-
-Le premier scénario désassemble, surveille un compteur, utilise breakpoint/watchpoint, réinitialise puis démarre le second cœur. Un fichier batch contient une commande par ligne ; les lignes vides et les lignes commençant directement par `#` sont ignorées. La CLI n'interprète pas ce fichier comme un script shell.
-
-Codes de sortie : **0** pour une fin sans arrêt terminal (y compris un breakpoint ou un budget épuisé), **1** pour une erreur de lancement/chargement initial, **2** pour une commande batch invalide, **3** si la session se termine sur un arrêt terminal du modèle. Un code 0 ne prouve pas que le programme cible a terminé ou qu'il est correct. Vérifier aussi les motifs d'arrêt et valeurs attendues.

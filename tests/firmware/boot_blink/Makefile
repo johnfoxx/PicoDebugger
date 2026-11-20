@@ -4,7 +4,7 @@ HALF_PERIOD_MS ?= 500
 JOBS ?= 2
 CMAKE ?= cmake
 PYTHON ?= python3
-PICODBG_CLI ?= ../../../build-gui/pico-debugger-cli
+PICODBG_ELF_TESTS ?= ../../../build-gui/picodbg_elf_tests
 DEBUG_BUILD = build/debugger-$(BOARD)
 BOARD_BUILD = build/board-$(BOARD)
 CHECK_BUILD = build/check-$(BOARD)
@@ -24,7 +24,7 @@ board:
 check:
 	$(CMAKE) -S . -B $(CHECK_BUILD) -DBOOT_BLINK_MODE=debugger -DPICO_BOARD=$(BOARD) -DBOOT_BLINK_HALF_PERIOD_MS=1
 	$(CMAKE) --build $(CHECK_BUILD) --parallel $(JOBS)
-	$(PYTHON) tests/check_debugger.py --cli "$(PICODBG_CLI)" --elf $(CHECK_BUILD)/boot_blink.elf --board $(BOARD)
+	$(PYTHON) tests/check_debugger.py --runner "$(PICODBG_ELF_TESTS)" --elf $(CHECK_BUILD)/boot_blink.elf --board $(BOARD)
 
 host-test:
 	$(CMAKE) -S tests -B build/host
@@ -34,4 +34,4 @@ host-test:
 help:
 	@echo "make [debugger|board|check|host-test] BOARD=pico2 HALF_PERIOD_MS=500"
 	@echo "BOARD: pico or pico2. board requires PICO_SDK_PATH; debugger/check require arm-none-eabi-gcc."
-	@echo "check uses a separate 1 ms fixture and PICODBG_CLI; host-test needs only a host C compiler."
+	@echo "check uses a separate 1 ms fixture and PICODBG_ELF_TESTS; host-test needs only a host C compiler."

@@ -18,8 +18,8 @@ struct Watchpoint {
     bool read, write;
 };
 
-// All mutations are synchronous and performed by one owner (CLI or GUI event
-// loop). A GUI runs bounded batches, then renders a consistent frozen snapshot.
+// All mutations are synchronous and performed by one owner. The GUI event
+// loop runs bounded batches, then renders a consistent frozen snapshot.
 class Debugger {
 public:
     explicit Debugger(Chip chip = Chip::RP2040);

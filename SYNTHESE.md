@@ -1,6 +1,6 @@
 # PicoDebugger et contexte de reprise
 
-État au 20 novembre 2026, version **v0.5.0**. Dépôt : `/home/jeanrenard/PicoDebugger`.
+État au 20 novembre 2026, base **v0.5.0** avec suppression de la CLI réalisée, non publiée. Dépôt : `/home/jeanrenard/PicoDebugger`.
 
 ## But et architecture
 
@@ -22,11 +22,11 @@ Le débogage se fait au niveau assembleur/symboles ELF ; l'onglet source C++ res
 
 ## Choix utilisateur et état du travail
 
-Priorité à l'application graphique et à l'observation simultanée du code et des périphériques. **Les ajouts CLI ont été abandonnés à la demande de l'utilisateur** ; la CLI existante est conservée. Maintenir le moteur indépendant de Qt et compatible C++11.
+Priorité à l'application graphique et à l'observation simultanée du code et des périphériques. **La CLI est supprimée à la demande de l'utilisateur**, y compris l'exécutable interactif/batch et son scénario d'exemple. Le GUI, sa console d'expressions et les fonctionnalités du moteur sont conservés. Les tests ELF utilisent directement l'API C++ via `picodbg_elf_tests`, construit uniquement avec `BUILD_TESTING=ON` et non installé. Maintenir le moteur indépendant de Qt et compatible C++11.
 
-Dernière tâche terminée : fenêtre indépendante, temps virtuel et quatre cartes, implémentés dans **d6f1f84** et inclus dans **v0.5.0**. **v0.4.0** conserve l'état précédent. Aucune nouvelle tâche fonctionnelle n'est engagée.
+Dernière évolution publiée : fenêtre indépendante, temps virtuel et quatre cartes, implémentés dans **d6f1f84** et inclus dans **v0.5.0**. **v0.4.0** conserve l'état précédent. Le retrait de la CLI est postérieur à v0.5.0 ; voir la section non publiée du changelog.
 
-Validation du 20 novembre : compilation et **17 suites CTest réussies sous Linux/Qt5**, interactions GUI hors écran et UART vérifiés. Qt6 et Wayland natif restent non validés.
+Validation après retrait de la CLI : compilation et **17 suites CTest réussies sous Linux/Qt5**, dont les interactions GUI hors écran et UART ; **13 suites réussies sans Qt**. Les deux tests hôtes du firmware et les scénarios boot/clignotement compilés en ARM pour Pico/Pico 2 passent également. L'ouverture d'un ELF dans le GUI et l'installation du seul exécutable graphique sont vérifiées. Qt6 et Wayland natif restent non validés.
 
 ## Reprendre le projet
 

@@ -2,7 +2,7 @@
 
 ## Frontières
 
-`picodbg_core` est du C++11 sans Qt. `Memory` possède les octets et les périphériques ; chaque `Cpu` son contexte architectural. `Debugger` possède le bus, les deux CPU, l'ELF, les points d'arrêt et la politique d'exécution. Console et Qt utilisent cette même API.
+`picodbg_core` est du C++11 sans Qt. `Memory` possède les octets et les périphériques ; chaque `Cpu` son contexte architectural. `Debugger` possède le bus, les deux CPU, l'ELF, les points d'arrêt et la politique d'exécution. L'application Qt et les tests utilisent cette même API.
 
 Le contrôleur est non copiable et à propriétaire unique. Qt exécute des tranches courtes puis rafraîchit les panneaux sur son thread principal ; aucun thread concurrent ne lit un CPU en cours de mutation. Un futur worker devra publier des snapshots immuables des deux cœurs et des plages mémoire plutôt que partager les objets mutables.
 
@@ -55,7 +55,7 @@ Prévoir un `SourceResolver` indépendant de Qt. Le déroulage de pile devra uti
 
 ## Validation
 
-Effectuée : GCC C++11, suites CTest, console batch, ELF synthétique reproductible, AddressSanitizer/UBSan avec détection des fuites désactivée à cause de `ptrace`. Le parcours exhaustif du décodeur teste sa robustesse, pas la sémantique de chaque encodage.
+Effectuée : GCC C++11, suites CTest, ELF synthétique reproductible, tests ELF liés directement au moteur, AddressSanitizer/UBSan avec détection des fuites désactivée à cause de `ptrace`. Le parcours exhaustif du décodeur teste sa robustesse, pas la sémantique de chaque encodage.
 
 Validation v0.1.0 complémentaire : compilation Qt 5.15, 10 tests CTest réussis dont `qt_smoke` et `qt_interactions`, capture offscreen inspectée. Non effectuée : Qt6, compilation croisée ARM, comparaison au silicium et conformité ARM.
 
@@ -63,4 +63,4 @@ Extension périphériques : 11 tests CTest avec Qt5, dont la suite `peripherals`
 
 Sur une machine équipée de Qt : construire la GUI, ouvrir l'exemple, vérifier F10/F5/Maj+F5, breakpoint par double-clic, watch `read32(counter)`, lancement cœur 1, reset/changement de profil, agencement sur petit écran. L'inspection doit préserver FIFO/spinlocks.
 
-`scripts/install-qt-debian.sh` installe les dépendances puis appelle `scripts/build-gui.sh`. Celui-ci exige une cible graphique et exécute CTest ; un build CLI seul ne constitue jamais un succès de cette procédure. `picodbg_widgets` est partagé par l'application et `picodbg_gui_tests`, qui pilote les QAction et signaux des widgets sans accéder aux CPU privés.
+`scripts/install-qt-debian.sh` installe les dépendances puis appelle `scripts/build-gui.sh`. Celui-ci exige une cible graphique et exécute CTest. `picodbg_widgets` est partagé par l'application et `picodbg_gui_tests`, qui pilote les QAction et signaux des widgets sans accéder aux CPU privés.

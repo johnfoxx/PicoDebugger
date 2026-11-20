@@ -1,5 +1,13 @@
 # Versions
 
+## Non publié — suppression de la CLI
+
+- Suppression de `pico-debugger-cli`, de son interface interactive/batch, de sa cible de compilation/installation et du scénario `examples/session.txt`.
+- GUI Qt, console d'expressions intégrée et fonctionnalités du moteur conservés. Le moteur reste en C++11 et indépendant de Qt.
+- Tests ELF périphériques et boot/clignotement adaptés pour appeler directement le moteur ; l'exécutable `picodbg_elf_tests` reste réservé aux tests. La CI utilise le GUI pour vérifier l'ouverture d'un ELF d'exemple.
+- Documentation et contexte de reprise actualisés. Les mentions de la CLI dans les versions ci-dessous décrivent l'historique.
+- Validation : 17 suites CTest Linux/Qt5 et 13 sans Qt réussies ; deux tests hôtes du firmware et scénarios boot/clignotement ARM pour Pico/Pico 2 réussis. Ouverture d'un ELF dans le GUI et installation du seul exécutable graphique vérifiées.
+
 ## v0.5.0 — 2026-11-20
 
 Delta depuis **v0.4.0** (`7f2fb30`), conservé comme jalon avant ces changements. L'implémentation est portée par le commit **d6f1f84** ; cette version finalise la documentation et le contexte de reprise.

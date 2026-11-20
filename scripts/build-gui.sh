@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Always build the desktop target explicitly: a CLI-only fallback is not success.
+# Build and verify the Qt desktop application explicitly.
 set -euo pipefail
 project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cmake -S "$project_dir" -B "$project_dir/build-gui" \

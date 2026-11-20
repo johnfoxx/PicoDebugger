@@ -136,16 +136,20 @@ Tests hôtes de la copie `.data`, de l'effacement `.bss` avec sentinelles, et de
 make -C tests/firmware/boot_blink host-test
 ```
 
-Après installation du compilateur ARM et compilation de la CLI PicoDbg :
+Après installation du compilateur ARM et compilation des tests PicoDbg (depuis la racine du dépôt) :
 
 ```sh
+cmake -S . -B build-gui -DPICODBG_GUI=ON -DBUILD_TESTING=ON
+cmake --build build-gui --target picodbg_elf_tests --parallel 2
 make -C tests/firmware/boot_blink check BOARD=pico
 make -C tests/firmware/boot_blink check BOARD=pico2
 ```
 
-`check` compile une image C distincte à demi-période de 1 ms. Il vérifie le format ELF et la LMA Flash de `.data`, l'arrivée dans `main`, les valeurs d'initialisation, VTOR, quatre transitions GPIO, les compteurs et un reset. Il échoue si un budget est épuisé avant le breakpoint attendu ou si une instruction n'est pas couverte. On peut fournir `PICODBG_CLI=/chemin/pico-debugger-cli`.
+`check` compile une image C distincte à demi-période de 1 ms. Il vérifie le format ELF et la LMA Flash de `.data`, l'arrivée dans `main`, les valeurs d'initialisation, VTOR, quatre transitions GPIO, les compteurs et un reset. Il échoue si un budget est épuisé avant le breakpoint attendu ou si une instruction n'est pas couverte. Le scénario appelle directement l'API du moteur depuis l'exécutable de tests `picodbg_elf_tests`, sans interface de commandes. On peut fournir `PICODBG_ELF_TESTS=/chemin/picodbg_elf_tests` pour un autre dossier de build, notamment un build moteur avec `PICODBG_GUI=OFF`.
 
 **Validation lors de l'ajout :** les deux tests C sur l'hôte passent, ainsi que le contrôle de syntaxe C et les diagnostics de configuration. Le compilateur ARM et le SDK étaient absents de l'environnement, dont le terminal ne pouvait pas résoudre les adresses de téléchargement : **la compilation ARM, le parcours de cet ELF dans PicoDbg et la production UF2 n'ont pas pu être exécutés**. Ils ne sont pas remplacés par les ELF générés en Python du dépôt. Aucune validation sur carte n'a été effectuée.
+
+**Validation après retrait de la CLI, le 20 novembre 2026 :** les deux tests hôtes et `make check` pour Pico et Pico 2 réussissent avec `arm-none-eabi-gcc` et le nouvel exécutable de tests lié au moteur. Cela valide les ELF de startup C dans le simulateur ; la production UF2 et l'exécution sur carte restent non vérifiées.
 
 ## Références officielles
 

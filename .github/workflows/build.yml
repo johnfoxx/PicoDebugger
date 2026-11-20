@@ -13,4 +13,4 @@ jobs:
       - run: cmake --build build --parallel 2
       - run: ctest --test-dir build --output-on-failure
       - run: python3 examples/make_demo.py build/demo.elf
-      - run: ./build/pico-debugger-cli --elf build/demo.elf --batch examples/session.txt
+      - run: QT_QPA_PLATFORM=offscreen ./build/pico-debugger build/demo.elf --smoke-test
