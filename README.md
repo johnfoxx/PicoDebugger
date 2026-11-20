@@ -9,11 +9,12 @@ Le moteur est écrit en **C++11**, indépendant de Qt. L'interface principale es
 ## Commencer
 
 - [Installation et lancement](#installation-et-lancement)
+- [Synthèse du projet et contexte de reprise](SYNTHESE.md)
 - [Fonctionnalités et limites](#fonctionnalités-et-limites)
 - [Tutoriel rapide](#tutoriel-rapide)
 - [Tutoriel complet : toutes les commandes, fonctions et cas d'usage](docs/TUTORIAL.md)
 - [Organisation de l'interface et inspecteurs détachables](docs/INTERFACE.md)
-- [Versions et changelogs, dont le jalon v0.4.0](docs/RELEASES.md)
+- [Versions et changelogs, dont v0.5.0](docs/RELEASES.md)
 - [Cartes, câblage et compatibilité ELF](docs/BOARDS.md)
 - [Piloter le temps virtuel](docs/VIRTUAL_TIME.md)
 - [Couverture technique détaillée](docs/COVERAGE.md)
@@ -132,7 +133,7 @@ Un [exemple C de démarrage puis clignotement de la LED](tests/firmware/boot_bli
 
 ## Validation et maintenance
 
-La version de travail comporte **17 suites CTest sur Linux/Qt5 avec Python 3** : moteur, chargement ELF, périphériques, scénario ELF périphériques, démarrage GUI, interactions, fenêtre indépendante, quatre cartes, temps virtuel et régression du focus des listes. Les tests graphiques utilisent `offscreen`. Les vérifications de périphériques ont également été exécutées sous ASan/UBSan ; Qt6, le compositeur Wayland natif et la comparaison au silicium ne sont pas validés par ces tests.
+La version **v0.5.0** comporte **17 suites CTest sur Linux/Qt5 avec Python 3** : moteur, chargement ELF, périphériques, scénario ELF périphériques, démarrage GUI, interactions, fenêtre indépendante, quatre cartes, temps virtuel et régression du focus des listes. Les tests graphiques utilisent `offscreen`. Les vérifications de périphériques ont également été exécutées sous ASan/UBSan ; Qt6, le compositeur Wayland natif et la comparaison au silicium ne sont pas validés par ces tests.
 
 ```sh
 cmake -S . -B build-sanitize -DPICODBG_GUI=OFF -DPICODBG_SANITIZERS=ON

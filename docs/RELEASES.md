@@ -1,8 +1,8 @@
 # Versions
 
-## v0.5.0 — évolution après v0.4.0 (non taguée)
+## v0.5.0 — 2026-11-20
 
-Le tag annoté **v0.4.0**, commit **7f2fb30**, a été créé avant ces changements avec le changelog complet depuis v0.3.0 dans le commit et l'annotation.
+Delta depuis **v0.4.0** (`7f2fb30`), conservé comme jalon avant ces changements. L'implémentation est portée par le commit **d6f1f84** ; cette version finalise la documentation et le contexte de reprise.
 
 - Fenêtre autonome des périphériques (`Ctrl+Maj+I`) : vue générale ou bloc précis, registres et bits simultanés, contexte cœur indépendant, filtres, UART TX/RX, valeurs synchronisées avec l'assembleur. Les onglets et inspecteurs détachables existants restent disponibles.
 - Commandes graphiques du temps virtuel (`Ctrl+6`) : horloge de session, avance en µs/ms avec firmware ou CPU figés, durée restante, pause interruptible et remise à zéro au reset. Breakpoints, fautes et attente peuvent interrompre le mode firmware ; l'avance avec CPU figés laisse les IRQ pendantes.
@@ -10,8 +10,11 @@ Le tag annoté **v0.4.0**, commit **7f2fb30**, a été créé avant ces changeme
 - Les cartes W partagent la cartographie MMIO du SoC correspondant. Le CYW43 externe et ses GPIO/LED/radio restent non émulés ; aucune compatibilité ELF universelle ni détection automatique de carte n'est annoncée.
 - Modules séparés `BoardDescription`, `BoardPanel`, `PeripheralExplorer`, `UartTerminal` et `VirtualTimePanel`. L'API moteur reste C++11 et indépendante de Qt.
 - Documentation de l'interface et tutoriel actualisés ; nouveaux guides [BOARDS.md](BOARDS.md) et [VIRTUAL_TIME.md](VIRTUAL_TIME.md).
+- [SYNTHESE.md](../SYNTHESE.md) rassemble le but du projet, les fonctionnalités réalisées, les choix utilisateur et les commandes de reprise.
 - Validation : **17 suites CTest Linux/Qt5**, dont trois nouvelles suites pour les cartes, le temps virtuel et les interactions de session. Contrôles graphiques offscreen à 1280×800 et essai UART TX/RX dans la nouvelle fenêtre avec un ELF de démonstration RP2350 sur le profil Pico 2 W ; Qt6, Wayland natif et comparaison sur silicium non validés.
 - Aucun ajout CLI dans cette évolution, conformément au choix utilisateur. La couverture d'émulation CPU et radio reste inchangée.
+
+Compilation, 17 suites CTest et parcours GUI/UART revérifiés le **2026-11-20**. Le tag annoté **v0.5.0** reprend ce changelog.
 
 
 ## v0.4.0 — 2026-11-13
