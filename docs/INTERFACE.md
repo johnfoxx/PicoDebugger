@@ -1,6 +1,10 @@
 # Se repérer dans l'interface
 
+Pour le **mode réel SWD**, voir [connexion et usage de la Debug Probe](HARDWARE_DEBUG.md). Les descriptions de simulation, temps virtuel et accès sans effet de bord de ce document concernent le **mode émulation**.
+
 Cette organisation remplace l'agencement du tag v0.3.0. Les outils secondaires apparaissent à la demande ; les fonctions de débogage restent disponibles.
+
+Le menu **Cible** sélectionne Émulation ou Carte réelle, configure la connexion, lance le téléversement et relit l'état matériel. La barre d'état permanente indique mode, carte et connexion. En mode réel, on peut inspecter une carte connectée sans ELF ; ouvrir un ELF fournit les symboles sans le téléverser. Le temps virtuel est masqué et les données CPU sont masquées pendant l'exécution.
 
 ## Les zones de travail
 
@@ -10,7 +14,7 @@ Cette organisation remplace l'agencement du tag v0.3.0. Les outils secondaires a
 
 La colonne **Surveillance** est masquée au démarrage. Ajouter une expression, un breakpoint ou un watchpoint l'ouvre sur le bon onglet. **Vues → Expressions surveillées** et **Vues → Points d'arrêt / watchpoints** l'affichent aussi. Les onglets indiquent les nombres d'éléments. Fermer le panneau le masque sans supprimer ses données.
 
-Sans ELF, la page d'accueil propose **Ouvrir un ELF** et **Essayer l'exemple**. Avec une image, l'en-tête indique le fichier, l'état d'exécution, le contexte et le motif d'arrêt. La mention « simulation partielle » reste visible ; les diagnostics complets sont conservés dans la console et la barre d'état.
+Sans ELF, la page d'accueil propose **Ouvrir un ELF** et **Essayer l'exemple**. Avec une image, l'en-tête indique le fichier, l'état d'exécution, le contexte et le motif d'arrêt. En mode émulation, la mention « simulation partielle » reste visible ; les diagnostics complets sont conservés dans la console et la barre d'état.
 
 ## Inspecter sans multiplier les fenêtres
 

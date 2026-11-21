@@ -1,5 +1,7 @@
 # Couverture effective — après v0.4.0
 
+Pour le **mode réel SWD**, voir [connexion et usage de la Debug Probe](HARDWARE_DEBUG.md). Les descriptions de simulation, temps virtuel et accès sans effet de bord de ce document concernent le **mode émulation**.
+
 L'objectif initial est un débogueur complet, fiable sur le matériel réel. **Cette première implémentation ne satisfait pas encore cet objectif de fidélité complète.** La présence d'un périphérique dans la cartographie n'implique pas son émulation.
 
 Le profil Pico 2 réutilise actuellement le moteur Thumb du RP2040 avec quelques extensions (MOVW/MOVT, CBZ/CBNZ). Ce n'est pas un moteur ARMv8-M complet. Les ajouts de timers, UART, SPI, PWM et de descriptions de registres ne complètent ni Thumb-2 ni la gestion des exceptions M33 : une IRQ visible en attente ne signifie pas que son handler peut s'exécuter. Depuis v0.3.0, **les deux profils portent le libellé « partiel »** ; l'ancienne mention « expérimental » limitée au Pico 2 ne signifiait pas que le Pico 1 était complet. Le dialogue **Aide → Couverture et limites** explicite les différences.

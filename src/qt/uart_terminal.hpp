@@ -8,7 +8,7 @@ class QPlainTextEdit;
 class UartTerminal : public QWidget {
 public:
     explicit UartTerminal(unsigned uart, QWidget* parent = nullptr);
-    void updateTarget(const picodbg::Debugger& debugger);
+    void updateTarget(const picodbg::DebugTarget& debugger);
     std::function<size_t(unsigned, const std::string&)> injectUart;
 private:
     unsigned uart_;

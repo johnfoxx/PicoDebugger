@@ -14,7 +14,7 @@ class RegisterInspector;
 class PeripheralPanel : public QWidget {
 public:
     explicit PeripheralPanel(QWidget* parent = nullptr, const QString& pinnedDevice = {}, bool expanded = false);
-    void updateTarget(const picodbg::Debugger& debugger, unsigned core);
+    void updateTarget(const picodbg::DebugTarget& debugger, unsigned core);
     void focusDevice(const QString& name); // Empty name restores the catalogue.
     std::function<void(const QString&)> openDevice;
     std::function<void(const QString&)> selectionChanged;
@@ -22,7 +22,7 @@ public:
     QString selectedDevice() const;
 private:
     QString pinnedDevice_;
-    const picodbg::Debugger* debugger_ = nullptr;
+    const picodbg::DebugTarget* debugger_ = nullptr;
     picodbg::Chip chip_ = picodbg::Chip::RP2040;
     unsigned core_ = 0;
     int selected_ = -1;
@@ -33,6 +33,8 @@ private:
     QLabel* detail_;
     QLabel* empty_;
     QPushButton* open_;
+    QPushButton* readOnce_;
+    bool hardware_ = false;
     QTreeWidget* catalog_;
     QTableWidget* registers_;
     RegisterInspector* inspector_;

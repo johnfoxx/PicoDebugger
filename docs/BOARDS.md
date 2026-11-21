@@ -1,5 +1,7 @@
 # Cartes, câblage et compatibilité des ELF
 
+Pour le **mode réel SWD**, voir [connexion et usage de la Debug Probe](HARDWARE_DEBUG.md). Les descriptions de simulation, temps virtuel et accès sans effet de bord de ce document concernent le **mode émulation**.
+
 La barre d'exécution propose **Pico**, **Pico W**, **Pico 2** et **Pico 2 W**. Le choix de carte est distinct de celui du microcontrôleur. Un changement de carte arrête l'exécution, vide l'image chargée et ferme les inspecteurs, même entre deux cartes utilisant la même puce.
 
 | Carte | Puce simulée | SRAM | Flash | LED intégrée |

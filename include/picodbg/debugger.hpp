@@ -1,26 +1,10 @@
 #pragma once
-#include "picodbg/cpu.hpp"
-#include "picodbg/elf.hpp"
-#include "picodbg/board.hpp"
-#include <set>
+#include "picodbg/target.hpp"
 
 namespace picodbg {
-enum class StopKind { Ready, Step, Breakpoint, Watchpoint, Fault, Unsupported, Idle, User, Budget };
-struct Stop {
-    StopKind kind = StopKind::Ready;
-    unsigned core = 0;
-    uint32_t address = 0;
-    std::string message = "Aucun exécutable chargé";
-};
-struct Watchpoint {
-    uint32_t address;
-    uint32_t length;
-    bool read, write;
-};
-
 // All mutations are synchronous and performed by one owner. The GUI event
 // loop runs bounded batches, then renders a consistent frozen snapshot.
-class Debugger {
+class Debugger : public DebugTarget {
 public:
     explicit Debugger(Chip chip = Chip::RP2040);
     explicit Debugger(Board board);
@@ -40,19 +24,16 @@ public:
     const BoardDescription& board() const { return board_; }
     void pause();
     size_t injectUart(unsigned index, const std::string& bytes);
-    uint32_t evaluate(const std::string& expression, unsigned core = 0) const;
     void addWatchpoint(uint32_t address, uint32_t length, bool read, bool write);
     void clearWatchpoints() { watchpoints.clear(); }
     bool loaded() const { return loaded_; }
     bool terminalStop() const { return terminal_; }
     uint64_t revision() const { return revision_; }
-    std::string sourceHint(uint32_t address) const;
+    const ChipDescription& description() const override { return memory.description(); }
+    uint32_t peek(uint32_t address, unsigned size, unsigned core = 0) const override { return memory.peek(address, size, core); }
+    Instruction disassemble(uint32_t address, unsigned core) override { return decode(memory, address, core); }
+    std::string uartOutput(unsigned index) const override { return memory.uartOutput(index); }
     Memory memory;
-    std::array<Cpu, 2> cpus;
-    ElfImage image;
-    std::set<uint32_t> breakpoints;
-    std::vector<Watchpoint> watchpoints;
-    Stop stop;
 private:
     BoardDescription board_;
     uint64_t virtualTime_ = 0;

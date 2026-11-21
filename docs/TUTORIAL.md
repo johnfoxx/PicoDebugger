@@ -1,5 +1,7 @@
 # Tutoriel PicoDebugger — interface courante
 
+Pour le **mode réel SWD**, voir [connexion et usage de la Debug Probe](HARDWARE_DEBUG.md). Les descriptions de simulation, temps virtuel et accès sans effet de bord de ce document concernent le **mode émulation**.
+
 Ce guide décrit les fonctions disponibles et l'interface réorganisée après v0.3.0. Voir aussi [les repères de navigation](INTERFACE.md). Toutes les commandes de terminal se lancent depuis la racine du dépôt, après [compilation de la GUI](../README.md#installation-et-lancement). Les exemples intégrés ne nécessitent ni carte, ni sonde, ni compilateur ARM.
 
 ## Sommaire
@@ -292,4 +294,4 @@ Aucun réglage du bureau n'est modifié. Les tests automatisés sont effectués 
 | Tester un pilote UART en polling | Exemple périphériques, sortie TX, injection RX | Pas de timing baud, DMA, modem ni erreurs de trame complètes |
 | Observer timer/PWM/GPIO | Mini-fenêtres simultanées, pas et pause | Temps virtuel, latches/compteurs ; pas de broches physiques |
 
-Le logiciel ne convient pas encore à la validation complète d'un produit, au débogage de carte par SWD, aux applications Pico SDK arbitraires, au Wi-Fi/Bluetooth, aux contraintes temps réel physiques ou à l'inspection des variables C++ via DWARF.
+Le mode émulation ne convient pas encore à la validation complète d'un produit, aux applications Pico SDK arbitraires, au Wi-Fi/Bluetooth, aux contraintes temps réel physiques ou à l'inspection des variables C++ via DWARF.

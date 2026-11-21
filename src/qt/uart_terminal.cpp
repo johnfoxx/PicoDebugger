@@ -28,8 +28,12 @@ UartTerminal::UartTerminal(unsigned uart, QWidget* parent) : QWidget(parent), ua
     });
     connect(input, &QLineEdit::returnPressed, send, &QPushButton::click);
 }
-void UartTerminal::updateTarget(const picodbg::Debugger& debugger) {
-    const auto& bytes = debugger.memory.uartOutput(uart_);
+void UartTerminal::updateTarget(const picodbg::DebugTarget& debugger) {
+    if (debugger.hardware()) {
+        output_->setPlainText("La sonde SWD ne capture pas l'UART. Utiliser le port série USB de la Debug Probe, relié aux broches UART de la carte.\nL'injection RX simulée n'est pas disponible en mode réel.");
+        findChild<QPushButton*>("uartSend")->setEnabled(false); return;
+    }
+    const auto bytes = debugger.uartOutput(uart_);
     const auto text = QString::fromLatin1(bytes.data(), static_cast<int>(bytes.size()));
     if (output_->toPlainText() != text) output_->setPlainText(text);
     findChild<QPushButton*>("uartSend")->setEnabled(debugger.loaded() && !debugger.terminalStop());

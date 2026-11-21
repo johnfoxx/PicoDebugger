@@ -77,6 +77,17 @@ PeripheralPanel::PeripheralPanel(QWidget* parent, const QString& pinnedDevice, b
     auto* bits = new QPushButton("Bits"); bits->setObjectName("registerDetailsButton"); bits->setCheckable(true);
     bits->setToolTip("Afficher les champs et la signification des bits du registre sélectionné");
     registerTools->addWidget(bits);
+    readOnce_ = new QPushButton("Lire une fois · effets possibles"); readOnce_->setObjectName("readHardwareRegisterOnce");
+    readOnce_->setToolTip("Lire le registre sélectionné sur la carte, y compris une FIFO ou un registre effacé à la lecture. Peut modifier l'état matériel.");
+    registerTools->addWidget(readOnce_); readOnce_->hide();
+    connect(readOnce_, &QPushButton::clicked, this, [this] {
+        const int row = registers_->currentRow();
+        if (!debugger_ || selected_ < 0 || row < 0) return;
+        const auto& reg = devices_[static_cast<size_t>(selected_)].registers[static_cast<size_t>(row)];
+        if (reg.access == "WO") return;
+        try { debugger_->readRegisterOnce(reg.address, core_); refreshValues(); }
+        catch (const std::exception& e) { detail_->setText(QString::fromUtf8(e.what())); detail_->show(); }
+    });
     auto* tools = new QHBoxLayout; tools->addWidget(filter_, 1); tools->addWidget(open_);
     if (pinnedDevice_.isEmpty() && !expanded) {
         auto* separate = new QPushButton("↗ Fenêtre"); separate->setObjectName("openPeripheralExplorerButton");
@@ -100,9 +111,10 @@ PeripheralPanel::PeripheralPanel(QWidget* parent, const QString& pinnedDevice, b
     connect(filter_, &QLineEdit::textChanged, this, [this] { applyFilter(); });
     connect(catalog_, &QTreeWidget::itemSelectionChanged, this, [this] { selectDevice(); });
 }
-void PeripheralPanel::updateTarget(const Debugger& debugger, unsigned core) {
-    const bool changed = debugger_ != &debugger || chip_ != debugger.memory.description().chip;
-    debugger_ = &debugger; core_ = core; chip_ = debugger.memory.description().chip;
+void PeripheralPanel::updateTarget(const DebugTarget& debugger, unsigned core) {
+    const bool changed = debugger_ != &debugger || chip_ != debugger.description().chip || hardware_ != debugger.hardware();
+    hardware_ = debugger.hardware(); readOnce_->setVisible(hardware_); readOnce_->setEnabled(debugger.loaded() && !debugger.busy() && !debugger.executing());
+    debugger_ = &debugger; core_ = core; chip_ = debugger.description().chip;
     if (changed) rebuildCatalog();
     context_->setText(QString("%1 · cœur %2 · révision %3")
         .arg(pinnedDevice_.isEmpty() ? QString("%1 blocs matériels").arg(static_cast<qulonglong>(devices_.size())) : pinnedDevice_)
@@ -111,14 +123,15 @@ void PeripheralPanel::updateTarget(const Debugger& debugger, unsigned core) {
 }
 void PeripheralPanel::rebuildCatalog() {
     const QSignalBlocker blocker(catalog_);
+    inspector_->clear();
     devices_ = peripheralCatalog(chip_); catalog_->clear(); selected_ = -1;
     QTreeWidgetItem* initial = nullptr;
     for (size_t i = 0; i < devices_.size(); ++i) {
         const auto& device = devices_[i];
-        auto* item = new QTreeWidgetItem(catalog_, {q(device.name), q(device.coverage)});
+        auto* item = new QTreeWidgetItem(catalog_, {q(device.name), hardware_ ? (device.registers.empty() ? "Catalogue incomplet" : "Registres matériels") : q(device.coverage)});
         item->setData(0, Qt::UserRole, static_cast<int>(i));
-        item->setToolTip(0, q(hex(device.base) + " — " + device.note));
-        item->setForeground(1, QColor(device.coverage == "Non émulé" ? "#e5ac74" : "#8bd6bb"));
+        item->setToolTip(0, q(hex(device.base)) + (hardware_ ? " · Accès matériel via sonde" : q(" — " + device.note)));
+        item->setForeground(1, QColor(!hardware_ && device.coverage == "Non émulé" ? "#e5ac74" : "#8bd6bb"));
         if (q(device.name) == (pinnedDevice_.isEmpty() ? QString("SIO") : pinnedDevice_)) initial = item;
     }
     if (initial) catalog_->setCurrentItem(initial);
@@ -154,14 +167,17 @@ void PeripheralPanel::selectDevice() {
     const auto& device = devices_.at(static_cast<size_t>(selected_));
     detail_->setText(q(device.name + " @ " + hex(device.base) + " — " + device.note) +
         (device.registers.empty() ? "\nRegistres non décrits dans cette version ; aucune valeur n'est inventée." : "\nLecture d'inspection sans effet de bord."));
+    if (hardware_) detail_->setText(q(device.name + " @ " + hex(device.base)) +
+        (device.registers.empty() ? " · Registres non décrits dans le catalogue actuel." : " · Valeurs réelles à l'arrêt. Les lectures sensibles nécessitent une action explicite ; aucun état simulé."));
     context_->setToolTip(detail_->text());
     detail_->setToolTip(detail_->text());
     registers_->setRowCount(static_cast<int>(device.registers.size()));
     for (size_t i = 0; i < device.registers.size(); ++i) {
         const auto& reg = device.registers[i];
-        const QStringList values = {q(reg.name), "—", q(hex(reg.address)), q(reg.access), q(reg.note)};
+        const QString note = hardware_ ? QString("Description du catalogue ; valeur lue sur la carte") : q(reg.note);
+        const QStringList values = {q(reg.name), "—", q(hex(reg.address)), q(reg.access), note};
         for (int col = 0; col < values.size(); ++col) {
-            auto* value = new QTableWidgetItem(values[col]); value->setToolTip(q(reg.note));
+            auto* value = new QTableWidgetItem(values[col]); value->setToolTip(note);
             registers_->setItem(static_cast<int>(i), col, value);
         }
     }
@@ -185,21 +201,25 @@ void PeripheralPanel::refreshValues() {
         auto* fields = registers_->item(static_cast<int>(i), 4);
         // A reset/profile change must not leave an old decoded field visible
         // alongside an unavailable register value.
-        fields->setText(q(reg.note));
-        QString text, tooltip = q(reg.note);
+        const QString note = hardware_ ? QString("Registre matériel ; certains accès modifient l'état de la carte") : q(reg.note);
+        fields->setText(note);
+        QString text, tooltip = note;
         bool numeric = false;
         uint32_t raw = 0;
-        if (!debugger_->loaded()) text = "Pas d'image";
-        else if (device.coverage == "Non émulé") text = "Non émulé";
+        if (!debugger_->loaded()) text = hardware_ ? "Déconnectée" : "Pas d'image";
+        else if (!hardware_ && device.coverage == "Non émulé") text = "Non émulé";
         else if (reg.access == "WO") text = "Écriture seule";
         else {
             try {
-                raw = debugger_->memory.peek(reg.address, 4, core_);
+                raw = debugger_->peek(reg.address, 4, core_);
                 text = q(hex(raw)); numeric = true;
                 const auto decoded = fieldText(reg, raw);
-                fields->setText(decoded.isEmpty() ? q(reg.note) : decoded);
-                tooltip = q(reg.note) + "\n" + decoded;
-            } catch (const Error& error) { text = "Indisponible"; tooltip = q(error.what()); }
+                fields->setText(decoded.isEmpty() ? note : decoded);
+                tooltip = note + "\n" + decoded;
+            } catch (const Error& error) {
+                tooltip = q(error.what());
+                text = hardware_ && tooltip.startsWith("Lecture explicite") ? "Lecture explicite" : hardware_ && tooltip.contains("en cours") ? "Lecture…" : "Indisponible";
+            }
         }
         const bool changed = numeric && value->data(Qt::UserRole).toBool() && value->text() != text;
         value->setForeground(QColor(changed ? "#ffd780" : numeric ? "#dce6f0" : "#e5ac74"));
@@ -234,6 +254,8 @@ void PeripheralPanel::refreshRegisterDetails() {
     if (static_cast<size_t>(row) >= device.registers.size()) { inspector_->clear(); return; }
     auto* value = registers_->item(row, 1);
     if (!value) return;
-    inspector_->setRegister(device.registers[static_cast<size_t>(row)]);
+    auto description = device.registers[static_cast<size_t>(row)];
+    if (hardware_) description.note = "Registre matériel. Les lectures explicites peuvent modifier la cible ; les notes de simulation ne s'appliquent pas.";
+    inspector_->setRegister(description);
     inspector_->setValue(value->data(Qt::UserRole).toBool(), value->data(Qt::UserRole + 1).toUInt(), value->text());
 }

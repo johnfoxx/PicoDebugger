@@ -1,22 +1,26 @@
 # PicoDebugger
 
-**PicoDebugger, ou PicoDbg, est un débogueur graphique hors ligne associé à un simulateur fonctionnel partiel des Raspberry Pi Pico et Pico W (RP2040), Pico 2 et Pico 2 W (RP2350 ARM/Thumb).** Il exécute des instructions machine sur un modèle logiciel local et permet d'observer les deux contextes CPU, la mémoire, la pile et les périphériques couverts. Aucune carte ni sonde n'est nécessaire.
+**PicoDebugger, ou PicoDbg, est un débogueur graphique pour Raspberry Pi Pico, Pico W (RP2040), Pico 2 et Pico 2 W (RP2350 ARM).** Il propose deux modes dans la même interface : une **émulation locale partielle**, sans matériel, et une **connexion à une vraie carte par SWD**, avec la Raspberry Pi Debug Probe, OpenOCD et GDB.
 
-Le moteur est écrit en **C++11**, indépendant de Qt. L'interface est une application de bureau **Qt Widgets**. Un programme écrit en C ou en C++ peut être chargé une fois compilé en ELF ARM compatible. Le débogueur ne compile pas les sources.
+**Nouveautés de la v0.6.0.** Un ELF compatible peut servir à un essai en émulation, puis au chargement des symboles et au téléversement dans la RAM ou la Flash de la carte. Le menu **Cible** donne accès à la sonde, au transfert et au rafraîchissement de l'état matériel. La v0.6.0 retire l'exécutable autonome `pico-debugger-cli`. La console d'expressions reste accessible dans l'application Qt. [Changelog de la v0.6.0](docs/RELEASES.md#v0-6-0)
 
-**La simulation est partielle sur les quatre cartes et les deux familles de puces.** PicoDbg n'offre actuellement ni connexion SWD/GDB à une carte, ni reproduction complète du démarrage et du comportement du silicium. Il ne peut pas exécuter un firmware Pico SDK arbitraire et ne garantit pas qu'une réussite en simulation implique un fonctionnement identique sur la cible physique. L'état affiché est celui du **modèle**, jamais une mesure d'une carte connectée.
+Le moteur est écrit en **C++11**, indépendant de Qt, et l'interface utilise **Qt Widgets**. Compiler le firmware en ELF32 ARM avant de l'ouvrir. Le mode réel utilise des processus GDB et OpenOCD externes.
+
+**L'émulation reste partielle sur les quatre cartes.** Elle ne reproduit pas tout le silicium et ne garantit pas l'exécution d'un firmware Pico SDK arbitraire. **En mode réel, le firmware s'exécute sur le matériel**, avec ses véritables CPU et périphériques ; les limites portent alors sur les accès de débogage et les vues disponibles. Le catalogue de registres reste incomplet, certains accès sont protégés et les composants externes ne sont pas tous accessibles par SWD. L'intégration matérielle est testée avec des doubles de protocole ; sa validation avec une sonde et une carte physique reste à réaliser.
 
 ## Commencer
 
 - [Installation et lancement](#installation-et-lancement)
 - [Synthèse du projet et contexte de reprise](SYNTHESE.md)
+- [Déboguer une vraie carte](#déboguer-une-vraie-carte)
+- [Guide de connexion et dépannage SWD](docs/HARDWARE_DEBUG.md)
 - [Fonctionnalités et limites](#fonctionnalités-et-limites)
 - [Cartes prises en charge](#cartes-prises-en-charge)
 - [Couverture d’émulation par carte](#couverture-démulation-par-carte)
 - [Tutoriel rapide](#tutoriel-rapide)
 - [Tutoriel complet : toutes les commandes, fonctions et cas d'usage](docs/TUTORIAL.md)
 - [Organisation de l'interface et inspecteurs détachables](docs/INTERFACE.md)
-- [Versions et changelogs, dont v0.5.0](docs/RELEASES.md)
+- [Historique des versions](docs/RELEASES.md)
 - [Cartes, câblage et compatibilité ELF](docs/BOARDS.md)
 - [Piloter le temps virtuel](docs/VIRTUAL_TIME.md)
 - [Couverture technique détaillée](docs/COVERAGE.md)
@@ -43,7 +47,7 @@ cmake -S . -B build-qt6 -DPICODBG_GUI=ON -DPICODBG_QT_MAJOR=6
 cmake --build build-qt6 -j2
 ```
 
-La version publiée a été compilée et testée avec **Qt 5.15.15** ; Qt6 reste à valider. Une installation Qt absente provoque une erreur de configuration. `-DPICODBG_GUI=OFF` permet de compiler uniquement le moteur et ses tests, sans application graphique.
+La v0.6.0 a été testée avec **Qt 5.15.15**. Les 18 tests CTest avec Qt et les 13 tests du moteur seul passent. Les tests SWD utilisent des processus GDB/OpenOCD simulés. Les essais sur carte physique et avec Qt6 restent à faire. `-DPICODBG_GUI=OFF` permet de compiler le moteur et ses tests sans Qt.
 
 Lancer un firmware :
 
@@ -55,7 +59,35 @@ Lancer un firmware :
 
 Le choix de carte est explicite : `--board pico|pico_w|pico2|pico2_w`. L'ancienne option `--chip rp2040|rp2350` sélectionne la carte sans Wi-Fi ; les deux options sont exclusives. La carte n'est pas déduite automatiquement des attributs de l'ELF. L'exécution commence **toujours à l'arrêt**.
 
+## Déboguer une vraie carte
+
+La **Raspberry Pi Debug Probe** fournit la connexion **SWD** utilisée par les Pico. Le port USB habituel de la carte permet notamment le chargement BOOTSEL/UF2 ; il ne remplace pas cette sonde pour le pas à pas, l'arrêt des CPU et les points d'arrêt. Relier **SWDIO, SWCLK et GND** entre la sonde et la carte, puis alimenter la carte séparément, par exemple par son USB. Voir le [guide officiel de la Debug Probe](https://www.raspberrypi.com/documentation/microcontrollers/debug-probe.html).
+
+Installer un GDB capable de déboguer ARM (`gdb-multiarch` ou `arm-none-eabi-gdb`) et un OpenOCD compatible avec la puce. OpenOCD doit fournir `interface/cmsis-dap.cfg` et `target/rp2040.cfg` ou `target/rp2350.cfg`, avec les pilotes correspondants ; pour le RP2350, utiliser une version compatible du [dépôt Raspberry Pi OpenOCD](https://github.com/raspberrypi/openocd). Les chemins des exécutables et des scripts sont configurables dans l'application.
+
+1. Choisir **Pico**, **Pico W**, **Pico 2** ou **Pico 2 W** dans la barre d'outils. Ouvrir son ELF en émulation si l'on souhaite d'abord l'essayer dans le modèle.
+2. Choisir **Cible → Carte réelle · SWD**, puis **Connecter la sonde…**. Laisser le lancement automatique d'OpenOCD pour la sonde officielle, ou indiquer un serveur GDB externe. La connexion arrête la cible et vérifie la famille RP2040/RP2350. La variante W reste un choix utilisateur.
+3. Ouvrir l'ELF avec **Ctrl+O**. En mode réel, cela charge **les symboles seulement** ; un ELF déjà ouvert en émulation est repris automatiquement comme fichier de symboles à la connexion.
+4. Choisir **Cible → Téléverser l'ELF sur la carte…** : **Flash** pour un firmware amorçable destiné à cette carte, ou **RAM** pour un ELF entièrement en SRAM, avec table de vecteurs SP/PC. Le dialogue indique le fichier et l'écriture de mémoire à effectuer. Après transfert, la cible reste arrêtée.
+5. Utiliser **F5** pour lancer, **F10** pour avancer d'une instruction sur le cœur sélectionné, **Maj+F5** pour mettre en pause et **Ctrl+R** pour réinitialiser la carte et l'arrêter. Les breakpoints, watchpoints et expressions restent accessibles dans les vues habituelles. **Cible → Relire l'état matériel** renouvelle les lectures à l'arrêt. La barre d'état affiche le mode, la carte sélectionnée et l'état de connexion. Survoler son texte pour voir la famille de puce vérifiée et le diagnostic complet.
+6. **Cible → Émulation** déconnecte la sonde puis recharge l'ELF dans le modèle. Les points d'arrêt propres à la session doivent être recréés lors du changement de mode.
+
+| Fonction en mode réel | Pico | Pico W | Pico 2 | Pico 2 W | Limite / commentaire |
+|---|---|---|---|---|---|
+| Connexion Debug Probe / SWD | RP2040 | RP2040 | RP2350 ARM | RP2350 ARM | Configurations OpenOCD prévues pour les quatre profils ; validation physique encore à faire. Famille vérifiée, variante W non détectée. |
+| Téléversement ELF Flash ou RAM | Implémenté | Implémenté | Implémenté | Implémenté | ELF ARM adapté à la carte ; boot Flash valide ou vecteurs RAM. UF2/BIN et RISC-V ne sont pas chargés. |
+| Exécution, pause, reset, pas instruction | Implémenté | Implémenté | Implémenté | Implémenté | CPU réels via GDB ; contexte de cœur fourni par OpenOCD. Pas de pas source C/C++. |
+| Breakpoints / watchpoints | Matériels | Matériels | Matériels | Matériels | Nombre limité par la puce et le serveur. Watchpoints alignés de 1, 2 ou 4 octets. En écriture, GDB arrête l'exécution lorsque la valeur surveillée change. |
+| CPU, mémoire, pile, assembleur, expressions | Lectures réelles | Lectures réelles | Lectures réelles | Lectures réelles | Valeurs masquées pendant l'exécution ; registres supplémentaires affichés si GDB les expose. Aucune valeur émulée en remplacement. |
+| Périphériques du SoC | Matériel réel | Matériel réel | Matériel réel | Matériel réel | Leur fonctionnement ne dépend plus du simulateur. Inspection limitée aux registres décrits/accessibles ; certaines lectures nécessitent « Lire une fois ». |
+| CYW43 / Wi-Fi / Bluetooth | Sans objet | Matériel réel | Sans objet | Matériel réel | Pilotés par le firmware des cartes W ; pas d'inspection directe du composant radio par cette connexion SWD. |
+| Temps virtuel / injection UART simulée | Sans objet | Sans objet | Sans objet | Sans objet | Aucun temps virtuel sur une carte réelle. Le port série de la sonde est distinct du SWD et n'est pas intégré au terminal GUI actuel. |
+
+Les périphériques, le DMA et le watchdog peuvent continuer à évoluer pendant l'arrêt des CPU. Les accès dépendent de la puce, de ses protections et du serveur OpenOCD. Pour les registres à effets de lecture, utiliser **Lire une fois · effets possibles** dans l'inspecteur ou **Lire registre 32 bits une fois** dans la vue Mémoire. Une lecture peut consommer une donnée de FIFO, acquérir un spinlock ou effacer un indicateur. [Guide matériel et dépannage](docs/HARDWARE_DEBUG.md)
+
 ## Fonctionnalités et limites
+
+Le tableau suivant décrit le **mode émulation**. Les différences du mode réel figurent ci-dessus.
 
 | Fonction | Ce que fournit l'application |
 |---|---|
@@ -170,7 +202,7 @@ Un [exemple C de démarrage puis clignotement de la LED](tests/firmware/boot_bli
 
 ## Validation et maintenance
 
-Le projet conserve **17 suites CTest sur Linux/Qt5 avec Python 3** après le retrait de la CLI : moteur, chargement ELF, périphériques, scénario ELF périphériques, démarrage GUI, interactions, fenêtre indépendante, quatre cartes, temps virtuel et régression du focus des listes. Les tests graphiques utilisent `offscreen`. Les vérifications de périphériques ont également été exécutées sous ASan/UBSan ; Qt6, le compositeur Wayland natif et la comparaison au silicium ne sont pas validés par ces tests.
+Le projet propose **18 suites CTest sur Linux/Qt5 avec Python 3**, dont `probe_protocol_and_gui` pour GDB/MI, le chargement Flash/RAM, les erreurs, le cycle de vie OpenOCD et le passage entre les modes dans la GUI. Cette suite utilise des processus de test, sans sonde ni carte. Les 17 suites existantes couvrent le moteur, le chargement ELF, les périphériques, les quatre cartes, le temps virtuel et les interactions GUI (dont les fenêtres indépendantes et le focus des listes). Les 13 suites sans Qt passent également. Les tests graphiques utilisent `offscreen`. Les vérifications de périphériques ont également été exécutées sous ASan/UBSan ; Qt6, le compositeur Wayland natif et la comparaison au silicium ne sont pas validés par ces tests.
 
 ```sh
 cmake -S . -B build-sanitize -DPICODBG_GUI=OFF -DPICODBG_SANITIZERS=ON
@@ -184,7 +216,7 @@ Si l'environnement empêche LeakSanitizer de fonctionner, utiliser `ASAN_OPTIONS
 |---|---|
 | `include/picodbg/`, `src/core/` | API C++11, CPU, décodeur Thumb, ELF, mémoire, ordonnanceur et modèles de périphériques. |
 | `src/core/registers/` | Descriptions matérielles par famille, indépendantes du comportement des modèles. |
-| `src/qt/` | Fenêtre principale, inspection des périphériques/bits et compatibilité Qt. |
+| `src/qt/` | Fenêtre principale, inspecteurs, backend matériel GDB/MI, gestion OpenOCD et compatibilité Qt. |
 | `tests/`, `examples/`, `scripts/` | Vérifications, ELF reproductibles, compilation et collecte des références. |
 
 Documents de référence : [tutoriel](docs/TUTORIAL.md), [architecture](docs/ARCHITECTURE.md), [couverture](docs/COVERAGE.md), [versions et deltas](docs/RELEASES.md), [sources officielles](docs/REFERENCES.md). Les descriptions reposent notamment sur le Pico SDK figé à **2.2.0**. `python3 scripts/fetch-reference-docs.py --list` liste les références sans réseau ; sans `--list`, le script les télécharge sur une machine disposant d'un accès réseau.

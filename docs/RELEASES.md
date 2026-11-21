@@ -1,12 +1,31 @@
 # Versions
 
-## Non publié — suppression de la CLI
+<a id="v0-6-0"></a>
 
-- Suppression de `pico-debugger-cli`, de son interface interactive/batch, de sa cible de compilation/installation et du scénario `examples/session.txt`.
-- GUI Qt, console d'expressions intégrée et fonctionnalités du moteur conservés. Le moteur reste en C++11 et indépendant de Qt.
-- Tests ELF périphériques et boot/clignotement adaptés pour appeler directement le moteur ; l'exécutable `picodbg_elf_tests` reste réservé aux tests. La CI utilise le GUI pour vérifier l'ouverture d'un ELF d'exemple.
-- Documentation et contexte de reprise actualisés. Les mentions de la CLI dans les versions ci-dessous décrivent l'historique.
-- Validation : 17 suites CTest Linux/Qt5 et 13 sans Qt réussies ; deux tests hôtes du firmware et scénarios boot/clignotement ARM pour Pico/Pico 2 réussis. Ouverture d'un ELF dans le GUI et installation du seul exécutable graphique vérifiées.
+## v0.6.0 — 2026-11-21
+
+Changements depuis **v0.5.0** (`e6c195c`).
+
+### Débogage matériel
+
+- Mode **Carte réelle · SWD** avec Raspberry Pi Debug Probe, OpenOCD et GDB/MI pour Pico et Pico W (RP2040), Pico 2 et Pico 2 W (RP2350 ARM). OpenOCD peut être lancé par le GUI ou fourni par un serveur externe.
+- Menu **Cible** et barre d'état pour le mode, la carte, la connexion et les diagnostics. La connexion arrête la cible, vérifie la famille de puce et identifie les cœurs exposés. Les variantes W se sélectionnent manuellement.
+- Chargement des symboles ELF à l'ouverture du fichier. Le téléversement explicite programme la Flash ou charge un ELF compatible en SRAM et configure son entrée RAM. La carte reste arrêtée après le transfert.
+- Exécution, pas instruction, pause, reset, breakpoints et watchpoints matériels. Les vues existantes affichent les registres CPU, l'assembleur GDB, la mémoire, la pile, les expressions et les périphériques accessibles.
+- Rafraîchissement à l'arrêt, lectures MMIO sensibles sur demande et affichage explicite des valeurs indisponibles. Le guide décrit le périmètre du catalogue, les accès protégés et la liaison série séparée de la sonde.
+- Contrat commun `DebugTarget` en C++11 sans dépendance Qt. Le parcours GDB accepte les chemins ELF avec des espaces et des accents. Les diagnostics traitent les erreurs de connexion, de chargement et de perte de liaison.
+
+### Distribution et documentation
+
+- Suppression de l'exécutable autonome `pico-debugger-cli`, de ses cibles de compilation et d'installation et de son scénario d'exemple (`64b77c4`). La distribution livre l'application graphique Qt et sa console d'expressions intégrée.
+- Tests ELF des périphériques et du firmware de clignotement adaptés pour appeler directement le moteur. La CI ouvre un ELF d'exemple dans le GUI.
+- Matrice de couverture d'émulation par profil dans le README (`d436de0`). Le README et le [guide matériel](HARDWARE_DEBUG.md) documentent le câblage, la configuration, le parcours émulation vers carte et les limites de l'inspection.
+
+### Validation
+
+- **18 suites CTest sous Linux/Qt 5.15.15** et **13 suites sans Qt**. La suite `probe_protocol_and_gui` vérifie le protocole asynchrone, le transfert Flash/RAM, les erreurs de connexion, le cycle de vie des processus et le passage entre les modes avec des doubles GDB/OpenOCD.
+- Les deux tests hôtes du firmware et les scénarios ELF boot/clignotement dans l'émulateur passent pour Pico et Pico 2. L'installation contient l'exécutable graphique et `--version` affiche `0.6.0`.
+- Syntaxe de connexion et chemin ELF accentué vérifiés avec GDB 16.3. La validation sur sonde et carte physiques reste à réaliser.
 
 ## v0.5.0 — 2026-11-20
 

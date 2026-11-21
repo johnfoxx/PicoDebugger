@@ -51,7 +51,7 @@ void PeripheralInspection::setDetached(bool detached) {
                                 : "Déplacer cet inspecteur dans une fenêtre indépendante");
 }
 unsigned PeripheralInspection::core() const { return static_cast<unsigned>(core_->currentIndex()); }
-void PeripheralInspection::updateTarget(const picodbg::Debugger& debugger) {
+void PeripheralInspection::updateTarget(const picodbg::DebugTarget& debugger) {
     panel_->updateTarget(debugger, static_cast<unsigned>(core_->currentIndex()));
     if (terminal_) terminal_->updateTarget(debugger);
 }

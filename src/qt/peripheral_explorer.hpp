@@ -13,8 +13,8 @@ class UartTerminal;
 // page or changes the main debugger's selected CPU context.
 class PeripheralExplorer : public QDialog {
 public:
-    PeripheralExplorer(const picodbg::Debugger& debugger, unsigned core, QWidget* parent = nullptr);
-    void updateTarget(const picodbg::Debugger& debugger);
+    PeripheralExplorer(const picodbg::DebugTarget& debugger, unsigned core, QWidget* parent = nullptr);
+    void updateTarget(const picodbg::DebugTarget& debugger);
     std::function<void()> refreshRequested;
     std::function<size_t(unsigned, const std::string&)> injectUart;
 private:

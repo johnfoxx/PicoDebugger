@@ -1,5 +1,6 @@
 #pragma once
 #include "picodbg/debugger.hpp"
+#include "gdb_target.hpp"
 #include <QByteArray>
 #include <QMainWindow>
 #include <QPointer>
@@ -32,8 +33,29 @@ public:
     void loadDemo();
     void selectChip(picodbg::Chip chip);
     void selectBoard(picodbg::Board board);
+    void selectHardware(bool hardware);
+    void connectHardware(const picodbg::ProbeOptions& options);
+protected:
+    void closeEvent(QCloseEvent* event) override;
 private:
-    std::unique_ptr<picodbg::Debugger> debugger_;
+    std::unique_ptr<picodbg::DebugTarget> debugger_;
+    picodbg::ProbeOptions probeOptions_;
+    std::vector<std::pair<QString, unsigned>> pendingExpressions_;
+    QAction* emulationAction_ = nullptr;
+    QAction* hardwareAction_ = nullptr;
+    QAction* connectAction_ = nullptr;
+    QAction* disconnectAction_ = nullptr;
+    QAction* downloadAction_ = nullptr;
+    QAction* refreshTargetAction_ = nullptr;
+    QAction* openAction_ = nullptr;
+    QAction* demoAction_ = nullptr;
+    QLabel* modeStatus_ = nullptr;
+    QString imagePath_;
+    bool pendingSymbols_ = false, switchAfterDisconnect_ = false, closeAfterDisconnect_ = false;
+    uint64_t lastHardwareRevision_ = 0;
+    void hardwareTick();
+    void configureHardware();
+    void downloadHardware();
     std::array<std::array<uint32_t, 21>, 2> previous_{};
     bool previousValid_ = false;
     bool running_ = false;

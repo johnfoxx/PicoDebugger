@@ -2,11 +2,21 @@
 
 ## Frontières
 
-`picodbg_core` est du C++11 sans Qt. `Memory` possède les octets et les périphériques ; chaque `Cpu` son contexte architectural. `Debugger` possède le bus, les deux CPU, l'ELF, les points d'arrêt et la politique d'exécution. L'application Qt et les tests utilisent cette même API.
+`picodbg_core` est du C++11 sans Qt. `Memory` possède les octets et les périphériques ; chaque `Cpu` son contexte architectural. `Debugger` possède le bus, les deux CPU, l'ELF, les points d'arrêt et la politique d'exécution. `Debugger` implémente maintenant `DebugTarget`, le contrat C++11 commun aux deux modes. Les vues Qt passent par `peek`, `disassemble`, les mutations de points et les indicateurs de disponibilité de ce contrat, sans lire directement `Memory`.
 
 Le contrôleur est non copiable et à propriétaire unique. Qt exécute des tranches courtes puis rafraîchit les panneaux sur son thread principal ; aucun thread concurrent ne lit un CPU en cours de mutation. Un futur worker devra publier des snapshots immuables des deux cœurs et des plages mémoire plutôt que partager les objets mutables.
 
-## Invariants
+## Backend matériel
+
+`GdbTarget` (couche Qt) implémente `DebugTarget` avec les instantanés obtenus par GDB ; il ne possède pas de mémoire ni de bus émulé. `GdbMi` pilote un `QProcess` en MI2, sans shell ni scripts GDB autochargés, avec une requête tokenisée en cours et une file bornée. Les notifications `*running`/`*stopped` sont indépendantes des résultats de commande. Une expiration ou perte de processus invalide la session. OpenOCD est soit un processus possédé, soit un serveur externe que l'application ne termine pas.
+
+Connexion, upload et inspections sont asynchrones sur le thread Qt. Le timer matériel interroge l'état des opérations et rafraîchit les vues à chaque révision. Après arrêt, le cache de registres GDB est invalidé, les threads physiques sont identifiés, puis leurs registres sont lus séparément. Les registres absents ne sont jamais remplis depuis le modèle. Les lectures mémoire demandées par les vues sont mises en cache ; les callbacks portent une génération, afin d'ignorer une réponse devenue obsolète après une mutation. Une erreur de lecture est également mémorisée, sans boucle de nouvelles lectures.
+
+Les accès MMIO automatiques sont limités à une liste revue. `readRegisterOnce` autorise une lecture explicite, potentiellement destructive, réutilisée par le tableau et les champs. `peek` signifie donc inspection contrôlée du backend, et n'implique pas qu'une lecture physique soit intrinsèquement sans effet. Le catalogue décrit les registres ; il ne certifie pas leur innocuité sur silicium.
+
+`load` charge les symboles uniquement en mode réel. `download` vérifie le fichier, les plages de chargement et les vecteurs RAM avant toute séquence de programmation. Les écritures de registres utilisent les numéros retournés par GDB, pas des variables de convenance `$nom` susceptibles de masquer un registre absent. Un transfert incomplet bloque la reprise. Les breakpoints/watchpoints ne sont ajoutés aux listes qu'après acceptation du serveur ; la disponibilité finale des comparateurs peut être signalée à la reprise par GDB.
+
+## Invariants du simulateur
 
 - Décodage et désassemblage partagent la même représentation `Instruction`.
 - Adresses en `uint32_t`, calculs de limites en 64 bits. Vérifier les débordements avant accès.
