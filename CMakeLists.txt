@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(PicoDebugger VERSION 0.8.0 LANGUAGES CXX)
+project(PicoDebugger VERSION 0.9.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -49,6 +49,7 @@ if(PICODBG_GUI)
             src/qt/board_panel.cpp src/qt/uart_terminal.cpp src/qt/peripheral_explorer.cpp src/qt/virtual_time_panel.cpp
             src/qt/ide/ide_window.cpp src/qt/ide/project.cpp src/qt/ide/language_service.cpp
             src/qt/ide/code_editor.cpp src/qt/ide/git_panel.cpp src/qt/ide/toolchain_catalog.cpp
+            src/qt/ide/text_search.cpp src/qt/ide/text_tools.cpp src/qt/ide/doxygen_dialog.cpp
             src/qt/ide/ide_templates.qrc src/qt/ide/ide_tools_resources.qrc)
         set_target_properties(picodbg_widgets PROPERTIES AUTORCC ON)
         target_include_directories(picodbg_widgets PUBLIC src/qt)

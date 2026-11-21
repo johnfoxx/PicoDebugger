@@ -1,4 +1,5 @@
 #include "inspection_workspace.hpp"
+#include "window_theme.hpp"
 #include "window_policy.hpp"
 #include <QDialog>
 #include <QTabBar>
@@ -45,7 +46,7 @@ void InspectionWorkspace::toggleDetached(const QString& key) {
     auto& entry = found->second;
     if (entry.window) { entry.window->close(); return; }
     auto* window = new QDialog(this, Qt::Window);
-    window->setPalette(palette());
+    applyPicoTheme(*window);
     window->setObjectName("deviceWindow_" + key);
     window->setAttribute(Qt::WA_DeleteOnClose);
     window->setWindowTitle(entry.title + " — inspecteur PicoDebugger");

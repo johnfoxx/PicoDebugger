@@ -1,5 +1,7 @@
 #include "peripheral_panel.hpp"
 #include "register_inspector.hpp"
+#include "window_theme.hpp"
+#include <QEvent>
 #include <QFontDatabase>
 #include <QHeaderView>
 #include <QHBoxLayout>
@@ -131,11 +133,24 @@ void PeripheralPanel::rebuildCatalog() {
         auto* item = new QTreeWidgetItem(catalog_, {q(device.name), hardware_ ? (device.registers.empty() ? "Catalogue incomplet" : "Registres matériels") : q(device.coverage)});
         item->setData(0, Qt::UserRole, static_cast<int>(i));
         item->setToolTip(0, q(hex(device.base)) + (hardware_ ? " · Accès matériel via sonde" : q(" — " + device.note)));
-        item->setForeground(1, QColor(!hardware_ && device.coverage == "Non émulé" ? "#e5ac74" : "#8bd6bb"));
         if (q(device.name) == (pinnedDevice_.isEmpty() ? QString("SIO") : pinnedDevice_)) initial = item;
     }
+    refreshCatalogColors();
     if (initial) catalog_->setCurrentItem(initial);
     applyFilter(); selectDevice();
+}
+void PeripheralPanel::changeEvent(QEvent* event) {
+    QWidget::changeEvent(event);
+    if (event->type() == QEvent::PaletteChange) refreshCatalogColors();
+}
+void PeripheralPanel::refreshCatalogColors() {
+    const auto supported = picoThemeColor("#8bd6bb");
+    const auto unavailable = picoThemeColor("#e5ac74");
+    for (int i = 0; i < catalog_->topLevelItemCount(); ++i) {
+        auto* item = catalog_->topLevelItem(i);
+        const auto& device = devices_.at(static_cast<size_t>(item->data(0, Qt::UserRole).toInt()));
+        item->setForeground(1, !hardware_ && device.coverage == "Non émulé" ? unavailable : supported);
+    }
 }
 QString PeripheralPanel::selectedDevice() const {
     return selected_ < 0 ? QString() : q(devices_.at(static_cast<size_t>(selected_)).name);
@@ -222,7 +237,7 @@ void PeripheralPanel::refreshValues() {
             }
         }
         const bool changed = numeric && value->data(Qt::UserRole).toBool() && value->text() != text;
-        value->setForeground(QColor(changed ? "#ffd780" : numeric ? "#dce6f0" : "#e5ac74"));
+        value->setForeground(picoThemeColor(changed ? "#ffd780" : numeric ? "#dce6f0" : "#e5ac74"));
         value->setText(text); value->setToolTip(tooltip); value->setData(Qt::UserRole, numeric);
         value->setData(Qt::UserRole + 1, numeric ? QVariant(raw) : QVariant());
     }

@@ -1,33 +1,147 @@
 #include "window_theme.hpp"
+#include <QActionGroup>
 #include <QApplication>
+#include <QEvent>
+#include <QHash>
+#include <QMenu>
 #include <QPalette>
+#include <QPointer>
+#include <QRegularExpression>
+#include <QSettings>
 #include <QWidget>
 
+namespace {
+bool& lightTheme() {
+    static bool light = QSettings().value("appearance/theme").toString() == "light";
+    return light;
+}
+
+const QHash<QString, QString>& lightColors() {
+    static const QHash<QString, QString> colors{
+        {"#222426", "#f1f3f4"}, {"#eef0f1", "#22292d"}, {"#1b1d1f", "#ffffff"},
+        {"#26282b", "#f5f7f8"}, {"#303337", "#e3e8eb"}, {"#345a55", "#b5ded5"},
+        {"#3b4748", "#d1dfdf"}, {"#ffffff", "#172528"}, {"#fff", "#172528"},
+        {"#54595f", "#819097"}, {"#404448", "#c4ced4"}, {"#383c40", "#c0c9ce"},
+        {"#181a1c", "#68777e"}, {"#86d5c7", "#126557"}, {"#a8afb5", "#536169"},
+        {"#a1a6aa", "#66757c"}, {"#282b2e", "#e9edef"}, {"#303639", "#e4efee"},
+        {"#d1d5d8", "#3b484e"}, {"#34383b", "#e7ecee"}, {"#41474a", "#d4e3e2"},
+        {"#76c8bd", "#167b6b"}, {"#8bd6bb", "#1c6950"}, {"#757b80", "#65777e"},
+        {"#8b9db1", "#4b6275"}, {"#add7a2", "#2c6c3d"}, {"#83cbde", "#146581"},
+        {"#f5c47e", "#874a0e"}, {"#d5adf4", "#73389a"}, {"#8ce4d6", "#0e7065"},
+        {"#ff9490", "#a62725"}, {"#f1ce80", "#805000"}, {"#ffb591", "#963e19"},
+        {"#ffd780", "#8b4f00"}, {"#dce6f0", "#243746"}, {"#e5ac74", "#824612"},
+        {"#234d57", "#c1ebe9"}, {"#514070", "#e5d8f6"}, {"#655021", "#fae29a"}
+    };
+    return colors;
+}
+
+QString themedStyle(const QString& dark) {
+    if (!lightTheme()) return dark;
+    static const QRegularExpression color("#(?:[0-9a-f]{6}|[0-9a-f]{3})\\b");
+    QString result;
+    int end = 0;
+    auto matches = color.globalMatch(dark);
+    while (matches.hasNext()) {
+        const auto match = matches.next();
+        result += dark.mid(end, match.capturedStart() - end);
+        result += lightColors().value(match.captured(), match.captured());
+        end = match.capturedEnd();
+    }
+    return result + dark.mid(end);
+}
+
+QEvent::Type themeEvent() {
+    static const auto type = static_cast<QEvent::Type>(QEvent::registerEventType());
+    return type;
+}
+
+void setLightTheme(bool light) {
+    if (lightTheme() == light) return;
+    lightTheme() = light;
+    QSettings().setValue("appearance/theme", light ? "light" : "dark");
+    QList<QPointer<QWidget>> windows;
+    for (auto* window : QApplication::topLevelWidgets()) {
+        if (!window->property("picoThemed").toBool()) continue;
+        applyPicoTheme(*window);
+        windows.push_back(window);
+    }
+    for (const auto& window : windows) {
+        if (!window) continue;
+        QEvent event(themeEvent());
+        QApplication::sendEvent(window, &event);
+    }
+}
+
+class ThemeMenu : public QObject {
+public:
+    ThemeMenu(QMenu& views, QWidget& window, std::function<void()> repaint)
+        : QObject(&window), repaint_(std::move(repaint)) {
+        auto* menu = views.addMenu("Thème");
+        auto* group = new QActionGroup(menu);
+        light_ = menu->addAction("Clair");
+        light_->setObjectName("picoThemeLight");
+        dark_ = menu->addAction("Sombre");
+        dark_->setObjectName("picoThemeDark");
+        for (auto* action : {light_, dark_}) {
+            action->setCheckable(true);
+            group->addAction(action);
+        }
+        updateCheck();
+        connect(light_, &QAction::triggered, this, [] { setLightTheme(true); });
+        connect(dark_, &QAction::triggered, this, [] { setLightTheme(false); });
+        window.installEventFilter(this);
+    }
+protected:
+    bool eventFilter(QObject*, QEvent* event) override {
+        if (event->type() != themeEvent()) return false;
+        updateCheck();
+        if (repaint_) repaint_();
+        return true;
+    }
+private:
+    QAction* light_;
+    QAction* dark_;
+    std::function<void()> repaint_;
+
+    void updateCheck() { (lightTheme() ? light_ : dark_)->setChecked(true); }
+};
+}
+
+QColor picoThemeColor(const char* darkColor) {
+    const auto dark = QString::fromLatin1(darkColor);
+    return QColor(lightTheme() ? lightColors().value(dark, dark) : dark);
+}
+
+void addPicoThemeMenu(QMenu& views, QWidget& window, std::function<void()> repaint) {
+    new ThemeMenu(views, window, std::move(repaint));
+}
+
 void applyPicoTheme(QWidget& window) {
+    window.setProperty("picoThemed", true);
     QPalette theme = QApplication::palette();
-    theme.setColor(QPalette::Window, QColor("#222426"));
-    theme.setColor(QPalette::WindowText, QColor("#eef0f1"));
-    theme.setColor(QPalette::Base, QColor("#1b1d1f"));
-    theme.setColor(QPalette::AlternateBase, QColor("#26282b"));
-    theme.setColor(QPalette::Text, QColor("#eef0f1"));
-    theme.setColor(QPalette::Button, QColor("#303337"));
-    theme.setColor(QPalette::ButtonText, QColor("#eef0f1"));
-    theme.setColor(QPalette::Highlight, QColor("#345a55"));
-    theme.setColor(QPalette::Inactive, QPalette::Highlight, QColor("#3b4748"));
-    theme.setColor(QPalette::HighlightedText, QColor("#ffffff"));
-    theme.setColor(QPalette::ToolTipBase, QColor("#303337"));
-    theme.setColor(QPalette::ToolTipText, QColor("#eef0f1"));
-    theme.setColor(QPalette::Light, QColor("#54595f"));
-    theme.setColor(QPalette::Midlight, QColor("#404448"));
-    theme.setColor(QPalette::Mid, QColor("#383c40"));
-    theme.setColor(QPalette::Dark, QColor("#181a1c"));
-    theme.setColor(QPalette::Shadow, QColor("#181a1c"));
-    theme.setColor(QPalette::Link, QColor("#86d5c7"));
-    theme.setColor(QPalette::PlaceholderText, QColor("#a8afb5"));
+    theme.setColor(QPalette::Window, picoThemeColor("#222426"));
+    theme.setColor(QPalette::WindowText, picoThemeColor("#eef0f1"));
+    theme.setColor(QPalette::Base, picoThemeColor("#1b1d1f"));
+    theme.setColor(QPalette::AlternateBase, picoThemeColor("#26282b"));
+    theme.setColor(QPalette::Text, picoThemeColor("#eef0f1"));
+    theme.setColor(QPalette::Button, picoThemeColor("#303337"));
+    theme.setColor(QPalette::ButtonText, picoThemeColor("#eef0f1"));
+    theme.setColor(QPalette::Highlight, picoThemeColor("#345a55"));
+    theme.setColor(QPalette::Inactive, QPalette::Highlight, picoThemeColor("#3b4748"));
+    theme.setColor(QPalette::HighlightedText, picoThemeColor("#ffffff"));
+    theme.setColor(QPalette::ToolTipBase, picoThemeColor("#303337"));
+    theme.setColor(QPalette::ToolTipText, picoThemeColor("#eef0f1"));
+    theme.setColor(QPalette::Light, picoThemeColor("#54595f"));
+    theme.setColor(QPalette::Midlight, picoThemeColor("#404448"));
+    theme.setColor(QPalette::Mid, picoThemeColor("#383c40"));
+    theme.setColor(QPalette::Dark, picoThemeColor("#181a1c"));
+    theme.setColor(QPalette::Shadow, picoThemeColor("#181a1c"));
+    theme.setColor(QPalette::Link, picoThemeColor("#86d5c7"));
+    theme.setColor(QPalette::PlaceholderText, picoThemeColor("#a8afb5"));
     for (const auto role : {QPalette::Text, QPalette::WindowText, QPalette::ButtonText})
-        theme.setColor(QPalette::Disabled, role, QColor("#a1a6aa"));
+        theme.setColor(QPalette::Disabled, role, picoThemeColor("#a1a6aa"));
     window.setPalette(theme);
-    window.setStyleSheet(
+    window.setStyleSheet(themedStyle(
         "QMainWindow,QDialog,QDockWidget {background:#222426;color:#eef0f1;}"
         "QLabel,QCheckBox,QRadioButton,QGroupBox {color:#eef0f1;}"
         "QLabel:disabled,QCheckBox:disabled,QRadioButton:disabled {color:#a1a6aa;}"
@@ -62,5 +176,9 @@ void applyPicoTheme(QWidget& window) {
         "QScrollBar::add-line,QScrollBar::sub-line {width:0;height:0;}"
         "QScrollBar::add-page,QScrollBar::sub-page {background:transparent;}"
         "QToolTip {color:#eef0f1;background:#303337;border:1px solid #54595f;}"
-    );
+        "QToolBar#ideToolbar {spacing:3px;padding:4px;}"
+        "QLabel#ideAnalysisStatus,QLabel#ideTargetStatus {padding:0 7px;color:#d1d5d8;}"
+        "QToolButton#ideCloseTab {background:transparent;padding:0 4px;color:#d1d5d8;}"
+        "QToolButton#ideCloseTab:hover {background:#41474a;color:#fff;}"
+    ));
 }

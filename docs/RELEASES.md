@@ -1,5 +1,29 @@
 # Versions
 
+<a id="v0-9-0"></a>
+
+## v0.9.0 — 2026-11-21
+
+Changements depuis **v0.8.0** (`491715e`).
+
+### Édition et documentation
+
+- Languette **Recherche** dans le fichier actif ou le projet. Texte simple ou expressions régulières, avec respect de la casse en option, surlignage, navigation et remplacement avec réutilisation des groupes capturés.
+- Remplacement ou insertion avant et après les motifs, en tête ou en fin de fichier. L'édition en lot propose un aperçu et une sélection de fichiers. Les modifications peuvent être annulées par onglet puis enregistrées. L'IDE écarte un aperçu périmé et préserve le BOM UTF-8 ainsi que les fins de ligne CRLF des fichiers concernés.
+- Languette **TODO** avec marqueurs insensibles à la casse, cases Markdown non cochées, filtres et accès à la source. Les commandes Doxygen `todo`, `bug`, `test` et `deprecated` rejoignent les tâches, y compris les formes `xrefitem` associées.
+- Coloration des commandes Doxygen dans les commentaires C/C++ et recherche des balises et alias dans les sources, fichiers `.dox` et Markdown. Le menu **Documentation** appelle Doxygen avec le `Doxyfile` du projet ou génère le HTML dans `.picodbg/doxygen` avec une configuration par défaut.
+- Thèmes **Clair** et **Sombre** accessibles dans **Vues → Thème**. La préférence est persistante et partagée entre l'IDE, le débogueur et les fenêtres d'inspection. Les couleurs de syntaxe, de recherche et de correspondance C/assembleur suivent le thème.
+
+### Pico 2 et Pico 2 W bare metal
+
+- Guide progressif en français sur le démarrage, la cartographie mémoire et les périphériques RP2350. Il présente les registres, leurs contraintes et des exemples C annotés. L'exemple de LED externe sur GP15 fournit des variantes SRAM et Flash, avec vecteurs et métadonnées de démarrage PICOBIN pour la seconde. Le guide et l'exemple ont été introduits dans le commit `884717d`.
+- Choix explicite **Avec Pico SDK** ou **Bare metal · sans Pico SDK** dans l'assistant. Les modèles bare metal Pico 2 et Pico 2 W et l'exemple partagent `rp2350_regs.h`. L'en-tête fournit des adresses de blocs, des registres usuels, des constantes par carte et des macros MMIO, de champs et d'alias atomiques.
+
+### Validation
+
+- 21 tests CTest sous Linux avec Qt 5.15.15 et 13 pour le moteur seul. Les tests couvrent les captures regex, l'aperçu périmé, l'annulation, les marqueurs en casse mixte, l'index Doxygen et le changement de thème dans les deux fenêtres.
+- Compilation de l'exemple RP2350 pour la SRAM et la Flash avec ARM GCC. Le lancement de Doxygen et la transmission des configurations sont vérifiés avec un exécutable de test. La génération avec Doxygen réel, Qt6 et le démarrage sur carte physique restent à valider.
+
 <a id="v0-8-0"></a>
 
 ## v0.8.0 — 2026-11-21

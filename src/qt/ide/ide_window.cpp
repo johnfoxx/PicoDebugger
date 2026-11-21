@@ -27,6 +27,8 @@
 #include <QHBoxLayout>
 #include <QInputDialog>
 #include "git_panel.hpp"
+#include "doxygen_dialog.hpp"
+#include "text_tools.hpp"
 #include "toolchain_catalog.hpp"
 #include <QStandardPaths>
 #include <QJsonDocument>
@@ -72,13 +74,6 @@ QString level(int severity) {
 QString projectSettingsKey(const QString& root) {
     return "ide/projects/" + QString::fromLatin1(QCryptographicHash::hash(root.toUtf8(), QCryptographicHash::Sha256).toHex());
 }
-bool readText(const QString& path, QByteArray& bytes) {
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly) || file.size() > 2 * 1024 * 1024) return false;
-    bytes = file.readAll();
-    return file.error() == QFileDevice::NoError && !bytes.contains('\0') &&
-           QString::fromUtf8(bytes).toUtf8() == (bytes.startsWith("\xef\xbb\xbf") ? bytes.mid(3) : bytes);
-}
 }
 
 IdeWindow::IdeWindow(MainWindow* debugger, picodbg::Board board)
@@ -87,11 +82,6 @@ IdeWindow::IdeWindow(MainWindow* debugger, picodbg::Board board)
     setWindowTitle("PicoDebugger — IDE C");
     resize(1180, 800);
     applyPicoTheme(*this);
-    setStyleSheet(styleSheet() +
-        "QToolBar#ideToolbar {spacing:3px;padding:4px;}"
-        "QLabel#ideAnalysisStatus,QLabel#ideTargetStatus {padding:0 7px;color:#d1d5d8;}"
-        "QToolButton#ideCloseTab {background:transparent;padding:0 4px;color:#d1d5d8;}"
-        "QToolButton#ideCloseTab:hover {background:#41474a;color:#fff;}");
     setupUi();
     setProjectBoard(board);
     auto geometry = QSettings().value("ide/geometry").toByteArray();
@@ -143,6 +133,9 @@ void IdeWindow::setupUi() {
     auto* edit = menuBar()->addMenu("Édition");
     auto* buildMenu = menuBar()->addMenu("Compilation");
     auto* debugMenu = menuBar()->addMenu("Débogage");
+    auto* views = menuBar()->addMenu("Vues");
+    addPicoThemeMenu(*views, *this, [this] { refreshProblems(); });
+    auto* documentation = menuBar()->addMenu("Documentation");
     auto* help = menuBar()->addMenu("Aide");
     auto* toolbar = addToolBar("Projet et lancement");
     toolbar->setObjectName("ideToolbar");
@@ -188,22 +181,27 @@ void IdeWindow::setupUi() {
     };
     action(edit, "Annuler", "ideUndo", QKeySequence::Undo, [=] { current(&QPlainTextEdit::undo); });
     action(edit, "Rétablir", "ideRedo", QKeySequence::Redo, [=] { current(&QPlainTextEdit::redo); });
-    action(edit, "Rechercher…", "ideFind", QKeySequence::Find, [this] {
-        auto* source = sourceForWidget(editors_->currentWidget());
-        if (!source) return;
-        bool ok;
-        const auto text = QInputDialog::getText(this, "Rechercher dans le fichier", "Texte", QLineEdit::Normal,
-                                               source->editor->textCursor().selectedText(), &ok);
-        if (!ok || text.isEmpty()) return;
-        auto cursor = source->editor->textCursor();
-        if (!source->editor->find(text)) {
-            source->editor->moveCursor(QTextCursor::Start);
-            if (!source->editor->find(text)) {
-                source->editor->setTextCursor(cursor);
-                statusBar()->showMessage("Texte introuvable", 4000);
-            }
-        }
+    edit->addSeparator();
+    action(edit, "Rechercher dans le fichier…", "ideFind", QKeySequence::Find,
+           [this] { textTools_->showSearch(false, false); });
+    action(edit, "Résultat suivant", "ideFindNext", QKeySequence(Qt::Key_F3),
+           [this] { textTools_->navigate(true); });
+    action(edit, "Résultat précédent", "ideFindPrevious", QKeySequence("Shift+F3"),
+           [this] { textTools_->navigate(false); });
+    action(edit, "Remplacer dans le fichier…", "ideReplace", QKeySequence("Ctrl+H"),
+           [this] { textTools_->showSearch(false, true); });
+    action(edit, "Rechercher dans le projet…", "ideFindProject", QKeySequence("Ctrl+Shift+F"),
+           [this] { textTools_->showSearch(true, false); });
+    action(edit, "Modifier les fichiers du projet…", "ideReplaceProject", QKeySequence("Ctrl+Shift+H"),
+           [this] { textTools_->showSearch(true, true); });
+    action(file, "Tâches TODO…", "ideShowTodo", QKeySequence("Ctrl+Shift+T"),
+           [this] { textTools_->showTodo(); });
+    action(documentation, "Rechercher les balises Doxygen…", "ideFindDoxygen", {},
+           [this] { textTools_->showTodo(true); });
+    generateDocs_ = action(documentation, "Générer avec Doxygen…", "ideGenerateDoxygen", {}, [this] {
+        if (!root_.isEmpty()) generateDoxygen(root_, this, [this] { return saveAll(); });
     });
+    edit->addSeparator();
     action(edit, "Autocomplétion", "ideCompletion", {}, [this] {
         if (auto* source = sourceForWidget(editors_->currentWidget())) requestCompletion(*source);
     })->setToolTip("Ctrl+Espace dans l'éditeur");
@@ -324,7 +322,6 @@ void IdeWindow::setupUi() {
     editors_ = new QTabWidget;
     editors_->setObjectName("ideEditors");
     editors_->setMovable(true);
-    connect(editors_, &QTabWidget::currentChanged, this, [this] { refreshActions(); selectSource(false); });
     auto* welcome = new QWidget;
     auto* welcomeLayout = new QVBoxLayout(welcome);
     welcomeLayout->setContentsMargins(32, 38, 32, 30);
@@ -375,7 +372,21 @@ void IdeWindow::setupUi() {
     workspace->addWidget(codeSplit_);
     workspace->setStretchFactor(1, 1);
     workspace->setSizes({245, 900});
-    rootPane->addWidget(workspace);
+    textTools_ = new TextTools(workspace);
+    rootPane->addWidget(textTools_);
+    textTools_->readFile = [this](const QString& path, QString& text) { return readSearchSource(path, text); };
+    textTools_->openFile = [this](const QString& path) -> CodeEditor* {
+        if (!openSource(path)) return nullptr;
+        return dynamic_cast<CodeEditor*>(editors_->currentWidget());
+    };
+    textTools_->applyEdits = [this](const std::vector<TextEdit>& edits, QString& error) {
+        return applyProjectTextEdits(edits, error);
+    };
+    connect(editors_, &QTabWidget::currentChanged, this, [this] {
+        textTools_->setEditor(dynamic_cast<CodeEditor*>(editors_->currentWidget()));
+        refreshActions();
+        selectSource(false);
+    });
 
     bottom_ = new QTabWidget;
     output_ = new QPlainTextEdit;
@@ -431,22 +442,31 @@ void IdeWindow::newProject() {
         if (!path.isEmpty()) folder.setText(path);
     });
     ChoiceBox card;
+    card.setObjectName("ideNewProjectBoard");
     populateBoards(card);
     card.setCurrentIndex(card.findData(static_cast<int>(projectBoard())));
     ChoiceBox type;
-    type.addItem("C autonome · émulateur et carte", static_cast<int>(Template::BareMetal));
-    type.addItem("Projet C avec Pico SDK", static_cast<int>(Template::Sdk));
+    type.setObjectName("ideNewProjectEnvironment");
+    type.addItem("Bare metal · sans Pico SDK", static_cast<int>(Template::BareMetal));
+    type.addItem("Avec Pico SDK", static_cast<int>(Template::Sdk));
     QLabel explanation;
     explanation.setWordWrap(true);
     const auto explain = [&] {
-        explanation.setText(type.currentIndex() == 0
-            ? "Un compteur C à compiler avec ARM GCC. Le même ELF en RAM se lance dans l'émulateur et sur la carte via SWD."
-            : "Un projet standard avec le Pico SDK et la LED de la carte. Son exécution en émulation dépend des périphériques et instructions utilisés.");
+        if (static_cast<Template>(type.currentData().toInt()) == Template::Sdk) {
+            explanation.setText("Le Pico SDK fournit le démarrage et les bibliothèques. L'exemple fait clignoter la LED de la carte.");
+            return;
+        }
+        const auto board = static_cast<picodbg::Board>(card.currentData().toInt());
+        QString text = "Le projet fournit son démarrage C et son script de lien. Le compteur se lance en RAM dans l'émulateur ou sur la carte via SWD.";
+        if (picodbg::describeBoard(board).chip == picodbg::Chip::RP2350)
+            text += " Les adresses et registres sont dans include/rp2350_regs.h.";
+        explanation.setText(text);
     };
     connect(&type, QOverload<int>::of(&QComboBox::currentIndexChanged), &dialog, explain);
+    connect(&card, QOverload<int>::of(&QComboBox::currentIndexChanged), &dialog, explain);
     explain();
     layout.addRow("Nom", &name); layout.addRow("Dossier parent", folderRow);
-    layout.addRow("Carte", &card); layout.addRow("Modèle", &type); layout.addRow(&explanation);
+    layout.addRow("Carte", &card); layout.addRow("Environnement", &type); layout.addRow(&explanation);
     QDialogButtonBox buttons(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     layout.addRow(&buttons);
     const auto validate = [&] { buttons.button(QDialogButtonBox::Ok)->setEnabled(!name.text().trimmed().isEmpty() && !folder.text().trimmed().isEmpty()); };
@@ -486,6 +506,7 @@ bool IdeWindow::openProject(const QString& directory) {
     if (build_.busy() || !allowCloseSources()) return false;
     resetProject();
     root_ = path;
+    textTools_->setProject(root_);
     settingsKey_ = projectSettingsKey(root_);
     QSettings settings;
     settings.setValue("ide/lastProject", root_);
@@ -518,6 +539,8 @@ bool IdeWindow::openProject(const QString& directory) {
 
 void IdeWindow::resetProject() {
     const QSignalBlocker blockedEditors(editors_);
+    textTools_->setEditor(nullptr);
+    textTools_->setProject({});
     for (const auto& source : sources_) {
         language_.close(source->path);
         editors_->removeTab(editors_->indexOf(source->editor));
@@ -586,6 +609,7 @@ void IdeWindow::createEntry(bool directory) {
     const bool created = directory ? QDir(base).mkdir(name) : file.open(QIODevice::WriteOnly | QIODevice::NewOnly);
     if (!created) { warn("Impossible de créer " + path + ". Vérifier si ce nom existe déjà."); return; }
     if (!directory) { file.close(); openSource(path); }
+    textTools_->projectChanged();
 }
 
 void IdeWindow::renameSource() {
@@ -605,6 +629,7 @@ void IdeWindow::renameSource() {
         closeSource(editors_->indexOf(source->editor));
         openSource(next);
     }
+    textTools_->projectChanged();
     statusBar()->showMessage("Fichier renommé · vérifier ses références dans le projet", 6000);
 }
 
@@ -619,10 +644,11 @@ void IdeWindow::trashSource() {
     if (source && !save(*source)) return;
     if (!QFile::moveToTrash(path)) { warn("Impossible de mettre ce fichier à la corbeille."); return; }
     if (source) closeSource(editors_->indexOf(source->editor));
+    textTools_->projectChanged();
     statusBar()->showMessage("Fichier placé dans la corbeille · vérifier ses références dans le projet", 6000);
 }
 
-bool IdeWindow::openSource(const QString& path, bool focus) {
+bool IdeWindow::openSource(const QString& path, bool focus, bool activate) {
     if (!belongsToProject(path)) return false;
     const auto canonical = QFileInfo(path).canonicalFilePath();
     const auto selectFile = [this, &canonical] {
@@ -633,13 +659,15 @@ bool IdeWindow::openSource(const QString& path, bool focus) {
         }
     };
     if (auto* existing = findSource(canonical)) {
-        editors_->setCurrentWidget(existing->editor);
-        selectFile();
-        if (focus) existing->editor->setFocus();
+        if (activate) {
+            editors_->setCurrentWidget(existing->editor);
+            selectFile();
+            if (focus) existing->editor->setFocus();
+        }
         return true;
     }
     QByteArray contents;
-    if (!readText(canonical, contents)) { warn("Impossible d'ouvrir ce fichier. L'éditeur accepte les fichiers texte UTF-8 jusqu'à 2 Mio."); return false; }
+    if (!readProjectText(canonical, contents)) { warn("Impossible d'ouvrir ce fichier. L'éditeur accepte les fichiers texte UTF-8 jusqu'à 2 Mio."); return false; }
     const auto language = languageForFile(canonical);
     auto* editor = new CodeEditor(language, editors_);
     auto source = std::unique_ptr<Source>(new Source);
@@ -650,7 +678,7 @@ bool IdeWindow::openSource(const QString& path, bool focus) {
     source->sync->setSingleShot(true);
     source->sync->setInterval(220);
     auto* handle = source.get();
-    editor->setPlainText(QString::fromUtf8(contents));
+    editor->setPlainText(projectText(contents));
     editor->document()->setModified(false);
     connect(source->sync, &QTimer::timeout, editor, [this, handle] {
         language_.change(handle->path, handle->editor->toPlainText());
@@ -686,10 +714,12 @@ bool IdeWindow::openSource(const QString& path, bool focus) {
     close->setFocusPolicy(Qt::NoFocus);
     connect(close, &QToolButton::clicked, this, [this, editor] { closeSource(editors_->indexOf(editor)); });
     editors_->tabBar()->setTabButton(index, QTabBar::RightSide, close);
-    editors_->setCurrentIndex(index);
     highlightDebugLines(*handle);
-    selectFile();
-    if (focus) editor->setFocus();
+    if (activate) {
+        editors_->setCurrentIndex(index);
+        selectFile();
+        if (focus) editor->setFocus();
+    }
     return true;
 }
 
@@ -701,6 +731,49 @@ IdeWindow::Source* IdeWindow::findSource(const QString& path) {
 IdeWindow::Source* IdeWindow::sourceForWidget(QWidget* widget) {
     for (const auto& source : sources_) if (source->editor == widget) return source.get();
     return nullptr;
+}
+
+bool IdeWindow::readSearchSource(const QString& path, QString& text) {
+    const QFileInfo info(path);
+    if (info.isSymLink() || !info.isFile() || !belongsToProject(path) || info.canonicalFilePath() != path)
+        return false;
+    if (const auto* source = findSource(path)) {
+        text = source->editor->sourceText();
+        return true;
+    }
+    QByteArray bytes;
+    if (!readProjectText(path, bytes)) return false;
+    text = projectText(bytes);
+    return true;
+}
+
+bool IdeWindow::applyProjectTextEdits(const std::vector<TextEdit>& edits, QString& error) {
+    const auto changed = [&](const QString& path) {
+        error = "Fichier modifié ou indisponible depuis l’aperçu · " + QDir(root_).relativeFilePath(path) +
+                ". Actualiser l’aperçu. Aucune modification appliquée.";
+        return false;
+    };
+    for (const auto& edit : edits) {
+        QString current;
+        if (!readSearchSource(edit.path, current) || current != edit.before) return changed(edit.path);
+        if (const auto* source = findSource(edit.path)) {
+            QByteArray disk;
+            if (source->editor->isReadOnly() || !readProjectText(edit.path, disk) || disk != source->diskText)
+                return changed(edit.path);
+        }
+    }
+    std::vector<CodeEditor*> targets;
+    for (const auto& edit : edits) {
+        if (!openSource(edit.path, false, false)) return changed(edit.path);
+        auto* source = findSource(edit.path);
+        if (!source || source->editor->sourceText() != edit.before) return changed(edit.path);
+        targets.push_back(source->editor);
+    }
+    // All selected snapshots still match. Apply one undo block per document.
+    for (size_t i = 0; i < edits.size(); ++i) targets[i]->applySearchEdit(edits[i]);
+    refreshActions();
+    statusBar()->showMessage(QString("%1 fichier(s) modifié(s) · Tout enregistrer pour écrire sur le disque").arg(edits.size()), 6500);
+    return true;
 }
 
 void IdeWindow::closeSource(int index) {
@@ -724,12 +797,13 @@ void IdeWindow::closeSource(int index) {
 bool IdeWindow::save(Source& source) {
     if (!source.editor->document()->isModified()) return true;
     QByteArray disk;
-    if (!belongsToProject(source.path) || !readText(source.path, disk) || disk != source.diskText) {
+    if (!belongsToProject(source.path) || !readProjectText(source.path, disk) || disk != source.diskText) {
         warn("Le fichier a changé sur le disque. Les modifications de l'éditeur sont conservées dans l'onglet : " + source.path);
         return false;
     }
-    auto text = source.editor->toPlainText();
+    auto text = source.editor->sourceText();
     if (source.diskText.contains("\r\n")) text.replace("\n", "\r\n");
+    else if (source.diskText.contains('\r') && !source.diskText.contains('\n')) text.replace('\n', '\r');
     auto bytes = text.toUtf8();
     if (source.diskText.startsWith("\xef\xbb\xbf")) bytes.prepend("\xef\xbb\xbf");
     QSaveFile file(source.path);
@@ -895,7 +969,7 @@ void IdeWindow::refreshProblems() {
     const auto append = [this](const Problem& issue) {
         const auto file = QDir(root_).relativeFilePath(issue.path);
         auto* row = new QTreeWidgetItem(problems_, {level(issue.severity), file + ":" + QString::number(issue.line + 1), issue.message});
-        row->setForeground(0, issue.severity == 1 ? QColor("#ff9490") : QColor("#f1ce80"));
+        row->setForeground(0, issue.severity == 1 ? picoThemeColor("#ff9490") : picoThemeColor("#f1ce80"));
         row->setToolTip(2, issue.message);
         row->setData(0, Qt::UserRole, issue.path);
         row->setData(1, Qt::UserRole, issue.line);
@@ -1024,6 +1098,7 @@ void IdeWindow::refreshActions() {
                               belongsToProject(selected) && QFileInfo(selected).isFile();
     rename_->setEnabled(editableFile); trash_->setEnabled(editableFile);
     compile_->setEnabled(ready); configure_->setEnabled(ready); debug_->setEnabled(ready);
+    generateDocs_->setEnabled(ready);
     boardRun_->setEnabled(ready && !emulationTemplate_ && hardwareReady_ && hardwareBoard_ == projectBoard());
     boardRun_->setToolTip(emulationTemplate_ ? "Le modèle d'émulation produit un ELF pour le simulateur."
         : hardwareReady_ && hardwareBoard_ != projectBoard()

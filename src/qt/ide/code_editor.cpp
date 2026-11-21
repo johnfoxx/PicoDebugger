@@ -1,5 +1,6 @@
 #include "code_editor.hpp"
 #include "../source_map.hpp"
+#include "../window_theme.hpp"
 
 #include <QAbstractItemView>
 #include <QCompleter>
@@ -36,11 +37,11 @@ protected:
             R"c((//.*|/\*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|(^\s*#\s*\w+)|\b(0[xX][a-fA-F0-9]+|[0-9]+(?:\.[0-9]+)?)(?:[uUlLfF]*)\b|\b(auto|break|case|char|const|continue|default|do|double|else|enum|extern|float|for|goto|if|inline|int|long|register|restrict|return|short|signed|sizeof|static|struct|switch|typedef|union|unsigned|void|volatile|while|_Alignas|_Alignof|_Atomic|_Bool|_Generic|_Noreturn|_Static_assert|_Thread_local|bool|true|false|NULL|u?int(?:8|16|32|64)_t|size_t)\b)c");
         setCurrentBlockState(0);
         int offset = 0;
-        while (offset < line.size() || previousBlockState() == 1) {
-            if (offset == 0 && previousBlockState() == 1) {
+        while (offset < line.size() || (offset == 0 && previousBlockState() > 0)) {
+            if (offset == 0 && previousBlockState() > 0) {
                 const int end = line.indexOf("*/");
-                setFormat(0, end < 0 ? line.size() : end + 2, QColor("#8b9db1"));
-                if (end < 0) { setCurrentBlockState(1); return; }
+                highlightComment(line.left(end < 0 ? line.size() : end + 2), 0, previousBlockState() == 2);
+                if (end < 0) { setCurrentBlockState(previousBlockState()); return; }
                 offset = end + 2;
             }
             const auto match = tokens.match(line, offset);
@@ -51,17 +52,35 @@ protected:
             if (token == "/*") {
                 const int end = line.indexOf("*/", offset);
                 offset = end < 0 ? line.size() : end + 2;
-                setFormat(match.capturedStart(), offset - match.capturedStart(), QColor("#8b9db1"));
-                if (end < 0) { setCurrentBlockState(1); return; }
+                const auto comment = line.mid(match.capturedStart(), offset - match.capturedStart());
+                const bool documentation = isDoxygenComment(comment);
+                highlightComment(comment, match.capturedStart(), documentation);
+                if (end < 0) { setCurrentBlockState(documentation ? 2 : 1); return; }
                 continue;
             }
-            if (token.startsWith("//")) color = QColor("#8b9db1");
-            else if (!token.isEmpty()) color = QColor("#add7a2");
-            else if (!match.captured(2).isEmpty()) color = QColor("#83cbde");
-            else if (!match.captured(3).isEmpty()) color = QColor("#f5c47e");
-            else color = QColor("#d5adf4");
+            if (token.startsWith("//")) {
+                highlightComment(token, match.capturedStart(), isDoxygenComment(token));
+                break;
+            }
+            if (!token.isEmpty()) color = picoThemeColor("#add7a2");
+            else if (!match.captured(2).isEmpty()) color = picoThemeColor("#83cbde");
+            else if (!match.captured(3).isEmpty()) color = picoThemeColor("#f5c47e");
+            else color = picoThemeColor("#d5adf4");
             setFormat(match.capturedStart(), match.capturedLength(), color);
             if (offset >= line.size()) break;
+        }
+    }
+private:
+    void highlightComment(const QString& comment, int offset, bool documentation) {
+        setFormat(offset, comment.size(), picoThemeColor("#8b9db1"));
+        if (!documentation) return;
+        auto tags = doxygenCommand().globalMatch(comment);
+        while (tags.hasNext()) {
+            const auto tag = tags.next();
+            QTextCharFormat format;
+            format.setForeground(picoThemeColor("#83cbde"));
+            format.setFontWeight(QFont::DemiBold);
+            setFormat(offset + tag.capturedStart(), tag.capturedLength(), format);
         }
     }
 };
@@ -75,7 +94,7 @@ CodeEditor::CodeEditor(const Language& language, QWidget* parent)
     : QPlainTextEdit(parent), gutter_(new Gutter(this)), completer_(new QCompleter(this)),
       suggestions_(new QStandardItemModel(this)) {
     setObjectName("ideEditor");
-    if (language.highlight == Highlight::C) new CHighlighter(document());
+    if (language.highlight == Highlight::C) highlighter_ = new CHighlighter(document());
     auto codingFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
     codingFont.setStyleHint(QFont::Monospace);
     codingFont.setFixedPitch(true);
@@ -94,6 +113,7 @@ CodeEditor::CodeEditor(const Language& language, QWidget* parent)
         if (dy) gutter_->scroll(0, dy);
         else gutter_->update(0, rect.y(), gutter_->width(), rect.height());
         if (rect.contains(viewport()->rect())) updateGutter();
+        if (dy && !searchHighlights_.empty()) decorate();
     });
     connect(this, &QPlainTextEdit::cursorPositionChanged, this, [this] { decorate(); gutter_->update(); });
     updateGutter();
@@ -112,6 +132,15 @@ void CodeEditor::resizeEvent(QResizeEvent* event) {
     QPlainTextEdit::resizeEvent(event);
     const QRect area = contentsRect();
     gutter_->setGeometry(area.left(), area.top(), gutterWidth(), area.height());
+    if (!searchHighlights_.empty()) decorate();
+}
+
+void CodeEditor::changeEvent(QEvent* event) {
+    QPlainTextEdit::changeEvent(event);
+    if (event->type() != QEvent::PaletteChange) return;
+    if (highlighter_) highlighter_->rehighlight();
+    decorate();
+    gutter_->update();
 }
 
 void CodeEditor::paintGutter(QPaintEvent* event) {
@@ -127,11 +156,11 @@ void CodeEditor::paintGutter(QPaintEvent* event) {
             if (line == executionLine_) {
                 const int center = top + height / 2;
                 painter.setPen(Qt::NoPen);
-                painter.setBrush(QColor("#8ce4d6"));
+                painter.setBrush(picoThemeColor("#8ce4d6"));
                 painter.drawPolygon(QPolygon({{5, center - 5}, {14, center}, {5, center + 5}}));
             }
-            painter.setPen(line == executionLine_ ? QColor("#8ce4d6") :
-                block.blockNumber() == activeLine ? palette().color(QPalette::Text) : QColor("#a8afb5"));
+            painter.setPen(line == executionLine_ ? picoThemeColor("#8ce4d6") :
+                block.blockNumber() == activeLine ? palette().color(QPalette::Text) : picoThemeColor("#a8afb5"));
             painter.drawText(17, top, gutter_->width() - 24, fontMetrics().height(), Qt::AlignRight, QString::number(line));
         }
         block = block.next();
@@ -231,6 +260,45 @@ void CodeEditor::showProblems(const std::vector<Problem>& problems) {
     decorate();
 }
 
+QString CodeEditor::sourceText() const {
+    auto text = document()->toRawText();
+    text.replace(QChar::ParagraphSeparator, '\n');
+    text.replace(QChar::LineSeparator, '\n');
+    return text;
+}
+
+void CodeEditor::setSearchHighlights(std::vector<TextRange> ranges) {
+    searchHighlights_ = std::move(ranges);
+    decorate();
+}
+
+void CodeEditor::applySearchEdit(const TextEdit& edit) {
+    if (edit.before == edit.after) return;
+    const int beforeSize = static_cast<int>(edit.before.size());
+    const int afterSize = static_cast<int>(edit.after.size());
+    const int common = std::min(beforeSize, afterSize);
+    int start = 0;
+    while (start < common && edit.before.at(start) == edit.after.at(start)) ++start;
+    if (start && edit.before.at(start - 1).isHighSurrogate()) --start;
+    int beforeEnd = beforeSize;
+    int afterEnd = afterSize;
+    while (beforeEnd > start && afterEnd > start &&
+           edit.before.at(beforeEnd - 1) == edit.after.at(afterEnd - 1)) {
+        --beforeEnd;
+        --afterEnd;
+    }
+    if (beforeEnd < beforeSize && edit.before.at(beforeEnd).isLowSurrogate()) {
+        ++beforeEnd;
+        ++afterEnd;
+    }
+    QTextCursor cursor(document());
+    cursor.beginEditBlock();
+    cursor.setPosition(start);
+    cursor.setPosition(beforeEnd, QTextCursor::KeepAnchor);
+    cursor.insertText(edit.after.mid(start, afterEnd - start));
+    cursor.endEditBlock();
+}
+
 void CodeEditor::decorate() {
     QList<QTextEdit::ExtraSelection> selections;
     QTextEdit::ExtraSelection active;
@@ -251,13 +319,34 @@ void CodeEditor::decorate() {
     };
     debugLine(selectionLine_, picosource::selectionColor());
     debugLine(executionLine_, picosource::executionColor());
+    if (!searchHighlights_.empty()) {
+        const int start = firstVisibleBlock().position();
+        const auto bottom = cursorForPosition(QPoint(0, viewport()->height())).block();
+        const int end = bottom.position() + bottom.length();
+        const auto first = std::lower_bound(searchHighlights_.begin(), searchHighlights_.end(), start,
+            [](const TextRange& range, int position) { return range.end() < position; });
+        const int documentEnd = document()->characterCount() - 1;
+        for (auto it = first; it != searchHighlights_.end() && it->start <= end; ++it) {
+            if (it->end() > documentEnd) break;
+            QTextEdit::ExtraSelection highlight;
+            highlight.cursor = QTextCursor(document());
+            highlight.cursor.setPosition(it->start);
+            highlight.cursor.setPosition(it->end(), QTextCursor::KeepAnchor);
+            if (!it->length) {
+                if (highlight.cursor.atBlockEnd()) highlight.cursor.movePosition(QTextCursor::PreviousCharacter, QTextCursor::KeepAnchor);
+                else highlight.cursor.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
+            }
+            highlight.format.setBackground(picoThemeColor("#655021"));
+            selections.push_back(highlight);
+        }
+    }
     for (const auto& problem : problems_) {
         QTextEdit::ExtraSelection issue;
         issue.cursor = rangeCursor(problem.line, problem.column, problem.endLine, problem.endColumn);
         if (issue.cursor.isNull()) continue;
         if (!issue.cursor.hasSelection()) issue.cursor.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
         issue.format.setUnderlineStyle(QTextCharFormat::WaveUnderline);
-        issue.format.setUnderlineColor(problem.severity == 1 ? QColor("#ff9490") : QColor("#f1ce80"));
+        issue.format.setUnderlineColor(problem.severity == 1 ? picoThemeColor("#ff9490") : picoThemeColor("#f1ce80"));
         selections.push_back(issue);
     }
     setExtraSelections(selections);

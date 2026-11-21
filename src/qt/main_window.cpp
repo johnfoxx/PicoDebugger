@@ -130,6 +130,10 @@ void MainWindow::buildUi() {
     ideAction->setShortcut(QKeySequence("Ctrl+Shift+E"));
     connect(ideAction, &QAction::triggered, this, [this] { showIde(); });
     auto* views = menuBar()->addMenu("Vues"); views->setObjectName("views");
+    addPicoThemeMenu(*views, *this, [this] {
+        refresh();
+        refreshSource(true);
+    });
     auto* overview = views->addAction("Rétablir la disposition initiale");
     overview->setObjectName("overviewAction");
     overview->setShortcut(QKeySequence("Ctrl+Shift+0"));
@@ -579,7 +583,8 @@ void MainWindow::refresh() {
     inspectionTabs_->setTabVisible(5, !real);
     findChild<QAction*>("virtualTimeViewAction")->setEnabled(!real);
     virtualTimePanel_->updateState(debugger_->virtualTime(), remainingTime_, loaded && !real && !debugger_->terminalStop(), running_);
-    timeLabel_->setText(QString("<a href='time' style='color:#8bd6bb'>t = %1 µs</a>").arg(static_cast<qulonglong>(debugger_->virtualTime())));
+    timeLabel_->setText(QString("<a href='time' style='color:%1'>t = %2 µs</a>")
+        .arg(picoThemeColor("#8bd6bb").name()).arg(static_cast<qulonglong>(debugger_->virtualTime())));
     codePages_->setCurrentIndex(loaded ? 1 : 0);
     QString sessionName = imageName_;
     if (real) {
@@ -588,7 +593,8 @@ void MainWindow::refresh() {
     }
     session_->setText(loaded ? sessionName : "Aucune image chargée"); session_->setToolTip(session_->text());
     banner_->setText(!loaded ? "HORS LIGNE" : running_ ? (timeOnly_ ? "AVANCE DU TEMPS" : "EN EXÉCUTION") : q(stopName(debugger_->stop.kind)));
-    banner_->setStyleSheet(debugger_->terminalStop() ? "color:#ffb591;font-weight:600;" : "color:#8bd6bb;font-weight:600;");
+    banner_->setStyleSheet(QString("color:%1;font-weight:600;")
+        .arg(picoThemeColor(debugger_->terminalStop() ? "#ffb591" : "#8bd6bb").name()));
     const QString instructionHint = QString("PC %1 · F10 : une instruction · F5 : continuer").arg(hx(debugger_->cpus[selected_].r[15]));
     guidance_->setText(!loaded ? "Simulation partielle · ARM / Thumb · sans carte"
         : QString("Simulation partielle · ELF direct, sans ROM · cœur sélectionné : %1\n%2")
@@ -622,7 +628,7 @@ void MainWindow::refreshRegisters() {
             const uint32_t value = r < 16 ? cpu.r[r] : extras[r - 16];
             cell(widget, static_cast<int>(r), 0, r < 16 ? q(registerName(r)) : names[r - 16]);
             cell(widget, static_cast<int>(r), column, debugger_->registerAvailable(c, r) ? hx(value) : QString("—"));
-            widget->item(static_cast<int>(r), column)->setForeground(previousValid_ && value != previous_[c][r] ? QColor("#ffd780") : QColor("#dce6f0"));
+            widget->item(static_cast<int>(r), column)->setForeground(previousValid_ && value != previous_[c][r] ? picoThemeColor("#ffd780") : picoThemeColor("#dce6f0"));
             previous_[c][r] = value;
         }
         flags_[c]->setText(!debugger_->loaded() ? QString("Cœur %1 · pas d'image").arg(c) : QString("Cœur %1 · %2 · %4 instructions\n%3").arg(c)
@@ -760,7 +766,7 @@ void MainWindow::closeInspections() {
 void MainWindow::openPeripheralExplorer() {
     if (!explorer_) {
         explorer_ = new PeripheralExplorer(*debugger_, selected_, this);
-        explorer_->setPalette(palette());
+        applyPicoTheme(*explorer_);
         explorer_->refreshRequested = [this] { refreshPeripherals(); };
         explorer_->injectUart = [this](unsigned uart, const std::string& bytes) {
             setRunning(false); debugger_->pause();

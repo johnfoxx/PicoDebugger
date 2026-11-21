@@ -2,11 +2,18 @@
 
 **PicoDebugger, ou PicoDbg, associe un IDE C et un débogueur graphique pour Raspberry Pi Pico, Pico W (RP2040), Pico 2 et Pico 2 W (RP2350 ARM).** Le débogueur propose une **émulation locale partielle** et une **connexion à une vraie carte par SWD**, avec la Raspberry Pi Debug Probe, OpenOCD et GDB.
 
-**Nouveautés de la v0.8.0.** L'IDE s'ouvre en premier et lance le débogage à l'arrêt. Il affiche le C et l'assembleur côte à côte, avec une flèche sur la ligne du PC et des couleurs distinctes pour l'exécution et la sélection. Cette version ajoute aussi le panneau Git, l'installation locale des outils, un moniteur UART pour la Debug Probe et des exemples commentés en français. [Changelog de la v0.8.0](docs/RELEASES.md#v0-8-0)
-
 Le moteur est écrit en **C++11**, indépendant de Qt, et l'interface utilise **Qt Widgets**. Compiler le firmware en ELF32 ARM avant de l'ouvrir. Le mode réel utilise des processus GDB et OpenOCD externes.
 
 **L'émulation reste partielle sur les quatre cartes.** Elle ne reproduit pas tout le silicium et ne garantit pas l'exécution d'un firmware Pico SDK arbitraire. **En mode réel, le firmware s'exécute sur le matériel**, avec ses véritables CPU et périphériques ; les limites portent alors sur les accès de débogage et les vues disponibles. Le catalogue de registres reste incomplet, certains accès sont protégés et les composants externes ne sont pas tous accessibles par SWD. L'intégration matérielle est testée avec des doubles de protocole ; sa validation avec une sonde et une carte physique reste à réaliser.
+
+## Nouveautés de la v0.9.0
+
+- **Recherche et édition en lot.** Rechercher en texte simple ou par regex avec surlignage et navigation. Remplacer ou insérer du texte dans le projet avec aperçu par fichier, annulation par onglet et enregistrement explicite. [Recherche et opérations globales](docs/IDE.md#rechercher-et-modifier-du-texte)
+- **TODO et Doxygen.** Filtrer les tâches quelle que soit la casse des marqueurs. Rechercher les balises Doxygen et générer la documentation avec l'exécutable installé. [Documentation dans l'IDE](docs/IDE.md#documenter-le-code-avec-doxygen)
+- **Thème clair.** Choisir **Vues → Thème** dans l'IDE ou le débogueur. La préférence s'applique aux deux fenêtres et est conservée entre les lancements.
+- **Pico 2 et Pico 2 W sans SDK.** L'assistant distingue les environnements avec le Pico SDK et bare metal. Le modèle RP2350 inclut un en-tête commenté pour les registres. Le guide en français accompagne un exemple de LED externe, compilable pour la SRAM et la Flash. [Guide et exemple bare metal](docs/Guide_Pico_2_W_Bare_Metal_RP2350.md)
+
+[Changelog détaillé depuis la v0.8.0](docs/RELEASES.md#v0-9-0)
 
 ## Commencer
 
@@ -48,7 +55,7 @@ cmake -S . -B build-qt6 -DPICODBG_GUI=ON -DPICODBG_QT_MAJOR=6
 cmake --build build-qt6 -j2
 ```
 
-La v0.8.0 a été testée sous Linux avec **Qt 5.15.15**. Les 21 tests de la configuration Qt et les 13 tests du moteur seul passent. Les tests LSP et SWD utilisent des processus simulés. Le moniteur UART a été vérifié via un pseudo-terminal. La validation sur carte physique, avec Qt6, Qt Serial Port, clangd réel et le Pico SDK reste à faire. `-DPICODBG_GUI=OFF` permet de compiler le moteur et ses tests sans Qt.
+La v0.9.0 a été testée sous Linux avec **Qt 5.15.15**. Les 21 tests de la configuration Qt et les 13 tests du moteur seul passent. Les échanges avec clangd, les outils SWD et Doxygen sont vérifiés avec des processus simulés. Le moniteur UART est vérifié via un pseudo-terminal. La validation sur carte physique, avec Qt6, Qt Serial Port, clangd et Doxygen réels ainsi que le Pico SDK reste à faire. `-DPICODBG_GUI=OFF` permet de compiler le moteur et ses tests sans Qt.
 
 Ouvrir directement un projet ou le débogueur :
 
@@ -64,11 +71,15 @@ Le choix de carte est explicite : `--board pico|pico_w|pico2|pico2_w`. L'ancienn
 
 ## Programmer en C dans l'IDE
 
-Sans argument, PicoDebugger ouvre l'IDE. On peut créer, ouvrir et compiler un projet avant d'ouvrir le débogueur. Le bouton **Débogueur**, **Ctrl+F5** et **F5** l'ouvrent à la demande. Dans l'autre sens, **Fichier → Ouvrir l'IDE C** réaffiche la fenêtre de projet. Les deux fenêtres partagent la session. **Projet → Nouveau projet…** propose un exemple C autonome pour l'émulation et le chargement en RAM via SWD, ainsi qu'un modèle Pico SDK.
+Sans argument, PicoDebugger ouvre l'IDE. On peut créer, ouvrir et compiler un projet avant d'ouvrir le débogueur. Le bouton **Débogueur**, **Ctrl+F5** et **F5** l'ouvrent à la demande. Dans l'autre sens, **Fichier → Ouvrir l'IDE C** réaffiche la fenêtre de projet. Les deux fenêtres partagent la session. Dans **Projet → Nouveau projet…**, choisir **Bare metal · sans Pico SDK** pour un démarrage C autonome en RAM, ou **Avec Pico SDK** pour utiliser le SDK installé. Les projets bare metal Pico 2 et Pico 2 W reçoivent `include/rp2350_regs.h`. [Guide bare metal et en-tête RP2350](docs/Guide_Pico_2_W_Bare_Metal_RP2350.md#utiliser-len-tête-rp2350-sans-sdk)
 
 Les deux modèles expliquent la compilation et le firmware dans leurs sources. Le modèle autonome commente aussi la toolchain, le script de lien SRAM, les vecteurs, la copie de `.data` et l'effacement de `.bss`. Les démos sans compilateur ARM documentent les instructions Thumb au niveau des opcodes. [Lire les exemples générés](docs/IDE.md#premier-projet)
 
 L'IDE réunit les fichiers du projet, les onglets d'édition, la coloration C et les diagnostics cliquables. **Ctrl+Espace** ouvre l'autocomplétion lorsque clangd est disponible. Le panneau **Projet → Git…** gère l'index, les diffs, les commits et le dépôt distant avec le Git installé.
+
+Les languettes **Recherche** et **TODO** se replient à droite de l'éditeur. La recherche accepte le texte simple et les regex, surligne les occurrences et permet de remplacer ou d'insérer du texte dans tout le projet avec aperçu. Le panneau TODO filtre les tâches du projet et ouvre leur ligne de code. [Recherche, opérations globales et TODO](docs/IDE.md#rechercher-et-modifier-du-texte)
+
+Le menu **Documentation** retrouve les balises Doxygen dans les sources et lance la génération avec Doxygen. Les tags de suivi remontent dans le panneau TODO quelle que soit leur casse. **Vues → Thème** bascule entre **Clair** et **Sombre** dans l'IDE et le débogueur. [Documenter le code avec Doxygen](docs/IDE.md#documenter-le-code-avec-doxygen)
 
 **Ctrl+B** compile. Dans l'IDE, **F5** ou **Ctrl+F5** charge l'ELF à l'arrêt en émulation. **Téléverser et déboguer sur la carte…** propose la Flash ou la RAM puis laisse la carte arrêtée. **F10** avance d'une instruction depuis les deux fenêtres. Dans le débogueur, **F5** continue l'exécution. **Maj+F5** met en pause depuis les deux fenêtres.
 

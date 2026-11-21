@@ -18,6 +18,8 @@ enum class Template { Sdk, BareMetal };
 QString createProject(const QString& parent, const QString& name, picodbg::Board board, Template kind);
 QString boardName(picodbg::Board board);
 QString projectBuildDirectory(const QString& root, picodbg::Board board, const Tools& tools);
+bool readProjectText(const QString& path, QByteArray& bytes);
+QString projectText(const QByteArray& bytes);
 
 struct Artifact {
     QString target;

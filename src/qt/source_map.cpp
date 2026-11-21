@@ -1,4 +1,5 @@
 #include "source_map.hpp"
+#include "window_theme.hpp"
 
 #include <QDir>
 #include <QFileInfo>
@@ -31,8 +32,8 @@ QString binutil(const QString& compiler, const QString& name) {
 }
 }
 
-QString executionColor() { return "#234d57"; }
-QString selectionColor() { return "#514070"; }
+QString executionColor() { return picoThemeColor("#234d57").name(); }
+QString selectionColor() { return picoThemeColor("#514070").name(); }
 
 SourceMap::SourceMap(QObject* parent) : QObject(parent) {
     auto environment = QProcessEnvironment::systemEnvironment();

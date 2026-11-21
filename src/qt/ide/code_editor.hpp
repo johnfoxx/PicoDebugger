@@ -1,11 +1,13 @@
 #pragma once
 
 #include "language_service.hpp"
+#include "text_search.hpp"
 #include <QPlainTextEdit>
 #include <vector>
 
 class QCompleter;
 class QStandardItemModel;
+class QSyntaxHighlighter;
 
 namespace picoide {
 
@@ -27,11 +29,15 @@ public:
     void goTo(int line, int column);
     void revealDebugLine(int line);
     void setDebugLines(int executionLine, int selectionLine);
+    QString sourceText() const;
+    void setSearchHighlights(std::vector<TextRange> ranges);
+    void applySearchEdit(const TextEdit& edit);
     std::function<void()> completionRequested;
     int gutterWidth() const;
     void paintGutter(QPaintEvent* event);
 
 protected:
+    void changeEvent(QEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
     bool viewportEvent(QEvent* event) override;
@@ -40,7 +46,9 @@ private:
     QWidget* gutter_;
     QCompleter* completer_;
     QStandardItemModel* suggestions_;
+    QSyntaxHighlighter* highlighter_ = nullptr;
     std::vector<Problem> problems_;
+    std::vector<TextRange> searchHighlights_;
     int executionLine_ = 0;
     int selectionLine_ = 0;
     void updateGutter();

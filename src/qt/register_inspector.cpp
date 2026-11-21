@@ -1,4 +1,5 @@
 #include "register_inspector.hpp"
+#include "window_theme.hpp"
 #include <QHeaderView>
 #include <QLabel>
 #include <QTableWidget>
@@ -54,7 +55,7 @@ void RegisterInspector::setValue(bool available, uint32_t value, const QString& 
         const auto text = available ? QString::number(picodbg::fieldValue(value, field)) : QString("—");
         const bool changed = available && raw->data(Qt::UserRole).toBool() && raw->text() != text;
         raw->setText(text); raw->setData(Qt::UserRole, available);
-        raw->setForeground(QColor(changed ? "#ffd780" : available ? "#dce6f0" : "#e5ac74"));
+        raw->setForeground(picoThemeColor(changed ? "#ffd780" : available ? "#dce6f0" : "#e5ac74"));
         QString meaning = q(field.description);
         if (available && !field.meanings.empty()) meaning += " : " + q(picodbg::fieldMeaning(value, field));
         fields_->item(static_cast<int>(i), 3)->setText(meaning);

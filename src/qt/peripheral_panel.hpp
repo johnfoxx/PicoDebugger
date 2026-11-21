@@ -20,6 +20,8 @@ public:
     std::function<void(const QString&)> selectionChanged;
     std::function<void()> openExplorer;
     QString selectedDevice() const;
+protected:
+    void changeEvent(QEvent* event) override;
 private:
     QString pinnedDevice_;
     const picodbg::DebugTarget* debugger_ = nullptr;
@@ -39,6 +41,7 @@ private:
     QTableWidget* registers_;
     RegisterInspector* inspector_;
     void rebuildCatalog();
+    void refreshCatalogColors();
     void applyFilter();
     void selectDevice();
     void refreshValues();

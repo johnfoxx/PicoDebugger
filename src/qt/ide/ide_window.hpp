@@ -23,6 +23,8 @@ class QTreeView;
 
 namespace picoide {
 
+class TextTools;
+
 class IdeWindow : public QMainWindow {
 public:
     explicit IdeWindow(MainWindow* debugger = nullptr, picodbg::Board board = picodbg::Board::Pico);
@@ -30,7 +32,7 @@ public:
     void prepareElf(const QString& path) { startupElf_ = path; }
     void prepareDemo() { startupDemo_ = true; }
     bool openProject(const QString& directory);
-    bool openSource(const QString& path, bool focus = true);
+    bool openSource(const QString& path, bool focus = true, bool activate = true);
     void debuggerState(bool ready, bool canPause, bool canStep, bool debuggerVisible, bool inspectAssembly,
                        picodbg::Board board, const QString& description);
     void debuggerFeedback(const QString& message, bool error = false);
@@ -67,6 +69,7 @@ private:
     QTreeView* tree_;
     QFileSystemModel* files_;
     QTabWidget* editors_;
+    TextTools* textTools_;
     QSplitter* codeSplit_;
     QWidget* assemblyPane_;
     QTableWidget* assembly_;
@@ -99,6 +102,7 @@ private:
     QAction* trash_;
     QAction* save_;
     QAction* saveAll_;
+    QAction* generateDocs_;
     bool hardwareReady_ = false;
     bool emulationTemplate_ = false;
     picodbg::Board hardwareBoard_ = picodbg::Board::Pico;
@@ -128,6 +132,8 @@ private:
     void trashSource();
     Source* findSource(const QString& path);
     Source* sourceForWidget(QWidget* widget);
+    bool readSearchSource(const QString& path, QString& text);
+    bool applyProjectTextEdits(const std::vector<TextEdit>& edits, QString& error);
     void highlightDebugLines(Source& source);
     void updateAssemblyVisibility();
     void refreshAssembly(const picosource::SourceMap& map, bool hasPc, uint32_t pc);

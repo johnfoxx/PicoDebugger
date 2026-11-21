@@ -2,9 +2,11 @@
 
 Lancer `pico-debugger` ou `pico-debugger /chemin/projet` pour commencer dans l'IDE. Créer, ouvrir et compiler un projet depuis cette fenêtre. Le bouton **Débogueur** ouvre la session à la demande. Pour commencer dans le débogueur, utiliser `pico-debugger --debugger` ou passer directement un ELF. **Fichier → Ouvrir l'IDE C** ou **Ctrl+Maj+E** l'ouvrent dans l'autre sens. Les deux fenêtres peuvent rester côte à côte ou sur deux écrans. Leurs barres d'état indiquent si l'autre fenêtre est reliée ou fermée et si l'émulateur ou la carte est en cours d'exécution.
 
+Dans l'IDE ou le débogueur, choisir **Vues → Thème → Clair** ou **Sombre**. Le changement s'applique immédiatement aux deux fenêtres et aux fenêtres d'inspection ouvertes. Il est conservé entre les lancements.
+
 ## Premier projet
 
-1. Dans **Projet → Nouveau projet…**, choisir un nom, un dossier parent, une carte et un modèle. **C autonome · émulateur et carte** fournit un compteur en C, un démarrage minimal et un script de lien en SRAM. Le même ELF ARM compilé sans SDK se lance dans l'émulateur et sur la carte via SWD en mode RAM. **Projet C avec Pico SDK** utilise le SDK et fait clignoter la LED du profil sélectionné. Sur les cartes W, cet exemple utilise le composant externe CYW43.
+1. Dans **Projet → Nouveau projet…**, choisir un nom, un dossier parent, une carte et un **Environnement**. **Bare metal · sans Pico SDK** fournit un compteur en C, un démarrage minimal et un script de lien en SRAM. Le même ELF ARM se lance dans l'émulateur et sur la carte via SWD en mode RAM. Pour Pico 2 et Pico 2 W, l'assistant copie aussi le fichier commenté `include/rp2350_regs.h`. **Avec Pico SDK** configure CMake pour utiliser le SDK installé et génère un exemple de clignotement. Sur les cartes W, il passe par le composant CYW43. [Guide et exemples RP2350 bare metal](Guide_Pico_2_W_Bare_Metal_RP2350.md)
 2. Modifier `src/main.c` dans l'onglet ouvert. L'arborescence permet d'ouvrir, de renommer ou de mettre à la corbeille les fichiers et de créer des fichiers ou dossiers dans le projet. Un fichier modifié est marqué d'un point dans l'onglet. **Ctrl+S** enregistre le fichier et **Ctrl+Maj+S** enregistre tous les fichiers ouverts. Les modèles ajoutent les fichiers `.c` de `src/` à la compilation. Dans un projet importé, suivre les règles de son CMake.
 3. Ouvrir **Compilation → Outils du projet…** si un outil est introuvable. Les champs vides détectent les exécutables dans le `PATH`, et le SDK à partir de `PICO_SDK_PATH` ou d'un dossier usuel. Chaque chemin peut être réglé manuellement. La même boîte de dialogue présente les liens d'installation.
 4. Utiliser **Configurer CMake** pour découvrir les exécutables et produire la base d'options du compilateur. **Ctrl+B** enregistre les sources, configure puis compile. La sortie est visible pendant le travail et la compilation peut être annulée. Choisir **Toutes les cibles** ou un exécutable CMake dans la barre d'outils.
@@ -15,11 +17,43 @@ Les fichiers générés sont commentés en français. Pour suivre le démarrage 
 
 ## Écrire et contrôler le C
 
-L'éditeur affiche les numéros de ligne, colore la syntaxe et reprend l'indentation. Il ouvre les fichiers texte UTF-8 du projet, dont les en-têtes et les scripts CMake. Les commandes **Annuler**, **Rétablir** et **Rechercher** s'appliquent à l'onglet courant.
+L'éditeur affiche les numéros de ligne, colore la syntaxe et reprend l'indentation. Il ouvre les fichiers texte UTF-8 du projet, dont les en-têtes et les scripts CMake. Les commandes **Annuler** et **Rétablir** s'appliquent à l'onglet courant.
 
 Lorsque clangd tourne, les diagnostics apparaissent pendant la saisie et **Ctrl+Espace** affiche les suggestions au curseur. Pour résoudre les inclusions et macros du projet, configurer ou compiler au moins une fois afin que CMake produise `compile_commands.json`. Le programme déclare précisément le chemin du compilateur ARM autorisé pour l'interrogation des en-têtes système. Les modèles fournissent une configuration `.clang-tidy` avec des contrôles d'analyse statique et d'erreurs fréquentes. Les projets importés utilisent leurs propres réglages clangd et clang-tidy.
 
 L'onglet **Problèmes** rassemble les diagnostics de clangd et les messages du compilateur localisés dans les fichiers du projet. Double-cliquer sur une ligne pour atteindre la source. La sortie complète de CMake et du compilateur reste dans **Compilation**. L'analyse statique couvre certaines classes d'erreurs et les tests du firmware restent nécessaires pour valider son comportement. Sans clangd, l'éditeur conserve la coloration et les diagnostics de compilation.
+
+### Rechercher et modifier du texte
+
+Ouvrir la languette **Recherche** à droite de l'éditeur. **Ctrl+F** recherche dans le fichier actif, **Ctrl+H** ouvre le champ de remplacement. **Ctrl+Maj+F** et **Ctrl+Maj+H** font de même sur tout le projet. Les occurrences sont surlignées dans l'éditeur. **F3** et **Maj+F3** parcourent les résultats dans les deux sens. Dans la liste du projet, double-cliquer sur un résultat ouvre le fichier à la ligne correspondante.
+
+Le motif est pris au sens littéral par défaut. Cocher **Regex** pour utiliser une expression régulière. Cocher **Casse** pour distinguer les majuscules des minuscules. Par exemple, rechercher `\bGPIO_(\d+)\b` et remplacer par `PIN_$1` transforme `GPIO_25` en `PIN_25`. Dans le texte de remplacement, `$1` ou `\1` insère le premier groupe capturé et `${nom}` insère un groupe nommé. `$$` insère un dollar et `\n` insère un saut de ligne. Qt fournit le moteur d'expressions régulières.
+
+Choisir une opération pour remplacer le motif, insérer du texte avant ou après chaque occurrence, ou ajouter du texte au début ou à la fin des fichiers. Pour ces deux dernières opérations, on peut laisser le motif vide. Dans le fichier actif, on peut modifier une occurrence ou toutes les occurrences d'un coup. Pour le projet, ouvrir **Aperçu…**, examiner les extraits **Avant** et **Après**, puis cocher les fichiers à modifier. Une fois l'opération appliquée, **Ctrl+Z** annule les changements dans l'onglet courant et **Ctrl+Maj+S** enregistre les changements sur disque.
+
+Les outils du projet parcourent les fichiers texte UTF-8 jusqu'à 2 Mio, y compris les onglets avec des modifications en attente. Les chemins `.git` et `.picodbg`, les liens symboliques et les dossiers de compilation contenant un cache CMake sont écartés. Si un fichier a changé sur disque depuis l'aperçu, actualiser celui-ci avant de réappliquer. Pour un fichier déjà ouvert dont le contenu a changé sur disque, rouvrir le fichier après avoir traité les modifications en attente.
+
+### Retrouver les tâches TODO
+
+La languette **TODO** ou **Ctrl+Maj+T** ouvre le panneau de tâches intégré. Par exemple, `// todo Vérifier le débit UART` et `/* FIXME Gérer le débordement */` apparaissent dans la liste. Les marqueurs `TODO`, `FIXME`, `HACK`, `XXX` et `BUG` sont reconnus quelle que soit leur casse. Les cases Markdown non cochées apparaissent aussi. Filtrer par marqueur et par texte ou nom de fichier, puis double-cliquer sur une ligne pour rejoindre la source. **Actualiser** relance la lecture du projet après des changements externes.
+
+### Documenter le code avec Doxygen
+
+Dans un commentaire de documentation C ou C++, commencer par `/**`, `/*!`, `///` ou `//!`. Écrire les commandes Doxygen en minuscules avec le préfixe `@` ou `\`. L'éditeur les colore. Les commandes de suivi `todo`, `bug`, `test` et `deprecated` alimentent le panneau TODO, y compris leurs formes `xrefitem` avec les clés intégrées. Les catégories du panneau restent insensibles à la casse.
+
+```c
+/**
+ * @brief Calcule la période d'échantillonnage.
+ * @param[in] frequency_hz Fréquence en hertz, strictement positive.
+ * @return Période en microsecondes.
+ * @todo Vérifier l'arrondi pour les fréquences élevées.
+ */
+unsigned period_us(unsigned frequency_hz);
+```
+
+**Documentation → Rechercher les balises Doxygen…** ouvre le mode **Toutes les balises Doxygen** du panneau TODO. Ce mode indexe les commandes dans les commentaires de documentation C/C++ et les fichiers Markdown et `.dox`, y compris les noms d'alias personnalisés. On peut chercher par commande, par fichier ou par texte et ouvrir la ligne d'origine. Le repérage fonctionne sans Doxygen installé. Doxygen interprète la syntaxe, les alias, les inclusions et les références lors de la génération. [Commentaires de documentation](https://www.doxygen.nl/manual/docblocks.html) · [Commandes Doxygen](https://www.doxygen.nl/manual/commands.html)
+
+**Documentation → Générer avec Doxygen…** lance l'exécutable `doxygen` trouvé dans le `PATH`. Le bouton **Générer** enregistre les fichiers modifiés, puis affiche la sortie et les avertissements de Doxygen. Si le projet contient `Doxyfile` ou `docs/Doxyfile`, sa configuration détermine les sorties. Sans configuration, **Ouvrir le HTML** ouvre le rapport généré dans `.picodbg/doxygen/html/`. [Installation de Doxygen](https://www.doxygen.nl/download.html) · [Utilisation et mise à jour d'un Doxyfile](https://www.doxygen.nl/manual/doxygen_usage.html)
 
 ## Lancer le firmware
 
@@ -66,6 +100,7 @@ Le catalogue fourni couvre Linux x86-64 et Linux AArch64 pour les paquets Arm et
 | Composant | Rôle et mise à jour |
 |---|---|
 | Qt Widgets 5.15 ou 6 | Interface, éditeur `QPlainTextEdit`, coloration via `QSyntaxHighlighter`, modèle de fichiers et complétion. Mettre à jour les paquets de développement Qt et reconfigurer PicoDebugger, avec `PICODBG_QT_MAJOR` si nécessaire. [Qt](https://doc.qt.io/) |
+| Doxygen, facultatif | Génération et vérification des commentaires de documentation. Mettre à jour l'exécutable via le gestionnaire de paquets ou l'éditeur. PicoDebugger reprend la version trouvée dans le `PATH` à l'ouverture de la boîte de génération. [Doxygen](https://www.doxygen.nl/download.html) |
 | CMake 3.16 ou supérieur | Configuration, compilation et lecture des cibles et artefacts via la File API codemodel v2. Mettre à jour avec le gestionnaire de paquets ou choisir un nouvel exécutable dans **Outils du projet**. Installer également le constructeur utilisé par le générateur CMake, par exemple Make. [CMake](https://cmake.org/download/) · [File API](https://cmake.org/cmake/help/latest/manual/cmake-file-api.7.html) |
 | Arm GNU Toolchain (`arm-none-eabi-gcc`) | Compilation ARM hors système pour les quatre cartes. Installer ou mettre à niveau la chaîne bare-metal via les paquets de la distribution ou l'éditeur. Renseigner le nouveau compilateur si son emplacement change. [Arm GNU Toolchain](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads) |
 | GNU Binutils (`objdump`, `addr2line`) | Index adresse ↔ ligne C des ELF avec DWARF. PicoDebugger cherche les binaires ARM à côté du compilateur, puis dans le `PATH`. Les mettre à jour avec la chaîne ARM. [GNU Binutils](https://sourceware.org/binutils/docs/binutils.html) |

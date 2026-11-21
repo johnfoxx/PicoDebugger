@@ -12,7 +12,7 @@
 | [4. Construire des pilotes](#18-fiches-périphériques--ce-que-cest-comment-le-démarrer-où-lire-les-registres) | Relier une horloge, un reset, un mux, des registres et un résultat observable |
 | [5. Aborder les fonctions avancées](#20-glossaire) | Retrouver les termes, les contraintes du boot et les références par bloc |
 
-**Matériel et outils de départ.** Une Pico 2 ou 2 W, une LED externe, une résistance de 330 Ω, une masse commune, un câble USB de données et une sonde SWD pour l'exercice SRAM. Sur le PC, installer GNU Make et la chaîne GNU Arm bare metal. `arm-none-eabi-gcc --version` et `arm-none-eabi-readelf --version` doivent répondre. PicoDebugger peut utiliser la Raspberry Pi Debug Probe avec OpenOCD et GDB ARM. [Connexion et dépannage SWD](docs/HARDWARE_DEBUG.md)
+**Matériel et outils de départ.** Une Pico 2 ou 2 W, une LED externe, une résistance de 330 Ω, une masse commune, un câble USB de données et une sonde SWD pour l'exercice SRAM. Sur le PC, installer GNU Make et la chaîne GNU Arm bare metal. `arm-none-eabi-gcc --version` et `arm-none-eabi-readelf --version` doivent répondre. PicoDebugger peut utiliser la Raspberry Pi Debug Probe avec OpenOCD et GDB ARM. [Connexion et dépannage SWD](HARDWARE_DEBUG.md)
 
 **État de validation.** Les deux ELF de l'exemple sont compilés et inspectés avec la chaîne GNU Arm. Les fiches donnent des fragments C annotés et leurs préconditions. La conversion UF2, le montage physique, les pilotes avancés, le boot Flash et la radio demandent une validation complémentaire. Les définitions de registres du fabricant servent de référence, sans dépendance au Pico SDK dans le firmware.
 
@@ -108,10 +108,10 @@ En C, `uintptr_t` est un type entier capable de stocker une adresse. Le cast en 
 #define BIT(n)         (1u << (n))
 
 // Exemple d'accès direct : lecture du numéro de cœur
-#define RP2350_SIO_BASE 0xD0000000u
+#define SIO_BASE_EXEMPLE 0xD0000000u
 static inline uint32_t numero_coeur(void)
 {
-    return REG32(RP2350_SIO_BASE + 0x000u); // 0 sur le premier cœur.
+    return REG32(SIO_BASE_EXEMPLE + 0x000u); // 0 sur le premier cœur.
 }
 ```
 
@@ -121,6 +121,30 @@ static inline uint32_t numero_coeur(void)
 - **Alias APB atomiques RP2350** (si documentés pour le registre) : base `+0x1000` XOR, `+0x2000` SET, `+0x3000` CLR. **Ne pas appliquer aveuglément** aux registres avec sémantique spéciale ni à toute région AHB/SIO.
 - `volatile` empêche certaines optimisations d'accès mémoire, **mais n'est ni un verrou de concurrence ni une barrière mémoire universelle**. Les périphériques asynchrones, DMA et caches nécessitent parfois `DMB`/`DSB`/`ISB` et une stratégie de cohérence.
 - Les champs réservés doivent rester à leur valeur prescrite. Éviter les écritures pleine largeur improvisées si le registre contient plusieurs champs.
+
+### Utiliser l'en-tête RP2350 sans SDK
+
+Dans l'IDE, choisir **Projet → Nouveau projet…**, la carte **Pico 2** ou **Pico 2 W**, puis l'environnement **Bare metal · sans Pico SDK**. Le fichier arrive dans `include/`, que le CMake du projet ajoute au chemin d'inclusion. Pour un projet existant, copier le même en-tête dans son dossier d'inclusion. Il dépend uniquement de `stdint.h`. [En-tête commenté](../examples/pico2-bare-metal/include/rp2350_regs.h)
+
+Les noms des registres donnent des **adresses**. `RP2350_RO32` les lit et une affectation à `RP2350_REG32` y écrit. `RP2350_BIT`, `RP2350_FIELD_GET` et `RP2350_FIELD_PREP` manipulent des valeurs. Les alias `RP2350_ALIAS_SET/CLR/XOR` calculent une autre adresse. Les employer sur un registre qui les documente, comme `RESETS.RESET`. SIO fournit ses propres registres SET/CLR/XOR. Pour acquitter un statut W1C, écrire son masque directement au registre.
+
+```c
+#include "rp2350_regs.h"
+
+static inline uint32_t revision_du_rp2350(void)
+{
+    const uint32_t identifiant = RP2350_RO32(RP2350_SYSINFO_CHIP_ID);
+    return RP2350_SYSINFO_CHIP_REV(identifiant);
+}
+
+/* À appeler après la configuration de GP15 comme sortie SIO. */
+static inline void led_externe_allumer(void)
+{
+    RP2350_REG32(RP2350_SIO_GPIO_OUT_SET) = RP2350_BIT(15u);
+}
+```
+
+Les deux cartes ont la même carte mémoire RP2350A. `PICO2_LED_GPIO` désigne la GPIO25 de la **Pico 2**. `PICO2_W_LED_CYW43_GPIO` désigne une sortie du composant radio sur la **Pico 2 W**. Utiliser le pilote radio pour cette LED. Une LED externe sur GP15 suit le même code pour les deux profils. Vérifier l'horloge, la sortie de reset et le mux avant l'accès au périphérique.
 
 ## 4. Ton premier programme : LED externe sur GP15, en RAM
 
@@ -164,7 +188,7 @@ static inline void gpio15_exemple(void)
 
 ### Exemple prêt à compiler
 
-Depuis la racine de PicoDebugger, compiler le projet [pico2-bare-metal](examples/pico2-bare-metal/Makefile). `main.c` contient l'application et le démarrage C. `sram.ld` décrit le placement. L'ELF conserve les lignes C et les deux témoins `temoin_data` et `etape`.
+Depuis la racine de PicoDebugger, compiler le projet [pico2-bare-metal](../examples/pico2-bare-metal/Makefile). `main.c` contient l'application et le démarrage C. `sram.ld` décrit le placement. L'ELF conserve les lignes C et les deux témoins `temoin_data` et `etape`.
 
 ```sh
 make -C examples/pico2-bare-metal
@@ -174,7 +198,7 @@ arm-none-eabi-objdump -d -S examples/pico2-bare-metal/build/blink_sram.elf
 
 1. Hors tension, repérer **GP15, broche physique 20**, et **GND**, par exemple broche 18. Relier GP15 à l'anode de la LED via la résistance. La cathode va à GND. Le numéro GP désigne un signal du microcontrôleur. Le numéro de broche désigne sa position sur le connecteur. [Brochage officiel des Pico W](https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html#wireless-board-layout)
 2. Brancher la Debug Probe au PC et sa sortie **D** au connecteur SWD de la carte. Alimenter la carte par son USB. Dans PicoDebugger, sélectionner la variante de Pico 2, passer en **Carte réelle · SWD** et connecter la sonde.
-3. Ouvrir `blink_sram.elf`. En mode matériel, cette action charge les symboles pour le débogueur. Sélectionner ensuite **Cible → Téléverser l'ELF sur la carte… → RAM** pour écrire les segments `PT_LOAD` en SRAM et préparer l'entrée Cortex-M33. Une coupure efface la SRAM. Après un reset, téléverser de nouveau pour relancer cet ELF en SRAM. [Téléversement ELF en RAM](docs/HARDWARE_DEBUG.md)
+3. Ouvrir `blink_sram.elf`. En mode matériel, cette action charge les symboles pour le débogueur. Sélectionner ensuite **Cible → Téléverser l'ELF sur la carte… → RAM** pour écrire les segments `PT_LOAD` en SRAM et préparer l'entrée Cortex-M33. Une coupure efface la SRAM. Après un reset, téléverser de nouveau pour relancer cet ELF en SRAM. [Téléversement ELF en RAM](HARDWARE_DEBUG.md)
 4. À l'arrêt initial, examiner les deux premiers mots de `0x20000000`. Le premier donne l'adresse initiale de pile, ici `0x20040000`. Le second désigne `Reset_Handler` et porte le bit Thumb. GDB affiche généralement le PC sans ce bit. Poser un point d'arrêt à `main`, puis continuer.
 5. À `main`, `temoin_data == 0x2350` et `etape == 0`. Continuer pour voir la LED clignoter, ou avancer jusqu'à une écriture de `etape`. `1` correspond à la sortie haute, `2` à la sortie basse et `0xff` à l'expiration de l'attente de `RESET_DONE`. Le délai visuel est une boucle approximative. Le [timer matériel](#8-timer-système--lindispensable-pour-le-scheduler) donne ensuite une durée mesurable.
 
@@ -206,7 +230,7 @@ Alimentation ou reset
 
 **Différence avec le RP2040.** La ROM du RP2350 utilise le format **PICOBIN** et un bloc **IMAGE_DEF** pour identifier le type d'image. Le bloc de notre exemple suit immédiatement les vecteurs, dans les 4 premiers Kio. Le script de lien vérifie la position. Un ancien `boot2` de RP2040 ou la conversion brute d'un ELF lié en SRAM ne construit pas cette disposition. Une puce configurée pour un démarrage authentifié impose en plus sa propre politique. [Documentation de la ROM](https://datasheets.raspberrypi.com/rp2350/rp2350-datasheet.pdf) · [Champs PICOBIN](https://github.com/raspberrypi/pico-sdk/blob/2.2.0/src/common/boot_picobin_headers/include/boot/picobin.h)
 
-**Compiler le même clignotement en Flash.** La cible `flash` ajoute [image_def.c](examples/pico2-bare-metal/image_def.c) et sélectionne [flash.ld](examples/pico2-bare-metal/flash.ld). La VMA (*Virtual Memory Address*) est l'adresse utilisée par le code. La LMA (*Load Memory Address*) indique d'où viennent les octets initiaux. Ici, le code et la table des vecteurs sont dans la fenêtre Flash XIP. Les variables de `.data` ont une VMA SRAM et une LMA Flash. Le startup copie leurs octets au démarrage, puis initialise `.bss` en SRAM.
+**Compiler le même clignotement en Flash.** La cible `flash` ajoute [image_def.c](../examples/pico2-bare-metal/image_def.c) et sélectionne [flash.ld](../examples/pico2-bare-metal/flash.ld). La VMA (*Virtual Memory Address*) est l'adresse utilisée par le code. La LMA (*Load Memory Address*) indique d'où viennent les octets initiaux. Ici, le code et la table des vecteurs sont dans la fenêtre Flash XIP. Les variables de `.data` ont une VMA SRAM et une LMA Flash. Le startup copie leurs octets au démarrage, puis initialise `.bss` en SRAM.
 
 ```sh
 make -C examples/pico2-bare-metal flash
@@ -820,7 +844,7 @@ static inline int uart0_envoyer_a(void)
 }
 ```
 
-**Résultat.** Le moniteur unique du port U affiche `A`. Une FIFO est une file matérielle premier entré, premier sorti. Pour arrêter l'horloge ou changer de broche, attendre `BUSY=0` afin que le dernier bit sorte effectivement. Pour recevoir, lire DR une seule fois par octet après `RXFE=0`. Pour les IRQ, UART0 est la ligne 33, donc banque NVIC 1, bit 1. [Registres UART](https://raw.githubusercontent.com/raspberrypi/pico-sdk/2.2.0/src/rp2350/hardware_regs/include/hardware/regs/uart.h) · [Moniteur série](docs/HARDWARE_DEBUG.md#lire-les-traces-uart)
+**Résultat.** Le moniteur unique du port U affiche `A`. Une FIFO est une file matérielle premier entré, premier sorti. Pour arrêter l'horloge ou changer de broche, attendre `BUSY=0` afin que le dernier bit sorte effectivement. Pour recevoir, lire DR une seule fois par octet après `RXFE=0`. Pour les IRQ, UART0 est la ligne 33, donc banque NVIC 1, bit 1. [Registres UART](https://raw.githubusercontent.com/raspberrypi/pico-sdk/2.2.0/src/rp2350/hardware_regs/include/hardware/regs/uart.h) · [Moniteur série](HARDWARE_DEBUG.md#lire-les-traces-uart)
 
 ### 18.4 PWM, ADC et signaux mesurables
 

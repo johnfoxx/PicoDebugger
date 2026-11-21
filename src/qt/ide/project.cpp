@@ -155,6 +155,25 @@ QString boardName(picodbg::Board board) {
     return QString::fromStdString(picodbg::describeBoard(board).id);
 }
 
+bool readProjectText(const QString& path, QByteArray& bytes) {
+    constexpr qint64 sizeLimit = 2 * 1024 * 1024;
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly) || file.size() > sizeLimit) return false;
+    bytes = file.read(sizeLimit + 1);
+    return bytes.size() <= sizeLimit && file.error() == QFileDevice::NoError && !bytes.contains('\0') &&
+           QString::fromUtf8(bytes).toUtf8() == (bytes.startsWith("\xef\xbb\xbf") ? bytes.mid(3) : bytes);
+}
+
+QString projectText(const QByteArray& bytes) {
+    auto text = QString::fromUtf8(bytes);
+    // Match the editor's paragraph representation for unopened files.
+    text.replace("\r\n", "\n");
+    text.replace('\r', '\n');
+    text.replace(QChar(0x2028), '\n');
+    text.replace(QChar(0x2029), '\n');
+    return text;
+}
+
 QString projectBuildDirectory(const QString& root, picodbg::Board board, const Tools& tools) {
     QByteArray identity;
     for (const auto& path : {tools.cmake, tools.gcc, tools.sdk, tools.ninja, tools.picotool, tools.pioasm}) {
@@ -188,6 +207,8 @@ QString createProject(const QString& parent, const QString& name, picodbg::Board
         for (const auto& path : {"cmake/arm-none-eabi.cmake", "startup/ram.ld", "startup/startup.c",
                                  "startup/memory_init.h", "startup/memory_init.c"})
             copyTemplate(destination, prefix + path);
+        if (picodbg::describeBoard(board).chip == picodbg::Chip::RP2350)
+            copyTemplate(destination, prefix + "include/rp2350_regs.h");
     }
     copyTemplate(tree, ".gitignore");
     copyTemplate(tree, ".clang-tidy");

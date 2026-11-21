@@ -1,16 +1,7 @@
-#include <stdint.h>
-
-#define BIT(n)  (UINT32_C(1) << (n))
-#define MMIO(a) (*(volatile uint32_t *)(uintptr_t)(a))
-
-#define RESETS     UINT32_C(0x40020000)
-#define IO_BANK0   UINT32_C(0x40028000)
-#define PADS_BANK0 UINT32_C(0x40038000)
-#define SIO        UINT32_C(0xd0000000)
-#define VTOR       MMIO(0xe000ed08u)
+#include "rp2350_regs.h"
 
 enum { LED_GP = 15 };
-#define LED_MASK BIT(LED_GP)
+#define LED_MASK RP2350_BIT(LED_GP)
 
 /* Ces symboles représentent les adresses choisies par sram.ld. */
 extern uint32_t __stack_top, __data_start, __data_end, __data_load;
@@ -34,7 +25,7 @@ const struct {
     uint32_t *msp;
     handler_t reset;
     handler_t exceptions[14];
-    handler_t irq[52];
+    handler_t irq[RP2350_IRQ_SLOTS];
 } vectors = {&__stack_top, Reset_Handler, {D8, D4, D2}, {D32, D16, D4}};
 
 /* Deux témoins en mémoire. Poser un breakpoint dans main puis les inspecter. */
@@ -49,19 +40,19 @@ void Default_Handler(void)
 
 void Reset_Handler(void)
 {
-    /* La sonde a placé MSP et PC. Ce premier exercice n'utilise aucune IRQ. */
+    /* La sonde ou la Boot ROM a préparé MSP et PC. Masquer les IRQ du test. */
     __asm__ volatile ("cpsid i" ::: "memory");
-    VTOR = (uint32_t)(uintptr_t)&vectors;
+    RP2350_REG32(RP2350_SCB_VTOR) = (uint32_t)(uintptr_t)&vectors;
     __asm__ volatile ("dsb sy\n\tisb sy" ::: "memory");
 
     /* En SRAM, la source de .data peut être la destination elle-même. */
     uintptr_t src = (uintptr_t)&__data_load;
     for (uintptr_t dst = (uintptr_t)&__data_start; dst < (uintptr_t)&__data_end; dst += 4u) {
-        MMIO(dst) = *(const uint32_t *)src;
+        RP2350_REG32(dst) = *(const uint32_t *)src;
         src += 4u;
     }
     for (uintptr_t dst = (uintptr_t)&__bss_start; dst < (uintptr_t)&__bss_end; dst += 4u) {
-        MMIO(dst) = 0;
+        RP2350_REG32(dst) = 0;
     }
 
     (void)main();
@@ -70,19 +61,19 @@ void Reset_Handler(void)
 
 static int configurer_gp15(void)
 {
-    const uint32_t blocs = BIT(6) | BIT(9); /* IO_BANK0 et PADS_BANK0. */
-    MMIO(RESETS + 0x3000u) = blocs;         /* Alias CLR de RESET. */
+    const uint32_t blocs = RP2350_RESET_IO_BANK0 | RP2350_RESET_PADS_BANK0;
+    RP2350_REG32(RP2350_ALIAS_CLR(RP2350_RESETS_RESET)) = blocs;
     for (uint32_t essais = 1000000; essais != 0; --essais) {
-        if ((MMIO(RESETS + 0x08u) & blocs) == blocs) {
+        if ((RP2350_RO32(RP2350_RESETS_RESET_DONE) & blocs) == blocs) {
             /* Préparer un niveau bas et une sortie désactivée avant le mux. */
-            MMIO(SIO + 0x040u) = LED_MASK; /* GPIO_OE_CLR. */
-            MMIO(SIO + 0x020u) = LED_MASK; /* GPIO_OUT_CLR. */
-            MMIO(IO_BANK0 + 4u + 8u * LED_GP) = 5u; /* FUNCSEL SIO. */
+            RP2350_REG32(RP2350_SIO_GPIO_OE_CLR) = LED_MASK;
+            RP2350_REG32(RP2350_SIO_GPIO_OUT_CLR) = LED_MASK;
+            RP2350_REG32(RP2350_GPIO_CTRL(LED_GP)) = RP2350_FUNC_SIO;
 
             /* Retirer isolation, désactivation de sortie et résistances internes. */
-            MMIO(PADS_BANK0 + 0x3000u + 4u + 4u * LED_GP) =
-                BIT(8) | BIT(7) | BIT(3) | BIT(2);
-            MMIO(SIO + 0x038u) = LED_MASK; /* GPIO_OE_SET. */
+            RP2350_REG32(RP2350_ALIAS_CLR(RP2350_PAD_GPIO(LED_GP))) =
+                RP2350_PAD_ISO | RP2350_PAD_OD | RP2350_PAD_PUE | RP2350_PAD_PDE;
+            RP2350_REG32(RP2350_SIO_GPIO_OE_SET) = LED_MASK;
             return 1;
         }
     }
@@ -103,11 +94,11 @@ int main(void)
     }
 
     for (;;) {
-        MMIO(SIO + 0x018u) = LED_MASK; /* GPIO_OUT_SET. */
+        RP2350_REG32(RP2350_SIO_GPIO_OUT_SET) = LED_MASK;
         etape = 1;
         attendre_visuellement();
 
-        MMIO(SIO + 0x020u) = LED_MASK; /* GPIO_OUT_CLR. */
+        RP2350_REG32(RP2350_SIO_GPIO_OUT_CLR) = LED_MASK;
         etape = 2;
         attendre_visuellement();
     }

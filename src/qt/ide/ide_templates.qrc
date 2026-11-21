@@ -11,5 +11,6 @@
     <file alias="bare-metal/startup/memory_init.h">../../../tests/firmware/boot_blink/startup/memory_init.h</file>
     <file alias="bare-metal/startup/memory_init.c">../../../tests/firmware/boot_blink/startup/memory_init.c</file>
     <file alias="bare-metal/cmake/arm-none-eabi.cmake">../../../tests/firmware/boot_blink/cmake/arm-none-eabi.cmake</file>
+    <file alias="bare-metal/include/rp2350_regs.h">../../../examples/pico2-bare-metal/include/rp2350_regs.h</file>
   </qresource>
 </RCC>
