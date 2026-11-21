@@ -3,6 +3,8 @@
 #include <QAction>
 #include <QApplication>
 #include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QLabel>
@@ -203,6 +205,26 @@ void guiTests(const ProbeOptions& options, const QString& elf) {
     find<QAction>(window, "stepAction")->trigger(); waitUntil([&] { return registers->item(15, 1)->text() == "0x10000202" && run->isEnabled(); });
     run->trigger(); waitUntil([&] { return find<QAction>(window, "pauseAction")->isEnabled(); });
     check(registers->item(0, 1)->text() == "—", "GUI does not show cached CPU state as live");
+    find<QAction>(window, "pauseAction")->trigger(); waitUntil([&] { return run->isEnabled(); });
+    const auto beforeLaunch = commands().size();
+    bool confirmed = false;
+    QTimer::singleShot(0, [&] {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (!dialog) return;
+        auto* buttons = dialog->findChild<QDialogButtonBox*>();
+        if (buttons) {
+            confirmed = true;
+            buttons->button(QDialogButtonBox::Ok)->click();
+        } else dialog->reject();
+    });
+    window.launchProjectElf(elf, Board::Pico, true, true);
+    check(confirmed, "IDE board launch asks for flash or RAM confirmation");
+    waitUntil([&] { return find<QAction>(window, "pauseAction")->isEnabled(); });
+    const auto launch = commands().mid(beforeLaunch);
+    const int symbols = launch.indexOf("-file-exec-and-symbols");
+    const int downloadAt = launch.indexOf("-target-download");
+    const int continueAt = launch.indexOf("-exec-continue");
+    check(symbols >= 0 && symbols < downloadAt && downloadAt < continueAt, "IDE opens, downloads and runs using the existing SWD session");
     find<QAction>(window, "pauseAction")->trigger(); waitUntil([&] { return run->isEnabled(); });
     find<QAction>(window, "emulationModeAction")->trigger();
     waitUntil([&] { return find<QLabel>(window, "targetModeStatus")->text().contains("ÉMULATION"); });

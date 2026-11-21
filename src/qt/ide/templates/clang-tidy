@@ -1,0 +1,1 @@
+Checks: '-*,bugprone-infinite-loop,bugprone-sizeof-expression,bugprone-suspicious-semicolon,clang-analyzer-*'

@@ -1,5 +1,18 @@
 # Versions
 
+<a id="v0-7-0"></a>
+
+## v0.7.0 — 2026-11-21
+
+Changements depuis **v0.6.0** (`60e7b3f`).
+
+- Fenêtre IDE C indépendante. Le menu Fichier du débogueur ouvre l'IDE, qui peut réafficher la même session. L'option `--ide` ouvre directement l'éditeur.
+- Assistant de projet CMake pour les quatre profils Pico. Il fournit un exemple ARM GCC pour l'émulateur ou un projet Pico SDK pour la carte. Les sources et paramètres sont accessibles également dans les projets CMake importés.
+- Arborescence, onglets d'édition, création et renommage de fichiers, corbeille, coloration et indentation. Diagnostics cliquables de compilation et diagnostics, analyse statique et suggestions via clangd/LSP.
+- Configuration et compilation asynchrones. La File API de CMake découvre les cibles et leurs ELF. L'IDE ouvre un ELF ARM à l'arrêt, l'exécute dans l'émulateur ou le téléverse en RAM ou Flash et le lance via la connexion SWD existante.
+- Détection et réglage des outils depuis l'IDE. Le README et le guide `docs/IDE.md` documentent les installateurs officiels et la mise à jour de chaque dépendance.
+- 19 tests Qt5 et 13 tests sans Qt. Création, édition, erreurs du compilateur et lancement des ELF vérifiés avec CMake et ARM GCC sur Pico et Pico 2 en émulation. LSP et SWD vérifiés avec des doubles de processus. Les essais avec clangd réel, le Pico SDK et une carte physique restent à faire.
+
 <a id="v0-6-0"></a>
 
 ## v0.6.0 — 2026-11-21

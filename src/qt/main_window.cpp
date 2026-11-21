@@ -8,6 +8,7 @@
 #include "virtual_time_panel.hpp"
 #include "board_panel.hpp"
 #include "probe_dialog.hpp"
+#include "ide/ide_window.hpp"
 #include <QActionGroup>
 #include <QCloseEvent>
 #include <QDialogButtonBox>
@@ -148,8 +149,14 @@ MainWindow::MainWindow() : debugger_(new Debugger), timer_(new QTimer(this)) {
     log("Prêt. Ouvrir un ELF ARM ou l'exemple. Exécution arrêtée par défaut.");
     log("Simulation partielle : les accès non émulés arrêtent la session. Aucune garantie de compatibilité matérielle.");
 }
+MainWindow::~MainWindow() = default;
+
 void MainWindow::buildUi() {
     auto* file = menuBar()->addMenu("Fichier");
+    auto* ideAction = file->addAction("Ouvrir l'IDE C");
+    ideAction->setObjectName("openIdeAction");
+    ideAction->setShortcut(QKeySequence("Ctrl+Shift+E"));
+    connect(ideAction, &QAction::triggered, this, [this] { showIde(); });
     auto* views = menuBar()->addMenu("Vues"); views->setObjectName("views");
     auto* overview = views->addAction("Rétablir la disposition initiale");
     overview->setObjectName("overviewAction");
@@ -465,16 +472,17 @@ void MainWindow::buildUi() {
     resizeDocks({inspectionDock_}, {245}, Qt::Vertical);
     overviewState_ = saveState();
 }
-void MainWindow::loadFile(const QString& path) {
+bool MainWindow::loadFile(const QString& path) {
     setRunning(false);
     try {
         debugger_->load(path.toStdString()); previousValid_ = false;
-        if (debugger_->hardware()) { log("Chargement des symboles demandé : " + path); refresh(); return; }
+        if (debugger_->hardware()) { log("Chargement des symboles demandé : " + path); refresh(); return true; }
         imagePath_ = QFileInfo(path).absoluteFilePath(); imageName_ = QFileInfo(path).fileName();
         QSettings().setValue("lastDirectory", QFileInfo(path).absolutePath());
         setWindowTitle("PicoDebugger — " + QFileInfo(path).fileName());
         log("ELF chargé : " + path); log(q(debugger_->stop.message)); refresh();
-    } catch (const std::exception& e) { failure(e); }
+        return true;
+    } catch (const std::exception& e) { failure(e); return false; }
 }
 void MainWindow::selectChip(Chip chip) { chip_->setCurrentIndex(chip == Chip::RP2350 ? 1 : 0); }
 void MainWindow::selectBoard(Board board) { chip_->setCurrentIndex(chip_->findData(static_cast<int>(board))); }
@@ -556,6 +564,8 @@ void MainWindow::refresh() {
         hardware->errorText().isEmpty() ? QString("Connectée · arrêtée") : QString("Connectée · arrêtée / erreur");
     QString shortBoard = q(debugger_->board().name); shortBoard.remove("Raspberry Pi ");
     modeStatus_->setText(mode + shortBoard + " · " + shortState); modeStatus_->setToolTip(status);
+    if (ide_) ide_->debuggerState(real && ready && ideLaunchStage_ == IdeLaunchStage::Idle,
+                                debugger_->board().board, modeStatus_->text());
     timeLabel_->setVisible(!real); virtualTimePanel_->setVisible(!real);
     inspectionTabs_->setTabVisible(5, !real);
     findChild<QAction*>("virtualTimeViewAction")->setEnabled(!real);
@@ -847,7 +857,8 @@ void MainWindow::selectHardware(bool hardware) {
     if (hardware) debugger_.reset(new GdbTarget(board)); else debugger_.reset(new Debugger(board));
     running_ = false; previousValid_ = false; lastHardwareRevision_ = 0; fillMapping(); refresh();
     log(hardware ? "Mode carte réelle. Cible → Connecter la sonde ; aucun téléversement automatique." : "Mode émulation, sans connexion matérielle.");
-    if (!hardware && !imagePath_.isEmpty()) loadFile(imagePath_);
+    if (!hardware && ideLaunchStage_ == IdeLaunchStage::Emulation) startIdeEmulation();
+    else if (!hardware && !imagePath_.isEmpty()) loadFile(imagePath_);
 }
 void MainWindow::connectHardware(const ProbeOptions& options) {
     selectHardware(true);
@@ -857,6 +868,8 @@ void MainWindow::connectHardware(const ProbeOptions& options) {
     try { hw->connectProbe(options); refresh(); } catch (const std::exception& e) { pendingSymbols_ = false; failure(e); }
 }
 void MainWindow::configureHardware() {
+    const auto tools = picoide::Tools::detect();
+    if (!tools.gdb.isEmpty()) probeOptions_.gdb = tools.gdb;
     if (!configureProbe(this, probeOptions_)) return;
     connectHardware(probeOptions_);
 }
@@ -867,6 +880,7 @@ void MainWindow::hardwareTick() {
         if (closeAfterDisconnect_) { closeAfterDisconnect_ = false; close(); return; }
         if (switchAfterDisconnect_) { switchAfterDisconnect_ = false; selectHardware(false); return; }
     }
+    if (ideLaunchStage_ != IdeLaunchStage::Idle) updateIdeHardware(*hw);
     if (pendingSymbols_ && hw->loaded() && !hw->busy()) {
         pendingSymbols_ = false;
         try { hw->load(imagePath_.toStdString()); } catch (const std::exception& e) { log("Symboles non chargés : " + q(e.what())); }
@@ -890,21 +904,31 @@ void MainWindow::hardwareTick() {
     }
 }
 void MainWindow::downloadHardware() {
-    auto* hw = dynamic_cast<GdbTarget*>(debugger_.get()); if (!hw) return;
-    QDialog dialog(this); dialog.setWindowTitle("Téléverser sur " + q(hw->board().name)); dialog.setObjectName("downloadElfDialog");
+    QPointer<GdbTarget> hw(dynamic_cast<GdbTarget*>(debugger_.get()));
+    if (!hw) return;
+    bool ram = false;
+    if (!chooseHardwareDownload(hw->elfPath(), hw->board().board, false, ram) || !hw) return;
+    try { hw->download(ram); refresh(); } catch (const std::exception& e) { failure(e); }
+}
+bool MainWindow::chooseHardwareDownload(const QString& path, Board board, bool runAfter, bool& ram) {
+    QDialog dialog(runAfter && ide_ ? static_cast<QWidget*>(ide_.get()) : this);
+    dialog.setWindowTitle("Téléverser sur " + q(describeBoard(board).name)); dialog.setObjectName("downloadElfDialog");
     QVBoxLayout layout(&dialog);
-    QLabel summary("Cette opération écrit la mémoire de la carte et peut remplacer son firmware.\nELF : " + hw->elfPath());
+    QLabel summary("Cette opération écrit la mémoire de la carte et peut remplacer son firmware.\nELF : " + path);
     summary.setTextFormat(Qt::PlainText); summary.setWordWrap(true); layout.addWidget(&summary);
     ChoiceBox startup; startup.setObjectName("downloadStartup");
     startup.addItems({"Flash · reset matériel après chargement", "RAM · démarrage direct depuis les vecteurs ELF"}); layout.addWidget(&startup);
     QLabel detail("Flash : utiliser un ELF amorçable pour la carte (par exemple Pico SDK).\n"
                   "RAM : ELF entièrement en SRAM, avec table de vecteurs SP/PC.\n"
-                  "La cible reste arrêtée après le téléversement ; F5 lance l'exécution."); detail.setWordWrap(true); layout.addWidget(&detail);
+                  + QString(runAfter ? "L'exécution démarre après un téléversement réussi." :
+                                      "Après le téléversement, utiliser F5 pour lancer l'exécution."));
+    detail.setWordWrap(true); layout.addWidget(&detail);
     QDialogButtonBox buttons(QDialogButtonBox::Ok | QDialogButtonBox::Cancel); layout.addWidget(&buttons);
     connect(&buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(&buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    if (dialog.exec() != QDialog::Accepted) return;
-    try { hw->download(startup.currentIndex() == 1); refresh(); } catch (const std::exception& e) { failure(e); }
+    if (dialog.exec() != QDialog::Accepted) return false;
+    ram = startup.currentIndex() == 1;
+    return true;
 }
 void MainWindow::closeEvent(QCloseEvent* event) {
     if (auto* hw = dynamic_cast<GdbTarget*>(debugger_.get())) {
@@ -917,4 +941,121 @@ void MainWindow::closeEvent(QCloseEvent* event) {
         }
     }
     QMainWindow::closeEvent(event);
+}
+
+void MainWindow::showIde() {
+    if (!ide_) ide_.reset(new picoide::IdeWindow(this));
+    refresh();
+    showInspectionWindow(ide_.get());
+}
+
+void MainWindow::finishIdeLaunch(const QString& message, bool error) {
+    ideLaunchStage_ = IdeLaunchStage::Idle;
+    ideElf_.clear();
+    log(message);
+    if (ide_) ide_->debuggerFeedback(message, error);
+    refresh();
+}
+
+void MainWindow::startIdeEmulation() {
+    selectBoard(ideBoard_);
+    const auto image = ideElf_;
+    if (!loadFile(image)) {
+        finishIdeLaunch("Impossible de charger l'ELF dans l'émulateur.", true);
+        return;
+    }
+    if (ideRun_) {
+        if (!runAction_->isEnabled()) {
+            finishIdeLaunch("L'émulateur a chargé l'ELF mais ne peut pas démarrer cette session.", true);
+            return;
+        }
+        runAction_->trigger();
+    }
+    finishIdeLaunch(ideRun_ ? "ELF lancé dans l'émulateur." : "ELF chargé à l'arrêt dans le débogueur.");
+}
+
+void MainWindow::launchProjectElf(const QString& path, Board board, bool hardware, bool run) {
+    if (ideLaunchStage_ != IdeLaunchStage::Idle) {
+        if (ide_) ide_->debuggerFeedback("Un lancement est déjà en cours.", true);
+        return;
+    }
+    QPointer<GdbTarget> target(dynamic_cast<GdbTarget*>(debugger_.get()));
+    if (hardware) {
+        if (!target || !target->loaded() || target->busy() || target->executing() || target->board().board != board) {
+            finishIdeLaunch("Connecter et arrêter la carte correspondant au projet avant de lancer.", true);
+            return;
+        }
+        if (!chooseHardwareDownload(path, board, run, ideRam_)) {
+            finishIdeLaunch("Téléversement annulé.");
+            return;
+        }
+        if (!target || !target->loaded() || target->busy() || target->executing()) {
+            finishIdeLaunch("La carte n'est plus disponible pour le téléversement.", true);
+            return;
+        }
+        ideElf_ = QFileInfo(path).absoluteFilePath();
+        ideLaunchStage_ = IdeLaunchStage::Symbols;
+        ideRun_ = run;
+        pendingSymbols_ = false;
+        try {
+            target->load(ideElf_.toStdString());
+            if (ide_) ide_->debuggerFeedback("Chargement des symboles avant téléversement…");
+            showInspectionWindow(this);
+            refresh();
+        } catch (const std::exception& error) {
+            finishIdeLaunch(q(error.what()), true);
+        }
+        return;
+    }
+    if (target && target->busy()) {
+        finishIdeLaunch("Attendre la fin de l'opération sur la carte avant de démarrer l'émulation.", true);
+        return;
+    }
+    ideElf_ = path;
+    ideBoard_ = board;
+    ideRun_ = run;
+    ideLaunchStage_ = IdeLaunchStage::Emulation;
+    showInspectionWindow(this);
+    if (target) selectHardware(false);
+    else startIdeEmulation();
+}
+
+void MainWindow::updateIdeHardware(GdbTarget& target) {
+    if (target.busy()) return;
+    if (ideLaunchStage_ == IdeLaunchStage::Emulation) {
+        if (target.connected() && !target.errorText().isEmpty()) {
+            switchAfterDisconnect_ = false;
+            finishIdeLaunch("Impossible de déconnecter la carte : " + target.errorText(), true);
+        }
+        return;
+    }
+    if (!target.loaded() || !target.errorText().isEmpty()) {
+        const auto reason = target.errorText().isEmpty() ? QString("Connexion perdue.") : target.errorText();
+        finishIdeLaunch(reason, true);
+        return;
+    }
+    try {
+        switch (ideLaunchStage_) {
+        case IdeLaunchStage::Symbols:
+            if (target.elfPath() != ideElf_) throw Error(ErrorKind::InvalidImage, "Le fichier ELF n'a pas été chargé par GDB.");
+            target.download(ideRam_);
+            ideLaunchStage_ = IdeLaunchStage::Download;
+            if (ide_) ide_->debuggerFeedback("Téléversement sur la carte…");
+            break;
+        case IdeLaunchStage::Download:
+            if (target.terminalStop()) throw Error(ErrorKind::InvalidImage, "Le téléversement n'a pas abouti.");
+            if (ideRun_) {
+                target.run(0);
+                ideLaunchStage_ = IdeLaunchStage::Run;
+            } else finishIdeLaunch("ELF téléversé. Carte arrêtée.");
+            break;
+        case IdeLaunchStage::Run:
+            finishIdeLaunch("ELF lancé sur la carte.");
+            break;
+        default:
+            break;
+        }
+    } catch (const std::exception& error) {
+        finishIdeLaunch(q(error.what()), true);
+    }
 }

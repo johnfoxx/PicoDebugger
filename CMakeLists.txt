@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(PicoDebugger VERSION 0.6.0 LANGUAGES CXX)
+project(PicoDebugger VERSION 0.7.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -45,7 +45,10 @@ if(PICODBG_GUI)
         add_library(picodbg_widgets src/qt/main_window.cpp src/qt/peripheral_panel.cpp src/qt/choice_box.cpp
             src/qt/register_inspector.cpp src/qt/inspection_workspace.cpp src/qt/peripheral_inspection.cpp
             src/qt/gdb_mi.cpp src/qt/gdb_target.cpp src/qt/probe_dialog.cpp
-            src/qt/board_panel.cpp src/qt/uart_terminal.cpp src/qt/peripheral_explorer.cpp src/qt/virtual_time_panel.cpp)
+            src/qt/board_panel.cpp src/qt/uart_terminal.cpp src/qt/peripheral_explorer.cpp src/qt/virtual_time_panel.cpp
+            src/qt/ide/ide_window.cpp src/qt/ide/project.cpp src/qt/ide/language_service.cpp
+            src/qt/ide/code_editor.cpp src/qt/ide/ide_templates.qrc)
+        set_target_properties(picodbg_widgets PROPERTIES AUTORCC ON)
         target_include_directories(picodbg_widgets PUBLIC src/qt)
         target_link_libraries(picodbg_widgets PUBLIC picodbg_core Qt${QT_VERSION_MAJOR}::Widgets)
         if(QT_VERSION_MAJOR EQUAL 6)
@@ -105,6 +108,10 @@ if(BUILD_TESTING)
             add_test(NAME probe_protocol_and_gui COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_probe_tests.py $<TARGET_FILE:picodbg_probe_tests>)
             set_tests_properties(probe_protocol_and_gui PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+            add_executable(picodbg_ide_tests tests/test_ide.cpp)
+            target_link_libraries(picodbg_ide_tests PRIVATE picodbg_widgets)
+            add_test(NAME qt_ide COMMAND picodbg_ide_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/fake_clangd.py)
+            set_tests_properties(qt_ide PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 45)
         endif()
         if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND QT_VERSION_MAJOR EQUAL 5)
             add_executable(picodbg_popup_tests tests/test_popup_activation.cpp)

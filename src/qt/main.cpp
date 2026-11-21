@@ -17,9 +17,10 @@ int main(int argc, char** argv) {
     QApplication::setApplicationVersion(PICODBG_VERSION);
     QApplication::setStyle(QStyleFactory::create("Fusion"));
     QCommandLineParser parser;
-    parser.setApplicationDescription("Débogueur ARM/Thumb hors ligne — émulation partielle");
+    parser.setApplicationDescription("IDE C et débogueur ARM/Thumb pour Raspberry Pi Pico");
     parser.addHelpOption(); parser.addVersionOption();
     parser.addOption({"demo", "Ouvrir l'exemple intégré à l'arrêt"});
+    parser.addOption({"ide", "Afficher la fenêtre IDE au démarrage"});
     parser.addOption({"chip", "Profil matériel : rp2040 ou rp2350", "chip", "rp2040"});
     parser.addOption({"board", "Carte : pico, pico_w, pico2 ou pico2_w (exclusif avec --chip)", "board"});
     parser.addOption({"smoke-test", "Fermer automatiquement après initialisation (validation de la GUI)"});
@@ -35,7 +36,8 @@ int main(int argc, char** argv) {
     window.selectBoard(board);
     if (parser.isSet("demo")) window.loadDemo();
     else if (!parser.positionalArguments().isEmpty()) window.loadFile(parser.positionalArguments().first());
-    if (parser.isSet("smoke-test")) window.show();
+    if (parser.isSet("ide")) window.showIde();
+    else if (parser.isSet("smoke-test")) window.show();
     else window.showMaximized();
     if (parser.isSet("smoke-test")) QTimer::singleShot(100, &app, &QCoreApplication::quit);
     return app.exec();

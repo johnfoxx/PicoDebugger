@@ -1,6 +1,8 @@
 # PicoDebugger
 
-**PicoDebugger, ou PicoDbg, est un débogueur graphique pour Raspberry Pi Pico, Pico W (RP2040), Pico 2 et Pico 2 W (RP2350 ARM).** Il propose deux modes dans la même interface : une **émulation locale partielle**, sans matériel, et une **connexion à une vraie carte par SWD**, avec la Raspberry Pi Debug Probe, OpenOCD et GDB.
+**PicoDebugger, ou PicoDbg, associe un IDE C et un débogueur graphique pour Raspberry Pi Pico, Pico W (RP2040), Pico 2 et Pico 2 W (RP2350 ARM).** Le débogueur propose une **émulation locale partielle** et une **connexion à une vraie carte par SWD**, avec la Raspberry Pi Debug Probe, OpenOCD et GDB.
+
+**Depuis la v0.7.0**, l'IDE ouvre et crée des projets CMake, édite les sources C avec les diagnostics de clangd et lance les ELF dans le débogueur ou sur la carte connectée. [Notes de version](docs/RELEASES.md#v0-7-0)
 
 **Nouveautés de la v0.6.0.** Un ELF compatible peut servir à un essai en émulation, puis au chargement des symboles et au téléversement dans la RAM ou la Flash de la carte. Le menu **Cible** donne accès à la sonde, au transfert et au rafraîchissement de l'état matériel. La v0.6.0 retire l'exécutable autonome `pico-debugger-cli`. La console d'expressions reste accessible dans l'application Qt. [Changelog de la v0.6.0](docs/RELEASES.md#v0-6-0)
 
@@ -11,6 +13,7 @@ Le moteur est écrit en **C++11**, indépendant de Qt, et l'interface utilise **
 ## Commencer
 
 - [Installation et lancement](#installation-et-lancement)
+- [Programmer en C dans l'IDE](#programmer-en-c-dans-lide)
 - [Synthèse du projet et contexte de reprise](SYNTHESE.md)
 - [Déboguer une vraie carte](#déboguer-une-vraie-carte)
 - [Guide de connexion et dépannage SWD](docs/HARDWARE_DEBUG.md)
@@ -47,7 +50,7 @@ cmake -S . -B build-qt6 -DPICODBG_GUI=ON -DPICODBG_QT_MAJOR=6
 cmake --build build-qt6 -j2
 ```
 
-La v0.6.0 a été testée avec **Qt 5.15.15**. Les 18 tests CTest avec Qt et les 13 tests du moteur seul passent. Les tests SWD utilisent des processus GDB/OpenOCD simulés. Les essais sur carte physique et avec Qt6 restent à faire. `-DPICODBG_GUI=OFF` permet de compiler le moteur et ses tests sans Qt.
+La v0.7.0 a été testée avec **Qt 5.15.15**. Les 19 tests CTest avec Qt et les 13 tests du moteur seul passent. Les tests LSP et SWD utilisent des processus simulés. Les essais avec clangd réel, le Pico SDK, une carte physique et Qt6 restent à faire. `-DPICODBG_GUI=OFF` permet de compiler le moteur et ses tests sans Qt.
 
 Lancer un firmware :
 
@@ -58,6 +61,14 @@ Lancer un firmware :
 ```
 
 Le choix de carte est explicite : `--board pico|pico_w|pico2|pico2_w`. L'ancienne option `--chip rp2040|rp2350` sélectionne la carte sans Wi-Fi ; les deux options sont exclusives. La carte n'est pas déduite automatiquement des attributs de l'ELF. L'exécution commence **toujours à l'arrêt**.
+
+## Programmer en C dans l'IDE
+
+Ouvrir **Fichier → Ouvrir l'IDE C** dans le débogueur, ou lancer `./build-gui/pico-debugger --ide`. L'éditeur et le débogueur s'affichent dans deux fenêtres et partagent la même session. **Projet → Nouveau projet…** propose un exemple C pour l'émulateur ou un firmware Pico SDK pour la carte. **Ouvrir un projet…** accepte un projet CMake existant.
+
+L'IDE réunit les fichiers du projet, les onglets d'édition, la coloration C et les diagnostics cliquables. **Ctrl+Espace** ouvre l'autocomplétion lorsque clangd est disponible. **Compilation → Outils du projet…** détecte CMake, le compilateur ARM, le SDK, clangd et les outils de la sonde. Les installations hors `PATH` peuvent être configurées dans cette fenêtre.
+
+**Ctrl+B** compile, **Ctrl+F5** ouvre l'ELF à l'arrêt et **F5** le lance dans l'émulateur. **Lancer sur la carte…** utilise une connexion SWD arrêtée avec la même carte, puis propose le téléversement Flash ou RAM. [Guide IDE, outils et mises à jour](docs/IDE.md)
 
 ## Déboguer une vraie carte
 

@@ -25,20 +25,36 @@ class InspectionWorkspace;
 class PeripheralExplorer;
 class VirtualTimePanel;
 class BoardPanel;
+namespace picoide { class IdeWindow; }
 
 class MainWindow : public QMainWindow {
 public:
     MainWindow();
-    void loadFile(const QString& path);
+    ~MainWindow() override;
+    bool loadFile(const QString& path);
     void loadDemo();
     void selectChip(picodbg::Chip chip);
     void selectBoard(picodbg::Board board);
     void selectHardware(bool hardware);
     void connectHardware(const picodbg::ProbeOptions& options);
+    void showIde();
+    picodbg::Board selectedBoard() const { return debugger_->board().board; }
+    void launchProjectElf(const QString& path, picodbg::Board board, bool hardware, bool run);
 protected:
     void closeEvent(QCloseEvent* event) override;
 private:
     std::unique_ptr<picodbg::DebugTarget> debugger_;
+    std::unique_ptr<picoide::IdeWindow> ide_;
+    enum class IdeLaunchStage { Idle, Emulation, Symbols, Download, Run };
+    IdeLaunchStage ideLaunchStage_ = IdeLaunchStage::Idle;
+    QString ideElf_;
+    picodbg::Board ideBoard_ = picodbg::Board::Pico;
+    bool ideRam_ = false;
+    bool ideRun_ = false;
+    void finishIdeLaunch(const QString& message, bool error = false);
+    void startIdeEmulation();
+    void updateIdeHardware(picodbg::GdbTarget& target);
+    bool chooseHardwareDownload(const QString& path, picodbg::Board board, bool runAfter, bool& ram);
     picodbg::ProbeOptions probeOptions_;
     std::vector<std::pair<QString, unsigned>> pendingExpressions_;
     QAction* emulationAction_ = nullptr;

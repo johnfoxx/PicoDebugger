@@ -379,6 +379,7 @@ void GdbTarget::startCore(unsigned core, uint32_t entry, uint32_t stack) {
 void GdbTarget::disconnectProbe() {
     if (!connected_) { mi_.stop(); stopServer(); connecting_ = busy_ = false; ++revision_; return; }
     if (busy_) throw Error(ErrorKind::InvalidArgument, "Attendre la fin de l'opération avant de déconnecter");
+    error_.clear();
     disconnecting_ = true;
     if (running_) pause(); else completeDisconnect();
 }
