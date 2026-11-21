@@ -27,6 +27,7 @@ public:
     QString connectionText() const;
     QString errorText() const { return error_; }
     QString elfPath() const { return elfPath_; }
+    uint64_t symbolRevision() const { return symbolRevision_; }
     bool hardware() const override { return true; }
     bool busy() const override { return busy_ || connecting_; }
     bool executing() const override { return running_; }
@@ -74,6 +75,7 @@ private:
     QByteArray elfHash_;
     mutable uint64_t revision_ = 0;
     uint64_t generation_ = 0;
+    uint64_t symbolRevision_ = 0;
     QStringList registerNames_;
     std::array<QString, 2> threads_;
     std::array<std::array<bool, 21>, 2> valid_{};

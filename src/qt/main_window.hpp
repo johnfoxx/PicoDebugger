@@ -1,6 +1,7 @@
 #pragma once
 #include "picodbg/debugger.hpp"
 #include "gdb_target.hpp"
+#include "source_map.hpp"
 #include <QByteArray>
 #include <QMainWindow>
 #include <QPointer>
@@ -12,6 +13,8 @@ class QCheckBox;
 class QComboBox;
 class QDockWidget;
 class QLabel;
+class QHideEvent;
+class QShowEvent;
 class QLineEdit;
 class QPlainTextEdit;
 class QSpinBox;
@@ -25,7 +28,8 @@ class InspectionWorkspace;
 class PeripheralExplorer;
 class VirtualTimePanel;
 class BoardPanel;
-namespace picoide { class IdeWindow; }
+class ProbeSerialMonitor;
+namespace picoide { class IdeWindow; class CodeEditor; }
 
 class MainWindow : public QMainWindow {
 public:
@@ -38,13 +42,24 @@ public:
     void selectHardware(bool hardware);
     void connectHardware(const picodbg::ProbeOptions& options);
     void showIde();
+    void attachIde(picoide::IdeWindow* ide);
+    void syncIdeState();
+    void pauseFromIde();
+    void stepFromIde();
+    void refreshIdeSource();
+    bool selectSourceLine(const picosource::Location& location, bool navigate);
     picodbg::Board selectedBoard() const { return debugger_->board().board; }
     void launchProjectElf(const QString& path, picodbg::Board board, bool hardware, bool run);
 protected:
     void closeEvent(QCloseEvent* event) override;
+    void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
 private:
     std::unique_ptr<picodbg::DebugTarget> debugger_;
-    std::unique_ptr<picoide::IdeWindow> ide_;
+    std::unique_ptr<picoide::IdeWindow> ownedIde_;
+    std::unique_ptr<ProbeSerialMonitor> serialMonitor_;
+    QPointer<picoide::IdeWindow> ide_;
+    void showProbeSerial();
     enum class IdeLaunchStage { Idle, Emulation, Symbols, Download, Run };
     IdeLaunchStage ideLaunchStage_ = IdeLaunchStage::Idle;
     QString ideElf_;
@@ -54,7 +69,8 @@ private:
     void finishIdeLaunch(const QString& message, bool error = false);
     void startIdeEmulation();
     void updateIdeHardware(picodbg::GdbTarget& target);
-    bool chooseHardwareDownload(const QString& path, picodbg::Board board, bool runAfter, bool& ram);
+    bool chooseHardwareDownload(const QString& path, picodbg::Board board, bool runAfter, bool& ram,
+                                QWidget* parent = nullptr);
     picodbg::ProbeOptions probeOptions_;
     std::vector<std::pair<QString, unsigned>> pendingExpressions_;
     QAction* emulationAction_ = nullptr;
@@ -66,9 +82,17 @@ private:
     QAction* openAction_ = nullptr;
     QAction* demoAction_ = nullptr;
     QLabel* modeStatus_ = nullptr;
+    QLabel* ideLinkStatus_ = nullptr;
     QString imagePath_;
     bool pendingSymbols_ = false, switchAfterDisconnect_ = false, closeAfterDisconnect_ = false;
     uint64_t lastHardwareRevision_ = 0;
+    uint64_t lastHardwareSymbols_ = 0;
+    picosource::SourceMap sourceMap_;
+    picosource::Location executingSource_, selectedSource_;
+    QString previewPath_;
+    QDateTime previewTimestamp_;
+    void indexSource(const QString& elf);
+    void refreshSource(bool force = false, bool showSelection = false);
     void hardwareTick();
     void configureHardware();
     void downloadHardware();
@@ -96,6 +120,7 @@ private:
     PeripheralPanel* peripherals_;
     InspectionWorkspace* workspace_;
     QStackedWidget* codePages_;
+    QAction* showDebuggerAssembly_;
     QTabWidget* inspectionTabs_;
     QTabWidget* monitorTabs_;
     QDockWidget* inspectionDock_;
@@ -117,7 +142,8 @@ private:
     QLineEdit* assemblyAddress_;
     QSpinBox* memoryLength_;
     QCheckBox* followPc_;
-    QPlainTextEdit* source_;
+    picoide::CodeEditor* source_;
+    QLabel* sourceStatus_;
     QPlainTextEdit* console_;
     QAction* stepAction_ = nullptr;
     QAction* runAction_;

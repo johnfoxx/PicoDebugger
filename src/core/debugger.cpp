@@ -195,18 +195,32 @@ std::string stopName(StopKind kind) {
     return "?";
 }
 ElfImage demoImage() {
+    // Même programme Thumb que dans examples/make_demo.py, chargé directement en mémoire.
     ElfImage image;
     image.entry = 0x10000201; image.vectorAddress = 0x10000100; image.hasVectors = true;
     Segment segment; segment.address = 0x10000100; segment.bytes.resize(0x160, 0);
     const auto word = [&segment](size_t offset, uint32_t value) { for (unsigned i = 0; i < 4; ++i) segment.bytes.at(offset + i) = uint8_t(value >> (8 * i)); };
     const auto half = [&segment](size_t offset, uint16_t value) { segment.bytes.at(offset) = uint8_t(value); segment.bytes.at(offset + 1) = uint8_t(value >> 8); };
+    // Vecteurs MSP, Reset, HardFault, SVC et SysTick. Les adresses de code marquent Thumb.
     word(0, 0x20041000); word(4, image.entry); word(12, 0x10000241); word(44, 0x10000241); word(60, 0x10000241);
-    const uint16_t code[] = {0x2000, 0x4903, 0x3001, 0x6008, 0x2805, 0xd1fb, 0xbe00, 0xe7fe};
+    const uint16_t code[] = {
+        0x2000, // MOVS r0, #0       Initialise le compteur du cœur 0.
+        0x4903, // LDR r1, [pc, #12] Charge l'adresse du compteur.
+        0x3001, // ADDS r0, #1       Incrémente le compteur.
+        0x6008, // STR r0, [r1]      Enregistre la valeur en SRAM.
+        0x2805, // CMP r0, #5        Détecte la valeur finale.
+        0xd1fb, // BNE boucle        Revient à ADDS tant que le compteur diffère de 5.
+        0xbe00, // BKPT #0           Marque l'arrêt du cœur 0.
+        0xe7fe  // B .               Boucle après une reprise.
+    };
     for (size_t i = 0; i < 8; ++i) half(0x100 + 2*i, code[i]);
-    word(0x110, 0x20000000);
+    word(0x110, 0x20000000); // Littéral lu par le LDR du cœur 0.
+    // Le cœur 1 suit la même séquence. Il ajoute 2 jusqu'à 10, puis exécute BKPT #1.
     const uint16_t core1[] = {0x2000, 0x4903, 0x3002, 0x6008, 0x280a, 0xd1fb, 0xbe01, 0xe7fe};
     for (size_t i = 0; i < 8; ++i) half(0x120 + 2*i, core1[i]);
-    word(0x130, 0x20000004); half(0x140, 0xbe02); half(0x142, 0x4770);
+    word(0x130, 0x20000004); // Adresse distincte pour le compteur du cœur 1.
+    // Fault_Handler signale l'exception avec BKPT #2. BX LR permet le retour.
+    half(0x140, 0xbe02); half(0x142, 0x4770);
     image.segments.push_back(segment);
     image.symbols = {{"Reset_Handler", image.entry}, {"core1_entry", 0x10000221}, {"counter", 0x20000000}, {"counter1", 0x20000004}, {"__vectors", image.vectorAddress}};
     image.functions = {{0x10000200, "Reset_Handler"}, {0x10000220, "core1_entry"}, {0x10000240, "Fault_Handler"}};

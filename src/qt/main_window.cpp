@@ -1,6 +1,7 @@
 #include "main_window.hpp"
 #include "peripheral_panel.hpp"
 #include "window_policy.hpp"
+#include "window_theme.hpp"
 #include "choice_box.hpp"
 #include "inspection_workspace.hpp"
 #include "peripheral_inspection.hpp"
@@ -8,6 +9,7 @@
 #include "virtual_time_panel.hpp"
 #include "board_panel.hpp"
 #include "probe_dialog.hpp"
+#include "probe_serial_monitor.hpp"
 #include "ide/ide_window.hpp"
 #include <QActionGroup>
 #include <QCloseEvent>
@@ -20,11 +22,13 @@
 #include <QDialog>
 #include <QDockWidget>
 #include <QElapsedTimer>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFontDatabase>
 #include <QFormLayout>
 #include <QHeaderView>
+#include <QHideEvent>
 #include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
@@ -35,6 +39,7 @@
 #include <QPalette>
 #include <QPushButton>
 #include <QSettings>
+#include <QShowEvent>
 #include <QSpinBox>
 #include <QSplitter>
 #include <QStackedWidget>
@@ -45,6 +50,7 @@
 #include <QTimer>
 #include <QToolBar>
 #include <QVBoxLayout>
+#include <algorithm>
 
 using namespace picodbg;
 namespace {
@@ -93,54 +99,17 @@ QDockWidget* dock(QMainWindow* parent, const QString& name, QWidget* content, Qt
     return panel;
 }
 }
-MainWindow::MainWindow() : debugger_(new Debugger), timer_(new QTimer(this)) {
+MainWindow::MainWindow() : debugger_(new Debugger), sourceMap_(this), timer_(new QTimer(this)) {
     setWindowTitle("PicoDebugger — ARM / Thumb"); resize(1440, 900);
-    // Supply a complete palette as well as widget accents: detached pages,
-    // scrollbars and empty tab-strip areas must not fall back to a light theme.
-    QPalette theme = palette();
-    theme.setColor(QPalette::Window, QColor("#111923")); theme.setColor(QPalette::WindowText, QColor("#dce6f0"));
-    theme.setColor(QPalette::Base, QColor("#131e2b")); theme.setColor(QPalette::AlternateBase, QColor("#192635"));
-    theme.setColor(QPalette::Text, QColor("#dce6f0")); theme.setColor(QPalette::Button, QColor("#213044"));
-    theme.setColor(QPalette::ButtonText, QColor("#dce6f0")); theme.setColor(QPalette::Highlight, QColor("#28536b"));
-    theme.setColor(QPalette::HighlightedText, QColor("#ffffff")); theme.setColor(QPalette::Light, QColor("#40536a"));
-    theme.setColor(QPalette::Midlight, QColor("#304052")); theme.setColor(QPalette::Mid, QColor("#26394b"));
-    theme.setColor(QPalette::Dark, QColor("#0b111a")); theme.setColor(QPalette::Shadow, QColor("#0b111a"));
-    theme.setColor(QPalette::Disabled, QPalette::Text, QColor("#637487"));
-    theme.setColor(QPalette::Disabled, QPalette::ButtonText, QColor("#637487"));
-    setPalette(theme);
+    applyPicoTheme(*this);
     setDockOptions(AnimatedDocks | AllowNestedDocks | AllowTabbedDocks);
     // Three stable regions: CPU comparison, central workspace, monitoring.
     // Secondary inspection views share a bottom tab strip instead of competing
     // for height. Docks remain resizable and can be restored in one action.
     setCorner(Qt::BottomLeftCorner, Qt::LeftDockWidgetArea);
     setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
-    setStyleSheet(
-        "QMainWindow,QDialog,QDockWidget {background:#111923;color:#dce6f0;}"
-        "QWidget {background:#111923;color:#dce6f0;}"
-        "QMenuBar,QMenu,QToolBar,QStatusBar {background:#182331;}"
-        "QMenu::item:selected {background:#28536b;}"
-        "QDockWidget::title {background:#213044;padding:7px;font-weight:600;}"
-        "QTableWidget,QTreeWidget,QPlainTextEdit {background:#131e2b;alternate-background-color:#192635;selection-background-color:#28536b;border:1px solid #304052;}"
-        "QHeaderView::section {background:#213044;color:#a5bdd3;padding:5px;border:none;}"
-        "QLineEdit,QComboBox,QSpinBox {background:#111923;color:#dce6f0;border:1px solid #40536a;border-radius:3px;padding:5px;}"
-        "QComboBox QAbstractItemView {background:#213044;color:#dce6f0;selection-background-color:#365f7f;}"
-        "QPushButton {background:#29445c;border:1px solid #405b75;border-radius:3px;padding:5px 9px;}"
-        "QPushButton:hover {background:#365f7f;}"
-        "QToolButton {background:#213044;border:none;border-radius:3px;padding:7px;} QToolButton:hover {background:#29445c;}"
-        "QToolButton:disabled {color:#637487;}"
-        "QTabWidget::pane {border:1px solid #304052;}"
-        "QTabBar {qproperty-drawBase:0;}"
-        "QTabBar::tab {background:#182331;color:#a5bdd3;padding:8px 12px;border-bottom:2px solid transparent;}"
-        "QTabBar::tab:selected {background:#213044;color:#eff7ff;border-bottom:2px solid #60c5c0;}"
-        "QTabBar::tab:hover {background:#29445c;}"
-        "QLabel#sectionTitle {font-size:16px;font-weight:600;color:#eff7ff;}"
-        "QLabel#sessionTitle {font-size:16px;font-weight:600;}"
-        "QLabel#sessionState {color:#8bd6bb;font-weight:600;}"
-        "QLabel#guidance {color:#a5bdd3;}"
-        "QPushButton:disabled {color:#637487;background:#182331;}"
-        "QLineEdit:focus,QComboBox:focus {border:1px solid #60c5c0;}"
-    );
     buildUi();
+    sourceMap_.updated = [this] { refreshSource(true); refreshAssembly(); };
     connect(timer_, &QTimer::timeout, this, [this] { runBatch(); });
     timer_->setInterval(20);
     auto* hardwareTimer = new QTimer(this); hardwareTimer->setInterval(100);
@@ -149,7 +118,10 @@ MainWindow::MainWindow() : debugger_(new Debugger), timer_(new QTimer(this)) {
     log("Prêt. Ouvrir un ELF ARM ou l'exemple. Exécution arrêtée par défaut.");
     log("Simulation partielle : les accès non émulés arrêtent la session. Aucune garantie de compatibilité matérielle.");
 }
-MainWindow::~MainWindow() = default;
+MainWindow::~MainWindow() {
+    ide_.clear();
+    ownedIde_.reset();
+}
 
 void MainWindow::buildUi() {
     auto* file = menuBar()->addMenu("Fichier");
@@ -164,7 +136,6 @@ void MainWindow::buildUi() {
     connect(overview, &QAction::triggered, this, [this] {
         restoreState(overviewState_); workspace_->setCurrentIndex(0);
         inspectionTabs_->setCurrentIndex(0); monitorTabs_->setCurrentIndex(0);
-        inspectionTabs_->setTabVisible(4, false);
     });
     views->addSeparator();
     auto* debug = menuBar()->addMenu("Débogage");
@@ -183,6 +154,10 @@ void MainWindow::buildUi() {
     connect(disconnectAction_, &QAction::triggered, this, [this] {
         if (auto* hw = dynamic_cast<GdbTarget*>(debugger_.get())) try { hw->disconnectProbe(); refresh(); } catch (const std::exception& e) { failure(e); }
     });
+    auto* serialAction = target->addAction("Moniteur série de la sonde…");
+    serialAction->setObjectName("openProbeSerialAction");
+    serialAction->setShortcut(QKeySequence("Ctrl+Shift+U"));
+    connect(serialAction, &QAction::triggered, this, &MainWindow::showProbeSerial);
     downloadAction_ = target->addAction("Téléverser l'ELF sur la carte…"); downloadAction_->setObjectName("downloadElfAction");
     connect(downloadAction_, &QAction::triggered, this, [this] { downloadHardware(); });
     refreshTargetAction_ = target->addAction("Relire l'état matériel"); refreshTargetAction_->setObjectName("refreshHardwareAction");
@@ -222,7 +197,8 @@ void MainWindow::buildUi() {
             if (hw->connected() || hw->connecting()) { const QSignalBlocker blocked(chip_); chip_->setCurrentIndex(chip_->findData(static_cast<int>(debugger_->board().board))); return; }
             closeInspections(); debugger_.reset(new GdbTarget(board));
         } else { setRunning(false); closeInspections(); debugger_.reset(new Debugger(board)); }
-        imagePath_.clear(); imageName_.clear(); previousValid_ = false; fillMapping(); refresh(); log("Carte sélectionnée : charger un ELF pour cette carte.");
+        imagePath_.clear(); imageName_.clear(); previousValid_ = false; lastHardwareSymbols_ = 0;
+        indexSource({}); fillMapping(); refresh(); log("Carte sélectionnée : charger un ELF pour cette carte.");
     });
     toolbar->addSeparator();
     core_ = new ChoiceBox; core_->addItems({"Contexte : cœur 0", "Contexte : cœur 1"}); toolbar->addWidget(core_);
@@ -231,7 +207,7 @@ void MainWindow::buildUi() {
     stepAction_ = debug->addAction("Pas instruction"); stepAction_->setShortcut(QKeySequence(Qt::Key_F10));
     stepAction_->setObjectName("stepAction");
     connect(stepAction_, &QAction::triggered, this, [this] { singleStep(); });
-    runAction_ = debug->addAction("Exécuter les cœurs"); runAction_->setShortcut(QKeySequence(Qt::Key_F5));
+    runAction_ = debug->addAction("Continuer l'exécution"); runAction_->setShortcut(QKeySequence(Qt::Key_F5));
     runAction_->setObjectName("runAction");
     connect(runAction_, &QAction::triggered, this, [this] {
         try { if (debugger_->hardware()) debugger_->run(0); else { setRunning(false); setRunning(true); } refresh(); }
@@ -246,7 +222,7 @@ void MainWindow::buildUi() {
     resetAction_->setObjectName("resetAction");
     connect(resetAction_, &QAction::triggered, this, [this] { setRunning(false); try { debugger_->reset(); previousValid_ = false; refresh(); log(q(debugger_->stop.message)); } catch (const std::exception& e) { failure(e); } });
     stepAction_->setIcon(style()->standardIcon(QStyle::SP_ArrowRight)); stepAction_->setIconText("Pas · F10");
-    runAction_->setIcon(style()->standardIcon(QStyle::SP_MediaPlay)); runAction_->setIconText("Exécuter · F5");
+    runAction_->setIcon(style()->standardIcon(QStyle::SP_MediaPlay)); runAction_->setIconText("Continuer · F5");
     pauseAction_->setIcon(style()->standardIcon(QStyle::SP_MediaPause));
     resetAction_->setIcon(style()->standardIcon(QStyle::SP_BrowserReload)); resetAction_->setIconText("Reset");
     stepAction_->setToolTip("Exécuter une instruction du cœur sélectionné (F10)");
@@ -268,8 +244,9 @@ void MainWindow::buildUi() {
                 "Ouvrir un ELF charge ses symboles ; Cible → Téléverser écrit la mémoire puis laisse la carte arrêtée.\n\n"
                 "Registres CPU, mémoire, pile et périphériques sont lus sur la cible à l'arrêt. Les lectures sensibles sont explicites.\n"
                 "Les ressources de points d'arrêt et les permissions de debug dépendent du matériel. Le catalogue de registres reste partiel.\n"
-                "Ni temps virtuel ni transport UART via SWD ; les composants externes tels que CYW43 ne sont pas directement inspectables.\n"
-                "ARM uniquement, pas de débogage source/DWARF. Voir docs/HARDWARE_DEBUG.md.");
+                "Le port U de la Debug Probe permet de lire les traces via Cible → Moniteur série de la sonde…\n"
+                "Le temps virtuel est réservé à la simulation. Les composants externes tels que CYW43 ne sont pas directement inspectables.\n"
+                "ARM uniquement. Les lignes C sont affichées si l'ELF contient des informations DWARF. Voir docs/HARDWARE_DEBUG.md.");
             return;
         }
         QMessageBox::information(this, "Couverture de cette version",
@@ -292,15 +269,28 @@ void MainWindow::buildUi() {
     sessionLayout->setContentsMargins(10, 8, 10, 4);
     sessionLayout->addWidget(row({session_, banner_})); sessionLayout->addWidget(guidance_);
     workspace_ = new InspectionWorkspace;
-    assembly_ = table({"", "Adresse", "Opcode", "Instruction", "Symbole ELF"});
+    assembly_ = table({"", "Adresse", "Opcode", "Instruction", "Symbole ELF", "Source C"});
     assembly_->setObjectName("assemblyTable");
     assemblyAddress_ = new QLineEdit("pc"); assemblyAddress_->setPlaceholderText("Adresse ou symbole");
-    followPc_ = new QCheckBox("Suivre PC"); followPc_->setChecked(true);
+    followPc_ = new QCheckBox("Suivre PC"); followPc_->setObjectName("followAssemblyPc"); followPc_->setChecked(true);
     auto* disassemble = new QPushButton("Afficher");
     connect(disassemble, &QPushButton::clicked, this, [this] { followPc_->setChecked(false); refreshAssembly(); });
     connect(assemblyAddress_, &QLineEdit::returnPressed, disassemble, &QPushButton::click);
-    connect(followPc_, &QCheckBox::toggled, this, [this] { refreshAssembly(); });
-    connect(assembly_, &QTableWidget::cellDoubleClicked, this, [this](int line, int) {
+    connect(followPc_, &QCheckBox::toggled, this, [this] {
+        refreshSource(true); refreshAssembly();
+    });
+    connect(assembly_, &QTableWidget::cellClicked, this, [this](int line, int column) {
+        if (column != 5 || !assembly_->item(line, 1)) return;
+        const auto location = sourceMap_.location(assembly_->item(line, 1)->data(Qt::UserRole).toUInt());
+        if (!location.valid()) return;
+        selectedSource_ = location;
+        inspectionTabs_->setCurrentIndex(4);
+        showInspectionWindow(inspectionDock_);
+        refreshSource(true, true);
+        refreshAssembly();
+    });
+    connect(assembly_, &QTableWidget::cellDoubleClicked, this, [this](int line, int column) {
+        if (column == 5) return;
         const auto* item = assembly_->item(line, 1); if (!item) return;
         const uint32_t address = item->data(Qt::UserRole).toUInt();
         if (!address) return;
@@ -311,8 +301,11 @@ void MainWindow::buildUi() {
     });
     assemblyAddress_->setMinimumWidth(80);
     auto* assemblyPane = vertical(row({new QLabel("Adresse"), assemblyAddress_, disassemble, followPc_}), assembly_);
-    source_ = new QPlainTextEdit; source_->setReadOnly(true);
-    source_->setPlainText("Correspondance C++ — itération 2\n\nLes symboles ELF sont affichés à côté des instructions.\n\nL'import des sources et la lecture DWARF seront ajoutés dans une couche séparée.");
+    source_ = new picoide::CodeEditor(picoide::Language("c", picoide::Highlight::C), this);
+    source_->setObjectName("debugSourcePreview"); source_->setReadOnly(true);
+    sourceStatus_ = new QLabel("Ouvrir un ELF compilé avec -g.");
+    sourceStatus_->setObjectName("debugSourceStatus"); sourceStatus_->setTextFormat(Qt::PlainText);
+    sourceStatus_->setWordWrap(true); sourceStatus_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     codePages_ = new QStackedWidget;
     auto* welcome = new QWidget; auto* welcomeLayout = new QVBoxLayout(welcome);
     welcomeLayout->setContentsMargins(28, 24, 28, 24); welcomeLayout->addStretch();
@@ -423,9 +416,8 @@ void MainWindow::buildUi() {
     connect(expression, &QLineEdit::returnPressed, this, [this, expression] { evaluate(expression->text()); expression->clear(); });
     inspectionTabs_->addTab(vertical(expression, console_), "Console");
     inspectionTabs_->addTab(mapping_, "Carte mémoire");
-    inspectionTabs_->addTab(source_, "Source C++");
-    inspectionTabs_->setTabVisible(4, false);
-    inspectionTabs_->setTabToolTip(4, "Emplacement réservé : import source/DWARF non disponible");
+    auto* sourceLegend = new QLabel("Turquoise  PC  ·  Violet  ligne sélectionnée");
+    inspectionTabs_->addTab(vertical(row({sourceStatus_, sourceLegend}), source_), "Source C");
     virtualTimePanel_ = new VirtualTimePanel;
     virtualTimePanel_->advanceRequested = [this](uint64_t duration, bool timeOnly) { advanceVirtualTime(duration, timeOnly); };
     virtualTimePanel_->pauseRequested = [this] { pauseAction_->trigger(); };
@@ -445,12 +437,24 @@ void MainWindow::buildUi() {
     inspectAction("Pile du cœur sélectionné", "stackViewAction", "Ctrl+4", 1);
     inspectAction("Console / print / diagnostics", "consoleViewAction", "Ctrl+5", 2);
     inspectAction("Carte mémoire", "mappingViewAction", "", 3);
-    inspectAction("Source C++ — prochaine itération", "sourceViewAction", "", 4);
+    inspectAction("Source C", "sourceViewAction", "", 4);
     inspectAction("Temps virtuel", "virtualTimeViewAction", "Ctrl+6", 5);
     inspectAction("Carte et câblage", "boardViewAction", "Ctrl+7", 6);
     auto* codeView = views->addAction("Code / assembleur"); codeView->setObjectName("codeViewAction");
     codeView->setShortcut(QKeySequence("Ctrl+1"));
-    connect(codeView, &QAction::triggered, this, [this] { workspace_->setCurrentWidget(codePages_); });
+    showDebuggerAssembly_ = views->addAction("Afficher l'assembleur dans le débogueur");
+    showDebuggerAssembly_->setObjectName("showDebuggerAssemblyAction");
+    showDebuggerAssembly_->setCheckable(true);
+    showDebuggerAssembly_->setChecked(true);
+    connect(showDebuggerAssembly_, &QAction::toggled, this, [this](bool visible) {
+        if (!visible && workspace_->currentWidget() == codePages_) workspace_->setCurrentWidget(peripherals_);
+        workspace_->setTabVisible(workspace_->indexOf(codePages_), visible);
+        if (visible) refreshAssembly();
+    });
+    connect(codeView, &QAction::triggered, this, [this] {
+        showDebuggerAssembly_->setChecked(true);
+        workspace_->setCurrentWidget(codePages_);
+    });
     auto* catalogView = views->addAction("Périphériques"); catalogView->setShortcut(QKeySequence("Ctrl+2"));
     connect(catalogView, &QAction::triggered, peripheralWindow, &QAction::trigger);
     auto* watchView = views->addAction("Expressions surveillées"); watchView->setObjectName("watchesViewAction");
@@ -462,6 +466,9 @@ void MainWindow::buildUi() {
     modeStatus_ = new QLabel; modeStatus_->setObjectName("targetModeStatus");
     modeStatus_->setMinimumWidth(350); modeStatus_->setMaximumWidth(680);
     statusBar()->addPermanentWidget(modeStatus_);
+    ideLinkStatus_ = new QLabel;
+    ideLinkStatus_->setObjectName("ideLinkStatus");
+    statusBar()->addPermanentWidget(ideLinkStatus_);
     timeLabel_ = new QLabel; timeLabel_->setObjectName("virtualTimeStatus");
     timeLabel_->setToolTip("Ouvrir les commandes du temps virtuel (Ctrl+6)");
     statusBar()->addPermanentWidget(timeLabel_);
@@ -478,6 +485,7 @@ bool MainWindow::loadFile(const QString& path) {
         debugger_->load(path.toStdString()); previousValid_ = false;
         if (debugger_->hardware()) { log("Chargement des symboles demandé : " + path); refresh(); return true; }
         imagePath_ = QFileInfo(path).absoluteFilePath(); imageName_ = QFileInfo(path).fileName();
+        indexSource(imagePath_);
         QSettings().setValue("lastDirectory", QFileInfo(path).absolutePath());
         setWindowTitle("PicoDebugger — " + QFileInfo(path).fileName());
         log("ELF chargé : " + path); log(q(debugger_->stop.message)); refresh();
@@ -488,7 +496,7 @@ void MainWindow::selectChip(Chip chip) { chip_->setCurrentIndex(chip == Chip::RP
 void MainWindow::selectBoard(Board board) { chip_->setCurrentIndex(chip_->findData(static_cast<int>(board))); }
 void MainWindow::loadDemo() {
     setRunning(false);
-    try { debugger_->loadImage(demoImage()); imagePath_.clear(); imageName_ = "Exemple intégré"; previousValid_ = false; log("Exemple chargé. Pour le cœur 1 : entrée core1_entry, pile 0x20042000."); refresh(); }
+    try { debugger_->loadImage(demoImage()); imagePath_.clear(); imageName_ = "Exemple intégré"; indexSource({}); previousValid_ = false; log("Exemple chargé. Pour le cœur 1 : entrée core1_entry, pile 0x20042000."); refresh(); }
     catch (const std::exception& e) { failure(e); }
 }
 void MainWindow::singleStep() {
@@ -558,14 +566,15 @@ void MainWindow::refresh() {
     const QString mode = real ? "CARTE RÉELLE · " : "ÉMULATION · ";
     const QString state = real ? hardware->connectionText() : "Sans connexion matérielle";
     const QString status = mode + q(debugger_->board().name) + " · " + state;
-    const QString shortState = !real ? QString("Sans connexion matérielle") : hardware->connecting() ? QString("Connexion…") :
+    const QString shortState = !real ? (!loaded ? QString("Aucun ELF") :
+        running_ ? (timeOnly_ ? QString("Temps virtuel en cours") : QString("Simulation en cours")) : QString("Simulation arrêtée")) :
+        hardware->connecting() ? QString("Connexion…") :
         !hardware->connected() ? (hardware->errorText().isEmpty() ? QString("Déconnectée") : QString("Perdue / erreur")) :
         hardware->busy() ? QString("Connectée · opération…") : running_ ? QString("Connectée · en exécution") :
         hardware->errorText().isEmpty() ? QString("Connectée · arrêtée") : QString("Connectée · arrêtée / erreur");
     QString shortBoard = q(debugger_->board().name); shortBoard.remove("Raspberry Pi ");
     modeStatus_->setText(mode + shortBoard + " · " + shortState); modeStatus_->setToolTip(status);
-    if (ide_) ide_->debuggerState(real && ready && ideLaunchStage_ == IdeLaunchStage::Idle,
-                                debugger_->board().board, modeStatus_->text());
+    syncIdeState();
     timeLabel_->setVisible(!real); virtualTimePanel_->setVisible(!real);
     inspectionTabs_->setTabVisible(5, !real);
     findChild<QAction*>("virtualTimeViewAction")->setEnabled(!real);
@@ -592,7 +601,7 @@ void MainWindow::refresh() {
             "\nArrêter les CPU pour lire leur état. Les périphériques peuvent continuer à évoluer pendant l'arrêt.");
     }
     inspectionTabs_->setTabToolTip(1, QString("Pile brute du cœur %1 · pas de déroulage des appels C++").arg(selected_));
-    refreshRegisters(); refreshAssembly(); refreshMemory(); refreshStack(); refreshWatches(); refreshPoints(); refreshPeripherals();
+    refreshRegisters(); refreshSource(); refreshAssembly(); refreshMemory(); refreshStack(); refreshWatches(); refreshPoints(); refreshPeripherals();
     const QString stamp = QDateTime::currentDateTime().toString("HH:mm:ss.zzz");
     stop_->setText(QString("%1  |  cœur %2  |  %3  |  révision %4  |  %5")
         .arg(running_ ? "EN EXÉCUTION — instantané échantillonné" : q(stopName(debugger_->stop.kind)))
@@ -643,6 +652,7 @@ void MainWindow::refreshRegisters() {
     previousValid_ = true;
 }
 void MainWindow::refreshAssembly() {
+    if (!showDebuggerAssembly_->isChecked()) return;
     assembly_->setRowCount(0);
     if (!debugger_->loaded()) return;
     if (debugger_->hardware() && !debugger_->registerAvailable(selected_, 15)) {
@@ -659,11 +669,18 @@ void MainWindow::refreshAssembly() {
             assembly_->setRowCount(r + 1);
             cell(assembly_, r, 0, QString(at == debugger_->cpus[selected_].r[15] ? "▶ " : "") + (debugger_->breakpoints.count(at) ? "●" : ""));
             cell(assembly_, r, 1, hx(at)); assembly_->item(r, 1)->setData(Qt::UserRole, at);
+            const auto location = sourceMap_.location(at);
+            const auto sourceLabel = location.valid() ? QFileInfo(location.path).fileName() + ":" + QString::number(location.line) : QString();
+            cell(assembly_, r, 5, sourceLabel, location.valid() ? location.path + ":" + QString::number(location.line) : QString());
             try {
                 const auto instruction = debugger_->disassemble(at, selected_);
                 cell(assembly_, r, 2, q(hex(instruction.raw, instruction.size * 2)));
                 cell(assembly_, r, 3, q(instruction.text)); cell(assembly_, r, 4, q(debugger_->sourceHint(at)));
-                if (at == debugger_->cpus[selected_].r[15]) for (int col = 0; col < 5; ++col) assembly_->item(r, col)->setBackground(QColor("#234d57"));
+                const bool pc = at == (debugger_->cpus[selected_].r[15] & ~1u);
+                const auto color = pc || (location.valid() && location == executingSource_) ? picosource::executionColor()
+                    : location.valid() && location == selectedSource_ ? picosource::selectionColor() : QString();
+                if (!color.isEmpty())
+                    for (int col = 0; col < assembly_->columnCount(); ++col) assembly_->item(r, col)->setBackground(QColor(color));
                 if (uint64_t(at) + instruction.size > 0xffffffffull) break;
                 at += instruction.size;
             } catch (const Error& e) { cell(assembly_, r, 3, q(e.what())); break; }
@@ -855,6 +872,8 @@ void MainWindow::selectHardware(bool hardware) {
     pendingExpressions_.clear();
     const Board board = debugger_->board().board;
     if (hardware) debugger_.reset(new GdbTarget(board)); else debugger_.reset(new Debugger(board));
+    lastHardwareSymbols_ = 0;
+    indexSource({});
     running_ = false; previousValid_ = false; lastHardwareRevision_ = 0; fillMapping(); refresh();
     log(hardware ? "Mode carte réelle. Cible → Connecter la sonde ; aucun téléversement automatique." : "Mode émulation, sans connexion matérielle.");
     if (!hardware && ideLaunchStage_ == IdeLaunchStage::Emulation) startIdeEmulation();
@@ -870,12 +889,18 @@ void MainWindow::connectHardware(const ProbeOptions& options) {
 void MainWindow::configureHardware() {
     const auto tools = picoide::Tools::detect();
     if (!tools.gdb.isEmpty()) probeOptions_.gdb = tools.gdb;
+    if (!tools.openocd.isEmpty()) probeOptions_.openOcd = tools.openocd;
+    if (!tools.openocdScripts.isEmpty()) probeOptions_.scripts = tools.openocdScripts;
     if (!configureProbe(this, probeOptions_)) return;
     connectHardware(probeOptions_);
 }
 void MainWindow::hardwareTick() {
     auto* hw = dynamic_cast<GdbTarget*>(debugger_.get()); if (!hw) return;
     hw->poll();
+    if (lastHardwareSymbols_ != hw->symbolRevision()) {
+        lastHardwareSymbols_ = hw->symbolRevision();
+        indexSource(hw->elfPath());
+    }
     if (!hw->connected() && !hw->connecting() && !hw->busy()) {
         if (closeAfterDisconnect_) { closeAfterDisconnect_ = false; close(); return; }
         if (switchAfterDisconnect_) { switchAfterDisconnect_ = false; selectHardware(false); return; }
@@ -910,14 +935,24 @@ void MainWindow::downloadHardware() {
     if (!chooseHardwareDownload(hw->elfPath(), hw->board().board, false, ram) || !hw) return;
     try { hw->download(ram); refresh(); } catch (const std::exception& e) { failure(e); }
 }
-bool MainWindow::chooseHardwareDownload(const QString& path, Board board, bool runAfter, bool& ram) {
-    QDialog dialog(runAfter && ide_ ? static_cast<QWidget*>(ide_.get()) : this);
+bool MainWindow::chooseHardwareDownload(const QString& path, Board board, bool runAfter, bool& ram, QWidget* parent) {
+    QDialog dialog(parent ? parent : this);
     dialog.setWindowTitle("Téléverser sur " + q(describeBoard(board).name)); dialog.setObjectName("downloadElfDialog");
     QVBoxLayout layout(&dialog);
     QLabel summary("Cette opération écrit la mémoire de la carte et peut remplacer son firmware.\nELF : " + path);
     summary.setTextFormat(Qt::PlainText); summary.setWordWrap(true); layout.addWidget(&summary);
     ChoiceBox startup; startup.setObjectName("downloadStartup");
     startup.addItems({"Flash · reset matériel après chargement", "RAM · démarrage direct depuis les vecteurs ELF"}); layout.addWidget(&startup);
+    try {
+        const auto image = ElfImage::read(path.toStdString());
+        const uint64_t ramEnd = 0x20000000ull + describe(describeBoard(board).chip).ramSize;
+        if (image.hasVectors && std::all_of(image.segments.begin(), image.segments.end(), [ramEnd](const Segment& segment) {
+                return segment.bytes.empty() || (segment.address >= 0x20000000u &&
+                    uint64_t(segment.address) + segment.bytes.size() <= ramEnd);
+            })) startup.setCurrentIndex(1);
+    } catch (const std::exception&) {
+        // The target's existing ELF validation will report the error.
+    }
     QLabel detail("Flash : utiliser un ELF amorçable pour la carte (par exemple Pico SDK).\n"
                   "RAM : ELF entièrement en SRAM, avec table de vecteurs SP/PC.\n"
                   + QString(runAfter ? "L'exécution démarre après un téléversement réussi." :
@@ -943,10 +978,57 @@ void MainWindow::closeEvent(QCloseEvent* event) {
     QMainWindow::closeEvent(event);
 }
 
+void MainWindow::showProbeSerial() {
+    if (!serialMonitor_) serialMonitor_.reset(new ProbeSerialMonitor);
+    serialMonitor_->refreshPorts();
+    showInspectionWindow(serialMonitor_.get());
+}
+
 void MainWindow::showIde() {
-    if (!ide_) ide_.reset(new picoide::IdeWindow(this));
-    refresh();
-    showInspectionWindow(ide_.get());
+    if (!ide_) {
+        ownedIde_.reset(new picoide::IdeWindow(this, selectedBoard()));
+        attachIde(ownedIde_.get());
+    }
+    showInspectionWindow(ide_);
+    refreshSource(true);
+}
+
+void MainWindow::attachIde(picoide::IdeWindow* ide) {
+    ide_ = ide;
+    syncIdeState();
+}
+
+void MainWindow::showEvent(QShowEvent* event) {
+    QMainWindow::showEvent(event);
+    syncIdeState();
+}
+
+void MainWindow::hideEvent(QHideEvent* event) {
+    QMainWindow::hideEvent(event);
+    syncIdeState();
+}
+
+void MainWindow::syncIdeState() {
+    ideLinkStatus_->setText(ide_ && ide_->isVisible() ? "IDE relié" : "IDE fermé");
+    if (!ide_) return;
+    const bool hardwareReady = debugger_->hardware() && debugger_->loaded() &&
+        !debugger_->busy() && !debugger_->executing() && ideLaunchStage_ == IdeLaunchStage::Idle;
+    const bool inspectAssembly = debugger_->loaded() && !running_ && !debugger_->busy() &&
+                                 sourceMap_.elfTimestamp().isValid();
+    ide_->debuggerState(hardwareReady, pauseAction_->isEnabled(), stepAction_->isEnabled(), isVisible(), inspectAssembly,
+                        debugger_->board().board, modeStatus_->text());
+}
+
+void MainWindow::pauseFromIde() {
+    if (pauseAction_->isEnabled()) pauseAction_->trigger();
+}
+
+void MainWindow::stepFromIde() {
+    if (stepAction_->isEnabled()) stepAction_->trigger();
+}
+
+void MainWindow::refreshIdeSource() {
+    refreshSource(true);
 }
 
 void MainWindow::finishIdeLaunch(const QString& message, bool error) {
@@ -985,7 +1067,7 @@ void MainWindow::launchProjectElf(const QString& path, Board board, bool hardwar
             finishIdeLaunch("Connecter et arrêter la carte correspondant au projet avant de lancer.", true);
             return;
         }
-        if (!chooseHardwareDownload(path, board, run, ideRam_)) {
+        if (!chooseHardwareDownload(path, board, run, ideRam_, ide_.data())) {
             finishIdeLaunch("Téléversement annulé.");
             return;
         }
@@ -1058,4 +1140,82 @@ void MainWindow::updateIdeHardware(GdbTarget& target) {
     } catch (const std::exception& error) {
         finishIdeLaunch(q(error.what()), true);
     }
+}
+
+void MainWindow::indexSource(const QString& elf) {
+    executingSource_ = {};
+    selectedSource_ = {};
+    previewPath_.clear();
+    previewTimestamp_ = {};
+    source_->clear();
+    if (!elf.isEmpty()) {
+        const QSignalBlocker blocked(followPc_);
+        followPc_->setChecked(true);
+    }
+    sourceMap_.index(elf, elf.isEmpty() ? QString() : picoide::Tools::detect().gcc);
+    refreshSource(true);
+}
+
+void MainWindow::refreshSource(bool force, bool showSelection) {
+    const bool hasPc = debugger_->registerAvailable(selected_, 15) && !debugger_->cpus[selected_].held;
+    const uint32_t pc = hasPc ? debugger_->cpus[selected_].r[15] & ~1u : 0;
+    const auto current = hasPc ? sourceMap_.location(pc) : picosource::Location();
+    if (ide_) ide_->debuggerSourceState(current, selectedSource_, sourceMap_, hasPc, pc, force, showSelection);
+    if (!force && current == executingSource_) return;
+    executingSource_ = current;
+
+    const auto& location = (showSelection || !followPc_->isChecked()) && selectedSource_.valid() ? selectedSource_
+        : executingSource_.valid() ? executingSource_ : selectedSource_;
+    source_->setDebugLines(0, 0);
+    if (!location.valid()) {
+        if (!previewPath_.isEmpty()) { source_->clear(); previewPath_.clear(); }
+        sourceStatus_->setText(debugger_->hardware() && running_
+            ? "Le PC matériel est relevé à l'arrêt."
+            : sourceMap_.hasLocations() ? "Aucune ligne C pour le PC sélectionné." : sourceMap_.status());
+        return;
+    }
+    const QFileInfo info(location.path);
+    const auto modified = info.lastModified();
+    if (previewPath_ != location.path || modified != previewTimestamp_) {
+        previewPath_ = location.path;
+        previewTimestamp_ = modified;
+        QFile file(location.path);
+        if (picoide::languageForFile(location.path).id.isEmpty() || !info.isFile() ||
+            info.size() > 2 * 1024 * 1024 || !file.open(QIODevice::ReadOnly)) source_->clear();
+        else source_->setPlainText(QString::fromUtf8(file.readAll()));
+    }
+    const auto address = location.path + ":" + QString::number(location.line);
+    if (!info.isFile() || source_->document()->isEmpty()) {
+        sourceStatus_->setText("Source inaccessible · " + address);
+        return;
+    }
+    if (modified > sourceMap_.elfTimestamp()) {
+        sourceStatus_->setText("Source modifiée depuis la compilation · " + address);
+        return;
+    }
+    sourceStatus_->setText(address);
+    sourceStatus_->setToolTip(address);
+    source_->setDebugLines(executingSource_.path == previewPath_ ? executingSource_.line : 0,
+                           selectedSource_.path == previewPath_ ? selectedSource_.line : 0);
+    source_->revealDebugLine(location.line);
+}
+
+bool MainWindow::selectSourceLine(const picosource::Location& location, bool navigate) {
+    uint32_t address = 0;
+    const bool mapped = sourceMap_.addressFor(location, address);
+    if (navigate && (!mapped || (debugger_->hardware() && (debugger_->busy() || debugger_->executing())))) return false;
+    if (!navigate && location == selectedSource_) return mapped;
+    selectedSource_ = location;
+    if (navigate) {
+        const QSignalBlocker blocked(followPc_);
+        followPc_->setChecked(false);
+        assemblyAddress_->setText(hx(address));
+        if (showDebuggerAssembly_->isChecked()) {
+            workspace_->setCurrentWidget(codePages_);
+            showInspectionWindow(this);
+        }
+    }
+    refreshSource(true);
+    refreshAssembly();
+    return mapped;
 }

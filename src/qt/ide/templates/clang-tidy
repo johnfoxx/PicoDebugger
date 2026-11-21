@@ -1,1 +1,3 @@
+# Activer les contrôles utiles pour un premier firmware C.
+# Garder les diagnostics de boucle, de sizeof, de point-virgule et de l'analyseur statique.
 Checks: '-*,bugprone-infinite-loop,bugprone-sizeof-expression,bugprone-suspicious-semicolon,clang-analyzer-*'

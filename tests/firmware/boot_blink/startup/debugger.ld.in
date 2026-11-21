@@ -1,13 +1,17 @@
-/* Direct-start ELF only: no boot2, ROM image definition, or UF2 boot image.
- * .data has a Flash LMA and a RAM VMA so the C startup performs the copy. */
+/* ELF pour démarrage direct dans PicoDebugger.
+ * Le chargeur entre dans Reset_Handler sans boot2 ni démarrage ROM. */
 ENTRY(Reset_Handler)
 
+/* CMake remplace les capacités selon le profil de carte.
+ * La Flash fournit le code et les valeurs initiales. La SRAM contient l'état mutable. */
 MEMORY
 {
     FLASH (rx) : ORIGIN = 0x10000000, LENGTH = @BLINK_FLASH_KIB@K
     RAM (rwx)  : ORIGIN = 0x20000000, LENGTH = @BLINK_RAM_KIB@K
 }
 
+/* Segments que le chargeur lit dans les en-têtes ELF.
+ * 5 signifie lecture/exécution. 6 signifie lecture/écriture. */
 PHDRS
 {
     flash PT_LOAD FLAGS(5);
@@ -17,11 +21,14 @@ PHDRS
 
 SECTIONS
 {
+    /* Placer les vecteurs à un offset aligné de 512 octets.
+     * KEEP les préserve indépendamment des références dans le code. */
     .vectors ORIGIN(FLASH) + 0x200 :
     {
         KEEP(*(.vectors))
     } > FLASH :flash
 
+    /* Ranger le code et les constantes dans le même segment Flash. */
     .text : ALIGN(4)
     {
         *(.text .text.*)
@@ -29,6 +36,8 @@ SECTIONS
         . = ALIGN(4);
     } > FLASH :flash
 
+    /* Les variables vivent en RAM (VMA). Leurs valeurs initiales sont en Flash (LMA).
+     * Le startup copie cette plage en prenant LOADADDR(.data) comme source. */
     .data : ALIGN(4)
     {
         __data_start = .;
@@ -38,8 +47,9 @@ SECTIONS
     } > RAM AT> FLASH :data
     __data_load_start = LOADADDR(.data);
 
-    /* BSS has no Flash payload. Give its segment a RAM physical address
-     * explicitly instead of inheriting the .data VMA/LMA displacement. */
+    /* .bss prend de la place en RAM. NOLOAD omet les octets de données du fichier.
+     * AT(ADDR(.bss)) fixe son adresse de chargement à son adresse RAM.
+     * Sans cette clause, le placement pourrait reprendre le décalage Flash de .data. */
     .bss (NOLOAD) : AT(ADDR(.bss)) ALIGN(4)
     {
         __bss_start = .;
@@ -49,10 +59,13 @@ SECTIONS
         __bss_end = .;
     } > RAM :bss
 
+    /* La pile descend depuis le sommet de la SRAM. Réserver au moins 4 Kio.
+     * Vérifier la taille attendue pour la table de vecteurs. */
     __stack_top = ORIGIN(RAM) + LENGTH(RAM);
     __stack_limit = __stack_top - 4096;
     ASSERT(__bss_end <= __stack_limit, "RAM overlaps the 4 KiB stack")
     ASSERT(SIZEOF(.vectors) == 68 * 4, "Expected 32-bit ARM vector entries")
 
+    /* Retirer notes et tables de déroulage. Le débogueur garde les sections DWARF. */
     /DISCARD/ : { *(.comment .note.* .eh_frame* .ARM.exidx* .ARM.extab*) }
 }

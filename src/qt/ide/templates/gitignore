@@ -1,3 +1,5 @@
+# Ignorer les fichiers de compilation et d'analyse générés par PicoDebugger.
 /.picodbg/
+# Ignorer aussi les dossiers de compilation CMake utilisés en ligne de commande.
 /build/
 /build-*/

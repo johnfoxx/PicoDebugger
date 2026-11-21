@@ -12,5 +12,5 @@ if [[ ! -x "$project_dir/build-gui/pico-debugger" ]]; then
 fi
 printf '\nInterface prête : %s/build-gui/pico-debugger\n' "$project_dir"
 if [[ "${1:-}" == "--launch" ]]; then
-    exec "$project_dir/build-gui/pico-debugger" --demo
+    exec "$project_dir/build-gui/pico-debugger"
 fi

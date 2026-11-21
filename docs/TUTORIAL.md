@@ -80,7 +80,7 @@ Dans l'assembleur :
 - La vue montre jusqu'à 32 instructions à partir de l'adresse choisie, avec opcode et symbole ELF proche.
 - La pastille `●` signale un breakpoint ; un double-clic sur une instruction l'ajoute ou le retire.
 
-Il n'y a pas encore de « pas C++ », « entrer/sortir de fonction » ni de pas par-dessus un appel. La zone **Source C++ — prochaine itération**, accessible dans **Vues**, explique l'extension prévue mais ne charge pas de source.
+Pour un ELF créé avec `-g`, cliquer la colonne **Source C** affiche la ligne associée. L'IDE suit aussi cette correspondance dans les fichiers du projet. **F10** avance d'une instruction. [Correspondance C et assembleur](IDE.md#suivre-le-c-et-lassembleur)
 
 ## 3. Breakpoints et watchpoints
 
@@ -273,7 +273,9 @@ Aucun réglage du bureau n'est modifié. Les tests automatisés sont effectués 
 
 | Option | Effet |
 |---|---|
-| `[elf]` | Chemin positionnel du fichier ELF |
+| `[projet\|elf]` | Dossier CMake à ouvrir dans l'IDE ou ELF à ouvrir dans le débogueur |
+| `--debugger` | Ouvrir le débogueur directement |
+| `--ide` | Ouvrir l'IDE en premier, comme au lancement sans argument |
 | `--chip rp2040` / `--chip rp2350` | Profil ; défaut RP2040 |
 | `--demo` | Exemple intégré à l'arrêt ; prend priorité sur le fichier positionnel si les deux sont fournis |
 | `-h`, `--help` | Aide ; `--help-all` inclut les options Qt |

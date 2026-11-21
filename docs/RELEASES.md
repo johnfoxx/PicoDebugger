@@ -1,5 +1,30 @@
 # Versions
 
+<a id="v0-8-0"></a>
+
+## v0.8.0 — 2026-11-21
+
+Changements depuis **v0.7.0** (`6240011`).
+
+### IDE et débogage
+
+- Lancement dans l'IDE par défaut. Le débogueur s'ouvre à la demande avec le bouton **Débogueur**, lors du chargement d'un ELF ou depuis l'option `--debugger`. Les fenêtres se retrouvent mutuellement et affichent leur état de connexion, le profil de carte et l'état d'exécution.
+- Compilation et lancement à l'arrêt avec **F5** ou **Ctrl+F5** dans l'IDE. Le téléversement via l'IDE laisse aussi la carte arrêtée, en RAM ou en Flash. **F10** avance d'une instruction et **Maj+F5** met en pause depuis les deux fenêtres. Dans le débogueur, **F5** continue l'exécution.
+- Correspondance bidirectionnelle entre lignes C et instructions ARM à partir des tables DWARF et de GNU Binutils. L'IDE montre le C et l'assembleur dans deux volets redimensionnables à l'arrêt. Une flèche et le turquoise suivent le PC. Le violet suit la ligne choisie dans l'éditeur, même si ses instructions occupent plusieurs plages d'adresses. La colonne **Source C** dans le débogueur permet de revenir au fichier. Le volet assembleur de l'IDE se replie pendant l'exécution continue et le tableau du débogueur peut être masqué.
+- Thème gris graphite commun. Le contraste de la sélection dans l'arbre de projet, des onglets, des menus et des barres d'état est corrigé.
+
+### Outils, sonde et exemples
+
+- Panneau **Projet → Git…** pour initialiser un dépôt, parcourir l'état et les diffs, gérer l'index, créer des commits, lire l'historique et gérer le dépôt distant avec l'exécutable Git configuré.
+- Installation locale d'ARM GCC/GDB, clangd, du Pico SDK et de ses sous-modules, CMake, Ninja, OpenOCD, picotool et pioasm selon la plateforme. Le catalogue `config/dependencies.json` décrit les sources, les versions et les contrôles d'intégrité. Les outils s'installent dans les données utilisateur de PicoDebugger. Le guide indique comment actualiser le catalogue et les chemins.
+- Moniteur série indépendant dans **Cible → Moniteur série de la sonde…**. Il lit les traces et les `printf` du port **U / UART** en parallèle du SWD. Il propose le port d'une sonde reconnue, mémorise le débit, affiche les pertes de connexion et exporte le journal en texte. Qt Serial Port est facultatif sous Unix grâce au transport natif.
+- Modèle C autonome pour les quatre profils Pico. Le même ELF ARM lié en SRAM se charge en émulation et via SWD en mode RAM. Le modèle Pico SDK reste disponible pour les firmwares amorçables. Les sources C, fichiers CMake, scripts de lien et routines de démarrage sont commentés en français, ainsi que les opcodes Thumb des démos et le projet de clignotement.
+
+### Validation
+
+- 21 tests CTest dans la configuration Linux avec Qt 5.15.15 et 13 avec le moteur seul. Les tests couvrent notamment la liaison IDE-débogueur, les couleurs d'exécution et de sélection, le démarrage arrêté, Git, la validation du catalogue et le moniteur UART sur pseudo-terminal. LSP et SWD utilisent des processus simulés.
+- Modèle autonome compilé avec ARM GCC pour les quatre profils. Exemple de clignotement vérifié sur l'hôte et dans le moteur RP2040 et RP2350. Les trois ELF produits par les générateurs Python sont identiques octet pour octet après annotation. Qt6, le transport Qt Serial Port, clangd réel, la compilation Pico SDK et l'essai sur carte physique restent à valider.
+
 <a id="v0-7-0"></a>
 
 ## v0.7.0 — 2026-11-21

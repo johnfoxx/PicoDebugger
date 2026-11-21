@@ -1,8 +1,7 @@
 #include "platform.h"
 
-/* SDK 2.2.0 register offsets; see the reference links in README.md.
- * This backend observes SIO latches only. IO_BANK0/PADS_BANK0, clock setup
- * and electrical LED behaviour are NOT implemented by PicoDbg v0.3.0. */
+/* Registres SIO et timer du modèle. Les adresses dépendent de la puce.
+ * L'exemple observe les verrous GPIO. Les pads et les horloges relèvent du SDK sur carte. */
 #define LED_MASK (UINT32_C(1) << 25)
 #if BOOT_BLINK_RP2350
 #define GPIO_OUT_SET UINT32_C(0xd0000018)
@@ -18,17 +17,20 @@
 
 static volatile uint32_t *reg32(uint32_t address)
 {
+    /* Accès MMIO en 32 bits. volatile impose chaque lecture ou écriture. */
     return (volatile uint32_t *)(uintptr_t)address;
 }
 
 void platform_led_init(void)
 {
+    /* Placer le verrou à zéro avant d'activer la sortie. */
     *reg32(GPIO_OUT_CLR) = LED_MASK;
     *reg32(GPIO_OE_SET) = LED_MASK;
 }
 
 void platform_led_write(bool on)
 {
+    /* Les alias SET et CLR modifient GPIO25 en laissant les autres bits intacts. */
     *reg32(on ? GPIO_OUT_SET : GPIO_OUT_CLR) = LED_MASK;
 }
 
@@ -36,9 +38,9 @@ void platform_delay_ms(uint32_t milliseconds)
 {
     const uint32_t duration = milliseconds * UINT32_C(1000);
     const uint32_t start = *reg32(TIMER_RAWL);
-    /* Unsigned subtraction tolerates the low counter wrapping. The configured
-     * delay is <= 60 s, well below the 32-bit timer period. Time is virtual:
-     * it advances when the debugger executes, not while its UI is paused. */
+    /* Le registre bas compte des microsecondes. La soustraction non signée
+     * reste correcte si ce compteur déborde pendant les 60 secondes au plus.
+     * Le temps virtuel ne progresse pas pendant la pause. */
     while ((uint32_t)(*reg32(TIMER_RAWL) - start) < duration) {
     }
 }

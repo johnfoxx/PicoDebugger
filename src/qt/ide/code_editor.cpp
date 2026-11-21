@@ -1,4 +1,5 @@
 #include "code_editor.hpp"
+#include "../source_map.hpp"
 
 #include <QAbstractItemView>
 #include <QCompleter>
@@ -8,6 +9,7 @@
 #include <QPainter>
 #include <QPaintEvent>
 #include <QRegularExpression>
+#include <QScrollBar>
 #include <QStandardItemModel>
 #include <QSyntaxHighlighter>
 #include <QTextBlock>
@@ -99,7 +101,7 @@ CodeEditor::CodeEditor(const Language& language, QWidget* parent)
 }
 
 int CodeEditor::gutterWidth() const {
-    return 17 + fontMetrics().horizontalAdvance('9') * QString::number(qMax(10, blockCount())).size();
+    return 27 + fontMetrics().horizontalAdvance('9') * QString::number(qMax(10, blockCount())).size();
 }
 
 void CodeEditor::updateGutter() {
@@ -114,16 +116,23 @@ void CodeEditor::resizeEvent(QResizeEvent* event) {
 
 void CodeEditor::paintGutter(QPaintEvent* event) {
     QPainter painter(gutter_);
-    painter.fillRect(event->rect(), QColor("#192635"));
+    painter.fillRect(event->rect(), palette().color(QPalette::AlternateBase));
     auto block = firstVisibleBlock();
     const int activeLine = textCursor().blockNumber();
     int top = qRound(blockBoundingGeometry(block).translated(contentOffset()).top());
     while (block.isValid() && top <= event->rect().bottom()) {
         const int height = qRound(blockBoundingRect(block).height());
         if (block.isVisible() && top + height >= event->rect().top()) {
-            painter.setPen(block.blockNumber() == activeLine ? QColor("#ecf4fc") : QColor("#8cabc1"));
-            painter.drawText(0, top, gutter_->width() - 7, fontMetrics().height(),
-                             Qt::AlignRight, QString::number(block.blockNumber() + 1));
+            const int line = block.blockNumber() + 1;
+            if (line == executionLine_) {
+                const int center = top + height / 2;
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(QColor("#8ce4d6"));
+                painter.drawPolygon(QPolygon({{5, center - 5}, {14, center}, {5, center + 5}}));
+            }
+            painter.setPen(line == executionLine_ ? QColor("#8ce4d6") :
+                block.blockNumber() == activeLine ? palette().color(QPalette::Text) : QColor("#a8afb5"));
+            painter.drawText(17, top, gutter_->width() - 24, fontMetrics().height(), Qt::AlignRight, QString::number(line));
         }
         block = block.next();
         top += height;
@@ -131,6 +140,10 @@ void CodeEditor::paintGutter(QPaintEvent* event) {
 }
 
 void CodeEditor::keyPressEvent(QKeyEvent* event) {
+    if (isReadOnly()) {
+        QPlainTextEdit::keyPressEvent(event);
+        return;
+    }
     const auto key = event->key();
     if (completer_->popup()->isVisible()) {
         switch (key) {
@@ -223,9 +236,21 @@ void CodeEditor::decorate() {
     QTextEdit::ExtraSelection active;
     active.cursor = textCursor();
     active.cursor.clearSelection();
-    active.format.setBackground(QColor("#1c2b3b"));
+    active.format.setBackground(palette().color(QPalette::AlternateBase));
     active.format.setProperty(QTextFormat::FullWidthSelection, true);
     selections.push_back(active);
+    const auto debugLine = [&](int line, const QString& color) {
+        if (line <= 0) return;
+        const auto block = document()->findBlockByNumber(line - 1);
+        if (!block.isValid()) return;
+        QTextEdit::ExtraSelection highlight;
+        highlight.cursor = QTextCursor(block);
+        highlight.format.setBackground(QColor(color));
+        highlight.format.setProperty(QTextFormat::FullWidthSelection, true);
+        selections.push_back(highlight);
+    };
+    debugLine(selectionLine_, picosource::selectionColor());
+    debugLine(executionLine_, picosource::executionColor());
     for (const auto& problem : problems_) {
         QTextEdit::ExtraSelection issue;
         issue.cursor = rangeCursor(problem.line, problem.column, problem.endLine, problem.endColumn);
@@ -260,5 +285,21 @@ void CodeEditor::goTo(int line, int column) {
         centerCursor();
     }
     setFocus();
+}
+
+void CodeEditor::revealDebugLine(int line) {
+    if (line <= 0) return;
+    const int visibleLines = qMax(1, viewport()->height() / fontMetrics().lineSpacing());
+    auto* bar = verticalScrollBar();
+    if (line - 1 < bar->value() || line - 1 >= bar->value() + visibleLines)
+        bar->setValue(qMax(0, line - 1 - visibleLines / 2));
+}
+
+void CodeEditor::setDebugLines(int executionLine, int selectionLine) {
+    if (executionLine_ == executionLine && selectionLine_ == selectionLine) return;
+    executionLine_ = executionLine;
+    selectionLine_ = selectionLine;
+    decorate();
+    gutter_->update();
 }
 }

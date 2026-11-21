@@ -82,6 +82,7 @@ void GdbTarget::connectProbe(const ProbeOptions& options) {
         throw Error(ErrorKind::InvalidArgument, "Les deux cœurs doivent correspondre à des threads distincts");
     // Each connection starts a new GDB process with no executable or symbols.
     elfPath_.clear();
+    ++symbolRevision_;
     elfHash_.clear();
     image = ElfImage();
     options_ = options; error_.clear(); connecting_ = busy_ = true; gdbStarted_ = false; executionBlocked_ = false;
@@ -283,11 +284,13 @@ void GdbTarget::load(const std::string& path) {
         if (!success(r)) {
             // GDB may have changed its executable before reporting a symbol error.
             elfPath_.clear();
+            ++symbolRevision_;
             elfHash_.clear();
             image = ElfImage();
             return;
         }
         image = candidate; elfPath_ = absolute; elfHash_ = hash; busy_ = false; snapshotNeeded_ = true;
+        ++symbolRevision_;
         stop.message = "Symboles ELF chargés ; la mémoire de la carte n'a pas été modifiée"; ++revision_;
         if (logMessage) logMessage(q(stop.message));
     });

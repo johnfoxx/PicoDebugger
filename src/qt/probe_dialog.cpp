@@ -22,7 +22,7 @@ bool configureProbe(QWidget* parent, picodbg::ProbeOptions& options) {
     QCheckBox launch("Démarrer OpenOCD pour la sonde officielle (CMSIS-DAP)"); launch.setChecked(settings.value("probe/launch", true).toBool());
     launch.setObjectName("probeLaunchOpenOcd");
     QLineEdit openocd(settings.value("probe/openocd", options.openOcd).toString()); openocd.setObjectName("probeOpenOcd");
-    QLineEdit scripts(settings.value("probe/scripts").toString()); scripts.setPlaceholderText("Dossier scripts OpenOCD, facultatif");
+    QLineEdit scripts(settings.value("probe/scripts", options.scripts).toString()); scripts.setPlaceholderText("Dossier scripts OpenOCD, facultatif");
     QLineEdit host(settings.value("probe/host", options.host).toString()); host.setObjectName("probeHost");
     QSpinBox port; port.setRange(1, 65535); port.setValue(settings.value("probe/port", options.port).toInt()); port.setObjectName("probePort");
     QSpinBox speed; speed.setRange(1, 10000); speed.setValue(settings.value("probe/speed", options.speed).toInt()); speed.setSuffix(" kHz");

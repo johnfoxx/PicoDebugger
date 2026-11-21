@@ -2,6 +2,7 @@
 
 #include "code_editor.hpp"
 #include "project.hpp"
+#include "../source_map.hpp"
 #include <QMainWindow>
 #include <QPointer>
 #include <memory>
@@ -12,6 +13,10 @@ class QComboBox;
 class QFileSystemModel;
 class QLabel;
 class QPlainTextEdit;
+class QHideEvent;
+class QShowEvent;
+class QSplitter;
+class QTableWidget;
 class QTabWidget;
 class QTreeWidget;
 class QTreeView;
@@ -20,14 +25,23 @@ namespace picoide {
 
 class IdeWindow : public QMainWindow {
 public:
-    explicit IdeWindow(MainWindow* debugger);
+    explicit IdeWindow(MainWindow* debugger = nullptr, picodbg::Board board = picodbg::Board::Pico);
+    ~IdeWindow() override;
+    void prepareElf(const QString& path) { startupElf_ = path; }
+    void prepareDemo() { startupDemo_ = true; }
     bool openProject(const QString& directory);
-    bool openSource(const QString& path);
-    void debuggerState(bool ready, picodbg::Board board, const QString& description);
+    bool openSource(const QString& path, bool focus = true);
+    void debuggerState(bool ready, bool canPause, bool canStep, bool debuggerVisible, bool inspectAssembly,
+                       picodbg::Board board, const QString& description);
     void debuggerFeedback(const QString& message, bool error = false);
+    void debuggerSourceState(const picosource::Location& current, const picosource::Location& selected,
+                             const picosource::SourceMap& map, bool hasPc, uint32_t pc,
+                             bool force, bool showSelection);
 
 protected:
     void closeEvent(QCloseEvent* event) override;
+    void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
 
 private:
     struct Source {
@@ -38,31 +52,43 @@ private:
         std::vector<Problem> diagnostics;
         unsigned completionSequence = 0;
     };
-    enum class Task { Configure, Build, Debug, Run, Board };
+    enum class Task { Configure, Build, Debug, Board };
     QPointer<MainWindow> debugger_;
+    std::unique_ptr<MainWindow> ownedDebugger_;
     Tools tools_;
     LanguageService language_;
     Build build_;
     QString root_, settingsKey_, buildDirectory_, languageContext_;
+    QString startupElf_;
+    bool startupDemo_ = false;
     QString buildLine_;
     std::vector<Problem> buildProblems_;
     std::vector<std::unique_ptr<Source>> sources_;
     QTreeView* tree_;
     QFileSystemModel* files_;
     QTabWidget* editors_;
+    QSplitter* codeSplit_;
+    QWidget* assemblyPane_;
+    QTableWidget* assembly_;
+    QLabel* assemblyStatus_;
     QTabWidget* bottom_;
     QPlainTextEdit* output_;
     QTreeWidget* problems_;
     QLabel* projectLabel_;
     QLabel* analysisStatus_;
     QLabel* targetStatus_;
+    QLabel* linkStatus_;
     QComboBox* board_;
     QComboBox* target_;
     QAction* compile_;
     QAction* configure_;
-    QAction* run_;
     QAction* debug_;
     QAction* boardRun_;
+    QAction* pause_;
+    QAction* step_;
+    QAction* followSource_;
+    QAction* goToAssembly_;
+    QAction* showAssembly_;
     QAction* cancel_;
     QAction* newProject_;
     QAction* openProject_;
@@ -77,8 +103,17 @@ private:
     bool emulationTemplate_ = false;
     picodbg::Board hardwareBoard_ = picodbg::Board::Pico;
     Task task_ = Task::Configure;
+    picosource::Location executingSource_, selectedSource_;
+    QDateTime debugElfTimestamp_;
+    bool syncingSource_ = false;
+    bool inspectAssembly_ = false;
+    bool assemblyDirty_ = true;
+    QList<int> assemblySizes_;
+    bool hasAssemblyPc_ = false;
+    uint32_t assemblyPc_ = 0;
 
     void setupUi();
+    MainWindow& openDebugger();
     void newProject();
     void pickProject();
     bool allowCloseSources();
@@ -93,6 +128,12 @@ private:
     void trashSource();
     Source* findSource(const QString& path);
     Source* sourceForWidget(QWidget* widget);
+    void highlightDebugLines(Source& source);
+    void updateAssemblyVisibility();
+    void refreshAssembly(const picosource::SourceMap& map, bool hasPc, uint32_t pc);
+    void revealDebugLocation(const picosource::Location& location);
+    bool sourceMatchesElf(const Source& source) const;
+    void selectSource(bool navigate);
     void closeSource(int index);
     bool save(Source& source);
     bool saveAll();

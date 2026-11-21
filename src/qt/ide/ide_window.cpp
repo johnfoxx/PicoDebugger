@@ -2,6 +2,7 @@
 #include "../main_window.hpp"
 #include "../choice_box.hpp"
 #include "../window_policy.hpp"
+#include "../window_theme.hpp"
 #include "picodbg/elf.hpp"
 
 #include <QAction>
@@ -20,9 +21,14 @@
 #include <QFileInfo>
 #include <QFileSystemModel>
 #include <QFontDatabase>
+#include <QHideEvent>
+#include <QHeaderView>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QInputDialog>
+#include "git_panel.hpp"
+#include "toolchain_catalog.hpp"
+#include <QStandardPaths>
 #include <QJsonDocument>
 #include <QLabel>
 #include <QLineEdit>
@@ -31,18 +37,23 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QScopedValueRollback>
 #include <QSettings>
+#include <QShowEvent>
 #include <QSignalBlocker>
 #include <QSplitter>
 #include <QStatusBar>
 #include <QStyle>
 #include <QTabWidget>
+#include <QTableWidget>
 #include <QTextBlock>
 #include <QToolBar>
+#include <QToolButton>
 #include <QTreeView>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 #include <algorithm>
+#include <set>
 
 namespace picoide {
 namespace {
@@ -70,20 +81,19 @@ bool readText(const QString& path, QByteArray& bytes) {
 }
 }
 
-IdeWindow::IdeWindow(MainWindow* debugger)
+IdeWindow::IdeWindow(MainWindow* debugger, picodbg::Board board)
     : debugger_(debugger), tools_(Tools::detect()), language_(this), build_(this) {
     setObjectName("picoIdeWindow");
     setWindowTitle("PicoDebugger — IDE C");
     resize(1180, 800);
-    setPalette(debugger->palette());
-    setStyleSheet(debugger->styleSheet() +
-        "QTreeView {background:#131e2b;border:1px solid #304052;alternate-background-color:#192635;}"
-        "QTreeView::item {min-height:23px;} QTreeView::item:selected {background:#28536b;}"
+    applyPicoTheme(*this);
+    setStyleSheet(styleSheet() +
         "QToolBar#ideToolbar {spacing:3px;padding:4px;}"
-        "QLabel#ideAnalysisStatus,QLabel#ideTargetStatus {padding:0 7px;color:#a5bdd3;}"
-        "QLabel#ideProjectTitle {color:#eff7ff;font-size:15px;font-weight:600;}");
+        "QLabel#ideAnalysisStatus,QLabel#ideTargetStatus {padding:0 7px;color:#d1d5d8;}"
+        "QToolButton#ideCloseTab {background:transparent;padding:0 4px;color:#d1d5d8;}"
+        "QToolButton#ideCloseTab:hover {background:#41474a;color:#fff;}");
     setupUi();
-    setProjectBoard(debugger->selectedBoard());
+    setProjectBoard(board);
     auto geometry = QSettings().value("ide/geometry").toByteArray();
     if (!geometry.isEmpty()) restoreGeometry(geometry);
     build_.output = [this](const QString& text) { appendBuildOutput(text); };
@@ -105,15 +115,40 @@ IdeWindow::IdeWindow(MainWindow* debugger)
     refreshActions();
 }
 
+IdeWindow::~IdeWindow() {
+    if (ownedDebugger_) ownedDebugger_->attachIde(nullptr);
+}
+
+MainWindow& IdeWindow::openDebugger() {
+    if (!debugger_) {
+        ownedDebugger_.reset(new MainWindow);
+        debugger_ = ownedDebugger_.get();
+        debugger_->selectBoard(projectBoard());
+        debugger_->attachIde(this);
+    }
+    showInspectionWindow(debugger_);
+    if (startupDemo_) {
+        startupDemo_ = false;
+        debugger_->loadDemo();
+    } else if (!startupElf_.isEmpty()) {
+        const auto path = startupElf_;
+        startupElf_.clear();
+        debugger_->loadFile(path);
+    }
+    return *debugger_;
+}
+
 void IdeWindow::setupUi() {
     auto* file = menuBar()->addMenu("Projet");
     auto* edit = menuBar()->addMenu("Édition");
     auto* buildMenu = menuBar()->addMenu("Compilation");
+    auto* debugMenu = menuBar()->addMenu("Débogage");
     auto* help = menuBar()->addMenu("Aide");
     auto* toolbar = addToolBar("Projet et lancement");
     toolbar->setObjectName("ideToolbar");
     toolbar->setMovable(false);
     toolbar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    toolbar->setIconSize(QSize(16, 16));
     const auto action = [this](QMenu* menu, const QString& text, const char* id, const QKeySequence& shortcut,
                                const std::function<void()>& invoke) {
         auto* item = menu->addAction(text);
@@ -131,6 +166,13 @@ void IdeWindow::setupUi() {
     });
     closeProject_ = action(file, "Fermer le projet", "ideCloseProject", {}, [this] {
         if (!build_.busy() && allowCloseSources()) resetProject();
+    });
+    action(file, "Git…", "ideGit", {}, [this] {
+        if (root_.isEmpty()) { statusBar()->showMessage("Ouvrir un projet pour utiliser Git.", 4000); return; }
+        if (!saveAll()) return;
+        const auto setting = QSettings().value("ide/git", "git").toString();
+        GitPanel panel(root_, QStandardPaths::findExecutable(setting), this);
+        panel.exec();
     });
     file->addSeparator();
     newFile_ = action(file, "Nouveau fichier…", "ideNewFile", QKeySequence::New, [this] { createEntry(false); });
@@ -167,21 +209,55 @@ void IdeWindow::setupUi() {
     })->setToolTip("Ctrl+Espace dans l'éditeur");
     configure_ = action(buildMenu, "Configurer CMake", "ideConfigure", {}, [this] { build(Task::Configure); });
     compile_ = action(buildMenu, "Compiler", "ideBuild", QKeySequence("Ctrl+B"), [this] { build(Task::Build); });
-    debug_ = action(buildMenu, "Ouvrir dans le débogueur à l'arrêt", "ideDebug", QKeySequence("Ctrl+F5"), [this] { build(Task::Debug); });
-    run_ = action(buildMenu, "Lancer en émulation", "ideRun", QKeySequence(Qt::Key_F5), [this] { build(Task::Run); });
-    boardRun_ = action(buildMenu, "Lancer sur la carte…", "ideRunBoard", QKeySequence("Shift+F5"), [this] { build(Task::Board); });
+    debug_ = action(buildMenu, "Compiler et déboguer en émulation", "ideDebug", {}, [this] { build(Task::Debug); });
+    debug_->setShortcuts({QKeySequence(Qt::Key_F5), QKeySequence("Ctrl+F5")});
+    debug_->setToolTip("Compiler et charger à l'arrêt en émulation (F5)");
+    boardRun_ = action(buildMenu, "Téléverser et déboguer sur la carte…", "ideRunBoard", QKeySequence("Ctrl+Shift+F5"), [this] { build(Task::Board); });
+    pause_ = action(buildMenu, "Mettre l'exécution en pause", "idePause", QKeySequence("Shift+F5"), [this] {
+        if (debugger_) debugger_->pauseFromIde();
+    });
+    pause_->setEnabled(false);
+    step_ = action(debugMenu, "Pas instruction", "ideStepInstruction", QKeySequence(Qt::Key_F10), [this] {
+        if (debugger_) debugger_->stepFromIde();
+    });
+    step_->setEnabled(false);
+    followSource_ = action(debugMenu, "Suivre le PC dans le C", "ideFollowSource", {}, [this] {
+        if (followSource_->isChecked()) revealDebugLocation(executingSource_);
+    });
+    followSource_->setCheckable(true);
+    followSource_->setChecked(true);
+    followSource_->setToolTip("Turquoise pour la ligne du PC, violet pour la ligne sélectionnée.");
+    goToAssembly_ = action(debugMenu, "Voir l'assembleur de cette ligne", "ideGoToAssembly", QKeySequence("Ctrl+Alt+A"),
+                            [this] { selectSource(true); });
+    showAssembly_ = action(debugMenu, "Afficher l'assembleur à l'arrêt", "ideShowAssembly", {}, [this] {
+        updateAssemblyVisibility();
+        if (debugger_) debugger_->refreshIdeSource();
+    });
+    showAssembly_->setCheckable(true);
+    showAssembly_->setChecked(true);
     cancel_ = action(buildMenu, "Annuler la compilation", "ideCancel", {}, [this] { build_.cancel(); });
     action(buildMenu, "Outils du projet…", "ideToolchains", {}, [this] { configureTools(); });
+    action(buildMenu, "Installer les dépendances localement…", "ideInstallLocalTools", {}, [this] {
+        if (build_.busy() || !manageLocalTools(this)) return;
+        tools_ = Tools::detect();
+        if (!root_.isEmpty()) {
+            buildDirectory_ = projectBuildDirectory(root_, projectBoard(), tools_);
+            restartLanguage(true);
+        }
+        statusBar()->showMessage("Outils locaux redétectés", 4000);
+    });
     action(help, "Installation des outils…", "ideInstallGuide", {}, [this] { configureTools(); });
-    auto* debugger = action(help, "Afficher le débogueur", "ideShowDebugger", QKeySequence("Ctrl+Shift+D"), [this] {
-        if (debugger_) showInspectionWindow(debugger_);
+    auto* debugger = action(debugMenu, "Afficher le débogueur", "ideShowDebugger", QKeySequence("Ctrl+Shift+D"), [this] {
+        openDebugger();
     });
     openProject_->setIcon(style()->standardIcon(QStyle::SP_DialogOpenButton));
     openProject_->setIconText("Ouvrir");
     compile_->setIcon(style()->standardIcon(QStyle::SP_BrowserReload));
-    run_->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
-    run_->setIconText("Émuler");
+    debug_->setIconText("Déboguer");
     boardRun_->setIconText("Carte");
+    step_->setIcon(style()->standardIcon(QStyle::SP_ArrowRight));
+    step_->setIconText("Pas");
+    pause_->setIconText("Pause");
     cancel_->setIconText("Annuler");
     debugger->setIcon(style()->standardIcon(QStyle::SP_DesktopIcon));
     debugger->setIconText("Débogueur");
@@ -196,8 +272,8 @@ void IdeWindow::setupUi() {
     target_->setToolTip("Exécutable CMake à compiler et lancer");
     target_->addItem("Toutes les cibles", QString());
     toolbar->addWidget(board_); toolbar->addWidget(target_);
-    toolbar->addSeparator(); toolbar->addAction(compile_); toolbar->addAction(run_);
-    toolbar->addAction(boardRun_); toolbar->addAction(cancel_);
+    toolbar->addSeparator(); toolbar->addAction(compile_); toolbar->addAction(debug_);
+    toolbar->addAction(boardRun_); toolbar->addAction(step_); toolbar->addAction(pause_); toolbar->addAction(cancel_);
     toolbar->addSeparator(); toolbar->addAction(debugger);
     connect(board_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this] {
         if (root_.isEmpty()) return;
@@ -227,6 +303,7 @@ void IdeWindow::setupUi() {
     files_->setFilter(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::NoSymLinks);
     tree_->setModel(files_);
     tree_->setHeaderHidden(true);
+    tree_->setUniformRowHeights(true);
     for (int column = 1; column < files_->columnCount(); ++column) tree_->hideColumn(column);
     tree_->setAlternatingRowColors(true);
     connect(tree_, &QTreeView::activated, this, [this](const QModelIndex& index) {
@@ -246,9 +323,8 @@ void IdeWindow::setupUi() {
 
     editors_ = new QTabWidget;
     editors_->setObjectName("ideEditors");
-    editors_->setTabsClosable(true); editors_->setMovable(true);
-    connect(editors_, &QTabWidget::tabCloseRequested, this, [this](int index) { closeSource(index); });
-    connect(editors_, &QTabWidget::currentChanged, this, [this] { refreshActions(); });
+    editors_->setMovable(true);
+    connect(editors_, &QTabWidget::currentChanged, this, [this] { refreshActions(); selectSource(false); });
     auto* welcome = new QWidget;
     auto* welcomeLayout = new QVBoxLayout(welcome);
     welcomeLayout->setContentsMargins(32, 38, 32, 30);
@@ -265,9 +341,38 @@ void IdeWindow::setupUi() {
     welcomeLayout->addWidget(heading); welcomeLayout->addWidget(intro);
     welcomeLayout->addLayout(buttons); welcomeLayout->addStretch();
     editors_->addTab(welcome, "Accueil");
-    editors_->tabBar()->setTabButton(0, QTabBar::LeftSide, nullptr);
-    editors_->tabBar()->setTabButton(0, QTabBar::RightSide, nullptr);
-    workspace->addWidget(editors_);
+    codeSplit_ = new QSplitter;
+    codeSplit_->addWidget(editors_);
+    assemblyPane_ = new QWidget;
+    assemblyPane_->setObjectName("ideAssemblyPane");
+    auto* assemblyLayout = new QVBoxLayout(assemblyPane_);
+    assemblyLayout->setContentsMargins(4, 3, 0, 0);
+    auto* assemblyTitle = new QLabel("Assembleur de l’ELF");
+    assemblyTitle->setObjectName("sectionTitle");
+    assemblyLayout->addWidget(assemblyTitle);
+    assembly_ = new QTableWidget(0, 4);
+    assembly_->setObjectName("ideAssemblyTable");
+    assembly_->setHorizontalHeaderLabels({QString(), "Adresse", "Instruction", "Source C"});
+    assembly_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+    assembly_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    assembly_->setSelectionMode(QAbstractItemView::NoSelection);
+    assembly_->setAlternatingRowColors(true);
+    assembly_->setShowGrid(false);
+    assembly_->verticalHeader()->hide();
+    assembly_->verticalHeader()->setDefaultSectionSize(24);
+    assembly_->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    assembly_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Interactive);
+    assembly_->setColumnWidth(3, 102);
+    assemblyLayout->addWidget(assembly_, 1);
+    assemblyStatus_ = new QLabel;
+    assemblyStatus_->setObjectName("ideAssemblyStatus");
+    assemblyStatus_->setTextFormat(Qt::PlainText);
+    assemblyStatus_->setWordWrap(true);
+    assemblyLayout->addWidget(assemblyStatus_);
+    codeSplit_->addWidget(assemblyPane_);
+    codeSplit_->setChildrenCollapsible(false);
+    assemblyPane_->hide();
+    workspace->addWidget(codeSplit_);
     workspace->setStretchFactor(1, 1);
     workspace->setSizes({245, 900});
     rootPane->addWidget(workspace);
@@ -301,7 +406,10 @@ void IdeWindow::setupUi() {
     targetStatus_ = new QLabel("Carte déconnectée");
     targetStatus_->setObjectName("ideTargetStatus");
     targetStatus_->setTextFormat(Qt::PlainText);
+    linkStatus_ = new QLabel("Débogueur fermé");
+    linkStatus_->setObjectName("ideDebuggerLink");
     statusBar()->addPermanentWidget(analysisStatus_);
+    statusBar()->addPermanentWidget(linkStatus_);
     statusBar()->addPermanentWidget(targetStatus_);
 }
 
@@ -326,14 +434,14 @@ void IdeWindow::newProject() {
     populateBoards(card);
     card.setCurrentIndex(card.findData(static_cast<int>(projectBoard())));
     ChoiceBox type;
-    type.addItem("Exemple C pour émulation", static_cast<int>(Template::Emulator));
-    type.addItem("Firmware Pico SDK pour carte réelle", static_cast<int>(Template::Sdk));
+    type.addItem("C autonome · émulateur et carte", static_cast<int>(Template::BareMetal));
+    type.addItem("Projet C avec Pico SDK", static_cast<int>(Template::Sdk));
     QLabel explanation;
     explanation.setWordWrap(true);
     const auto explain = [&] {
         explanation.setText(type.currentIndex() == 0
-            ? "Un exemple accessible sans Pico SDK, à compiler avec ARM GCC. Il clignote sur la sortie GPIO25 simulée."
-            : "Un exemple utilisant le Pico SDK et la LED de la carte. Le SDK et le compilateur ARM GCC sont nécessaires.");
+            ? "Un compteur C à compiler avec ARM GCC. Le même ELF en RAM se lance dans l'émulateur et sur la carte via SWD."
+            : "Un projet standard avec le Pico SDK et la LED de la carte. Son exécution en émulation dépend des périphériques et instructions utilisés.");
     };
     connect(&type, QOverload<int>::of(&QComboBox::currentIndexChanged), &dialog, explain);
     explain();
@@ -404,10 +512,12 @@ bool IdeWindow::openProject(const QString& directory) {
         const auto file = QDir(root_).filePath(entry);
         if (QFileInfo(file).isFile() && openSource(file)) break;
     }
+    if (followSource_->isChecked()) revealDebugLocation(executingSource_);
     return true;
 }
 
 void IdeWindow::resetProject() {
+    const QSignalBlocker blockedEditors(editors_);
     for (const auto& source : sources_) {
         language_.close(source->path);
         editors_->removeTab(editors_->indexOf(source->editor));
@@ -432,6 +542,7 @@ void IdeWindow::resetProject() {
     output_->clear();
     refreshProblems();
     refreshActions();
+    selectSource(false);
 }
 
 void IdeWindow::setProjectBoard(picodbg::Board card) {
@@ -511,12 +622,20 @@ void IdeWindow::trashSource() {
     statusBar()->showMessage("Fichier placé dans la corbeille · vérifier ses références dans le projet", 6000);
 }
 
-bool IdeWindow::openSource(const QString& path) {
+bool IdeWindow::openSource(const QString& path, bool focus) {
     if (!belongsToProject(path)) return false;
     const auto canonical = QFileInfo(path).canonicalFilePath();
+    const auto selectFile = [this, &canonical] {
+        const auto index = files_->index(canonical);
+        if (index.isValid()) {
+            tree_->setCurrentIndex(index);
+            tree_->scrollTo(index);
+        }
+    };
     if (auto* existing = findSource(canonical)) {
         editors_->setCurrentWidget(existing->editor);
-        existing->editor->setFocus();
+        selectFile();
+        if (focus) existing->editor->setFocus();
         return true;
     }
     QByteArray contents;
@@ -538,6 +657,7 @@ bool IdeWindow::openSource(const QString& path) {
     });
     connect(editor, &QPlainTextEdit::textChanged, editor, [this, handle] {
         handle->sync->start();
+        highlightDebugLines(*handle);
         if (!handle->diagnostics.empty()) {
             handle->diagnostics.clear();
             handle->editor->showProblems({});
@@ -547,19 +667,29 @@ bool IdeWindow::openSource(const QString& path) {
     connect(editor->document(), &QTextDocument::modificationChanged, editor, [this, handle](bool modified) {
         const int index = editors_->indexOf(handle->editor);
         if (index >= 0) editors_->setTabText(index, QFileInfo(handle->path).fileName() + (modified ? " •" : ""));
+        highlightDebugLines(*handle);
+        if (editors_->currentWidget() == handle->editor) selectSource(false);
+    });
+    connect(editor, &QPlainTextEdit::cursorPositionChanged, editor, [this, editor] {
+        if (editors_->currentWidget() == editor) selectSource(false);
     });
     if (!language.id.isEmpty()) editor->completionRequested = [this, handle] { requestCompletion(*handle); };
     language_.open(canonical, language, editor->toPlainText());
     sources_.push_back(std::move(source));
     const auto index = editors_->addTab(editor, QFileInfo(canonical).fileName());
     editors_->setTabToolTip(index, canonical);
+    auto* close = new QToolButton(editors_->tabBar());
+    close->setObjectName("ideCloseTab");
+    close->setText("×");
+    close->setAccessibleName("Fermer " + QFileInfo(canonical).fileName());
+    close->setToolTip(close->accessibleName());
+    close->setFocusPolicy(Qt::NoFocus);
+    connect(close, &QToolButton::clicked, this, [this, editor] { closeSource(editors_->indexOf(editor)); });
+    editors_->tabBar()->setTabButton(index, QTabBar::RightSide, close);
     editors_->setCurrentIndex(index);
-    const auto treeIndex = files_->index(canonical);
-    if (treeIndex.isValid()) {
-        tree_->setCurrentIndex(treeIndex);
-        tree_->scrollTo(treeIndex);
-    }
-    editor->setFocus();
+    highlightDebugLines(*handle);
+    selectFile();
+    if (focus) editor->setFocus();
     return true;
 }
 
@@ -654,6 +784,7 @@ void IdeWindow::configureTools() {
     struct Entry { const char* title; const char* key; QString found; bool folder; QLineEdit* field; };
     Entry entries[] = {
         {"CMake", "ide/cmake", detected.cmake, false},
+        {"Git", "ide/git", QStandardPaths::findExecutable("git"), false},
         {"Compilateur ARM GCC", "ide/gcc", detected.gcc, false},
         {"Pico SDK", "ide/sdk", detected.sdk, true},
         {"clangd", "ide/clangd", detected.clangd, false},
@@ -677,12 +808,8 @@ void IdeWindow::configureTools() {
         });
     }
     layout->addLayout(fields);
-    auto* links = new QLabel(
-        "<a href='https://www.raspberrypi.com/documentation/microcontrollers/c_sdk.html'>Guide et Pico SDK</a> · "
-        "<a href='https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads'>Arm GNU Toolchain</a> · "
-        "<a href='https://cmake.org/download/'>CMake</a> · "
-        "<a href='https://clangd.llvm.org/installation'>clangd</a> · "
-        "<a href='https://www.raspberrypi.com/documentation/microcontrollers/debug-probe.html'>Debug Probe et OpenOCD</a>");
+    auto* links = new QLabel(dependencyLinks());
+    links->setTextFormat(Qt::RichText);
     links->setWordWrap(true); links->setOpenExternalLinks(true); layout->addWidget(links);
     QDialogButtonBox buttons(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
     buttons.addButton("Utiliser la détection automatique", QDialogButtonBox::ResetRole);
@@ -859,7 +986,6 @@ void IdeWindow::buildFinished(bool success, const QString& message, const std::v
 }
 
 void IdeWindow::launch(const std::vector<Artifact>& artifacts) {
-    if (!debugger_) return;
     const auto selected = target_->currentData().toString();
     QStringList choices, paths;
     for (const auto& artifact : artifacts) {
@@ -882,7 +1008,9 @@ void IdeWindow::launch(const std::vector<Artifact>& artifacts) {
         if (!accepted) return;
         index = choices.indexOf(choice);
     }
-    debugger_->launchProjectElf(paths.at(index), projectBoard(), task_ == Task::Board, task_ != Task::Debug);
+    startupElf_.clear();
+    startupDemo_ = false;
+    openDebugger().launchProjectElf(paths.at(index), projectBoard(), task_ == Task::Board, false);
 }
 
 void IdeWindow::refreshActions() {
@@ -895,20 +1023,41 @@ void IdeWindow::refreshActions() {
     const bool editableFile = ready && selected != QDir(root_).filePath("CMakeLists.txt") &&
                               belongsToProject(selected) && QFileInfo(selected).isFile();
     rename_->setEnabled(editableFile); trash_->setEnabled(editableFile);
-    compile_->setEnabled(ready); configure_->setEnabled(ready); run_->setEnabled(ready); debug_->setEnabled(ready);
+    compile_->setEnabled(ready); configure_->setEnabled(ready); debug_->setEnabled(ready);
     boardRun_->setEnabled(ready && !emulationTemplate_ && hardwareReady_ && hardwareBoard_ == projectBoard());
     boardRun_->setToolTip(emulationTemplate_ ? "Le modèle d'émulation produit un ELF pour le simulateur."
         : hardwareReady_ && hardwareBoard_ != projectBoard()
         ? "La carte connectée diffère du profil de compilation."
-        : hardwareReady_ ? "Compiler, téléverser et lancer sur la carte connectée"
+        : hardwareReady_ ? "Compiler, téléverser et laisser la carte arrêtée"
                          : "Connecter et arrêter la carte dans le débogueur");
     cancel_->setEnabled(busy);
+    cancel_->setVisible(busy);
     board_->setEnabled(ready); target_->setEnabled(ready);
     save_->setEnabled(hasProject && sourceForWidget(editors_->currentWidget()));
     saveAll_->setEnabled(hasProject && !sources_.empty());
+    goToAssembly_->setEnabled(debugger_ && sourceForWidget(editors_->currentWidget()));
 }
 
-void IdeWindow::debuggerState(bool ready, picodbg::Board card, const QString& description) {
+void IdeWindow::showEvent(QShowEvent* event) {
+    QMainWindow::showEvent(event);
+    if (debugger_) debugger_->syncIdeState();
+    if (followSource_->isChecked()) revealDebugLocation(executingSource_);
+}
+
+void IdeWindow::hideEvent(QHideEvent* event) {
+    QMainWindow::hideEvent(event);
+    if (debugger_) debugger_->syncIdeState();
+}
+
+void IdeWindow::debuggerState(bool ready, bool canPause, bool canStep, bool debuggerVisible, bool inspectAssembly,
+                              picodbg::Board card, const QString& description) {
+    pause_->setEnabled(canPause);
+    step_->setEnabled(canStep);
+    if (inspectAssembly_ != inspectAssembly) {
+        inspectAssembly_ = inspectAssembly;
+        updateAssemblyVisibility();
+    }
+    linkStatus_->setText(debuggerVisible ? "Débogueur relié" : "Débogueur fermé");
     if (hardwareReady_ == ready && hardwareBoard_ == card && targetStatus_->text() == description) return;
     hardwareReady_ = ready;
     hardwareBoard_ = card;
@@ -924,6 +1073,135 @@ void IdeWindow::debuggerFeedback(const QString& message, bool error) {
 
 void IdeWindow::warn(const QString& message) {
     QMessageBox::warning(this, "PicoDebugger IDE", message);
+}
+
+void IdeWindow::debuggerSourceState(const picosource::Location& current, const picosource::Location& selected,
+                                    const picosource::SourceMap& map, bool hasPc, uint32_t pc,
+                                    bool force, bool showSelection) {
+    const auto timestamp = map.elfTimestamp();
+    const bool lineChanged = executingSource_ != current || debugElfTimestamp_ != timestamp;
+    const bool selectionChanged = selectedSource_ != selected;
+    executingSource_ = current;
+    selectedSource_ = selected;
+    debugElfTimestamp_ = timestamp;
+    if (lineChanged || selectionChanged)
+        for (auto& source : sources_) highlightDebugLines(*source);
+    if (showSelection) revealDebugLocation(selectedSource_);
+    else if (lineChanged && followSource_->isChecked()) revealDebugLocation(executingSource_);
+    if (!assemblyPane_->isHidden() &&
+        (force || lineChanged || selectionChanged || assemblyDirty_ || hasPc != hasAssemblyPc_ || pc != assemblyPc_))
+        refreshAssembly(map, hasPc, pc);
+}
+
+void IdeWindow::updateAssemblyVisibility() {
+    const bool show = inspectAssembly_ && showAssembly_->isChecked();
+    if (show == !assemblyPane_->isHidden()) return;
+    if (!show) {
+        const auto sizes = codeSplit_->sizes();
+        if (sizes.at(1) > 0) assemblySizes_ = sizes;
+    }
+    assemblyPane_->setVisible(show);
+    if (show) {
+        const int width = codeSplit_->width();
+        const int codeWidth = width * 56 / 100;
+        codeSplit_->setSizes(assemblySizes_.isEmpty() ? QList<int>{codeWidth, width - codeWidth} : assemblySizes_);
+    }
+    assemblyDirty_ = true;
+}
+
+void IdeWindow::refreshAssembly(const picosource::SourceMap& map, bool hasPc, uint32_t pc) {
+    hasAssemblyPc_ = hasPc;
+    assemblyPc_ = pc;
+    assemblyDirty_ = false;
+    std::set<uint32_t> rows;
+    constexpr size_t maxInstructionsPerLine = 1024;
+    bool truncated = false;
+    for (const auto& location : {executingSource_, selectedSource_}) {
+        const auto& addresses = map.assemblyAddresses(location);
+        const auto count = std::min(addresses.size(), maxInstructionsPerLine);
+        rows.insert(addresses.begin(), addresses.begin() + count);
+        truncated |= addresses.size() > count;
+    }
+    if (hasPc && !map.instruction(pc).isEmpty()) rows.insert(pc);
+    assembly_->setRowCount(static_cast<int>(rows.size()));
+    int row = 0, pcRow = -1, selectionRow = -1;
+    for (const auto address : rows) {
+        const auto location = map.location(address);
+        const bool atPc = hasPc && pc == address;
+        const bool executing = atPc || (location.valid() && location == executingSource_);
+        const bool selected = location.valid() && location == selectedSource_;
+        const QColor color(executing ? picosource::executionColor() : picosource::selectionColor());
+        const QStringList columns{atPc ? "▶" : QString(), QString::fromStdString(picodbg::hex(address)),
+            map.instruction(address), location.valid() ? QFileInfo(location.path).fileName() + ":" + QString::number(location.line) : QString()};
+        for (int column = 0; column < columns.size(); ++column) {
+            auto* cell = new QTableWidgetItem(columns.at(column));
+            cell->setToolTip(columns.at(column));
+            if (executing || selected) cell->setBackground(color);
+            assembly_->setItem(row, column, cell);
+        }
+        if (atPc) pcRow = row;
+        if (selected && selectionRow < 0) selectionRow = row;
+        ++row;
+    }
+    if (selectionRow >= 0) assembly_->scrollToItem(assembly_->item(selectionRow, 1));
+    else if (pcRow >= 0) assembly_->scrollToItem(assembly_->item(pcRow, 1));
+    QString status = map.assemblyStatus();
+    if (status.isEmpty()) {
+        if (!map.hasLocations()) status = map.status();
+        else if (truncated) status = "Affichage limité aux 1 024 premières instructions par ligne.";
+        else if (selectedSource_.valid() && selectionRow < 0) status = "Aucune instruction associée à la ligne sélectionnée.";
+        else if (rows.empty()) status = "Sélectionner une ligne C pour voir ses instructions.";
+        else status = "▶ PC · turquoise  |  Sélection · violet";
+    }
+    assemblyStatus_->setText(status);
+}
+
+bool IdeWindow::sourceMatchesElf(const Source& source) const {
+    if (!debugElfTimestamp_.isValid() || source.editor->document()->isModified()) return false;
+    const QFileInfo file(source.path);
+    return file.isFile() && file.lastModified() <= debugElfTimestamp_;
+}
+
+void IdeWindow::highlightDebugLines(Source& source) {
+    const int execution = executingSource_.path == source.path ? executingSource_.line : 0;
+    const int selection = selectedSource_.path == source.path ? selectedSource_.line : 0;
+    if ((execution || selection) && sourceMatchesElf(source)) source.editor->setDebugLines(execution, selection);
+    else source.editor->setDebugLines(0, 0);
+}
+
+void IdeWindow::revealDebugLocation(const picosource::Location& location) {
+    if (!isVisible() || !location.valid() || !belongsToProject(location.path) ||
+        QFileInfo(location.path).lastModified() > debugElfTimestamp_) return;
+    const auto* current = sourceForWidget(editors_->currentWidget());
+    if (current && current->editor->document()->isModified() && current->path != location.path) return;
+    if (const auto* source = findSource(location.path)) {
+        if (!sourceMatchesElf(*source)) return;
+    }
+    const QScopedValueRollback<bool> guard(syncingSource_, true);
+    if (openSource(location.path, false)) {
+        if (auto* source = findSource(location.path)) {
+            highlightDebugLines(*source);
+            source->editor->revealDebugLine(location.line);
+        }
+    }
+}
+
+void IdeWindow::selectSource(bool navigate) {
+    if (!debugger_ || syncingSource_) return;
+    auto* source = sourceForWidget(editors_->currentWidget());
+    picosource::Location location;
+    if (source && !languageForFile(source->path).id.isEmpty() && sourceMatchesElf(*source)) {
+        location.path = source->path;
+        location.line = source->editor->textCursor().blockNumber() + 1;
+    }
+    if (navigate && source && debugElfTimestamp_.isValid() && !sourceMatchesElf(*source)) {
+        statusBar()->showMessage("Source modifiée depuis la compilation. Recompiler le projet.", 5500);
+        return;
+    }
+    const bool mapped = debugger_->selectSourceLine(location, navigate);
+    if (navigate && mapped && inspectAssembly_ && !showAssembly_->isChecked()) showAssembly_->trigger();
+    if (navigate && !mapped)
+        statusBar()->showMessage("Aucun assembleur disponible pour cette ligne. Charger un ELF avec -g et arrêter la carte.", 6500);
 }
 
 }

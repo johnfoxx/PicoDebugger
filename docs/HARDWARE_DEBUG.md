@@ -80,11 +80,22 @@ La lecture d'une zone protégée ou inaccessible affiche l'erreur du serveur ; a
 ## Limites qui restent présentes
 
 - ARM/Thumb uniquement, pas de chargement ELF Hazard3/RISC-V, UF2 ou BIN.
-- Désassemblage et symboles ELF ; pas de pas source C/C++, variables DWARF ni déroulage de pile.
+- Désassemblage, symboles ELF et lignes C via DWARF pour le PC arrêté. Le pas s'effectue à l'instruction. Les variables DWARF et le déroulage de pile restent à implémenter.
 - Pas de contournement des permissions de debug, de TrustZone, des protections OTP ou d'une configuration verrouillée. Les registres accessibles dépendent de la cible et du serveur.
 - Le CYW43 des cartes W est un composant externe piloté par le firmware ; ses registres internes et son état radio ne sont pas exposés directement par le SWD du RP2040/RP2350.
-- Le temps virtuel et l'injection UART simulée sont désactivés. Le port **U / UART** de la Debug Probe nécessite son câblage série et un terminal externe ; cette liaison n'est pas encore intégrée à la GUI.
+- Le temps virtuel et l'injection UART simulée sont réservés à l'émulation.
 - Le succès en émulation ne certifie pas le comportement matériel. Un firmware qui utilise des blocs non émulés peut fonctionner sur carte tout en arrêtant le simulateur.
+
+## Lire les traces UART
+
+1. Connecter la Debug Probe au PC par USB. Sur son port **U / UART**, relier d'abord les masses **GND**, puis le **RX de la sonde au TX de la carte**. Alimenter la carte séparément. [Câblage officiel de la Debug Probe](https://www.raspberrypi.com/documentation/microcontrollers/debug-probe.html#serial-connections)
+2. Configurer le firmware pour émettre sur l'UART et les broches câblées. Avec le Pico SDK, activer `pico_enable_stdio_uart(nom_de_la_cible 1)` dans CMake et appeler `stdio_init_all()` avant les `printf`. Le débit du firmware et celui du moniteur doivent correspondre. Pour envoyer immédiatement un message conservé dans le tampon de sortie, appeler `fflush(stdout)`.
+3. Dans le débogueur, ouvrir **Cible → Moniteur série de la sonde…** (**Ctrl+Maj+U**). Si une seule Debug Probe est identifiée, son port est proposé automatiquement. Sinon, choisir le port ou saisir son chemin. Si la sonde vient d'être branchée, cliquer **Actualiser**. Le débit initial est de **115200 bauds**, en **8N1**.
+4. Cliquer **Connecter**, puis lancer ou réinitialiser le firmware si les premiers messages sont émis au démarrage. Le moniteur lit l'UART même si la session SWD est déconnectée. **Défilement automatique** suit la sortie. **Enregistrer…** exporte en UTF-8 le journal affiché, qui conserve les dernières traces dans la limite de 10 000 lignes ou 256 K caractères.
+
+Si le port est introuvable, vérifier le câble USB de la sonde et, sous Linux, les droits sur son périphérique série, souvent `/dev/ttyACM0`. Si le port est occupé, fermer le terminal qui l'utilise. Si le port est ouvert et le journal reste vide, vérifier que le firmware sort bien sur l'UART, le débit, la masse commune et le raccordement TX vers RX.
+
+La compilation utilise **Qt Serial Port** si son module de développement est installé pour la version de Qt utilisée. Sous Unix, une liaison série native est disponible avec Qt Widgets seul. Sur les autres systèmes, installer le module Qt Serial Port correspondant à la version utilisée et reconfigurer CMake.
 
 ## Déconnexion et diagnostic
 

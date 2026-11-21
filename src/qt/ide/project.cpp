@@ -1,4 +1,5 @@
 #include "project.hpp"
+#include "toolchain_catalog.hpp"
 
 #include <QCryptographicHash>
 #include <QDir>
@@ -108,19 +109,27 @@ std::vector<Artifact> readArtifacts(const QString& directory) {
 
 Tools Tools::detect() {
     const QSettings settings;
+    const auto managed = installedTools();
+    const auto local = [&managed](const char* name) { return managed.value(name).toString(); };
     Tools tools;
-    tools.cmake = configuredTool(settings, "ide/cmake", {"cmake"});
+    tools.cmake = configuredTool(settings, "ide/cmake", {local("cmake"), "cmake"});
     const auto sdkToolchain = QString::fromLocal8Bit(qgetenv("PICO_TOOLCHAIN_PATH"));
     tools.gcc = configuredTool(settings, "ide/gcc", {
+        local("gcc"),
         sdkToolchain.isEmpty() ? QString() : QDir(sdkToolchain).filePath("bin/arm-none-eabi-gcc"),
         "arm-none-eabi-gcc"
     });
-    tools.clangd = configuredTool(settings, "ide/clangd", {"clangd"});
-    tools.gdb = configuredTool(settings, "probe/gdb", {"gdb-multiarch", "arm-none-eabi-gdb"});
-    tools.openocd = configuredTool(settings, "probe/openocd", {"openocd"});
+    tools.clangd = configuredTool(settings, "ide/clangd", {local("clangd"), "clangd"});
+    tools.gdb = configuredTool(settings, "probe/gdb", {local("gdb"), "gdb-multiarch", "arm-none-eabi-gdb"});
+    tools.openocd = configuredTool(settings, "probe/openocd", {local("openocd"), "openocd"});
+    if (!tools.openocd.isEmpty() && tools.openocd == local("openocd"))
+        tools.openocdScripts = local("openocdScripts");
+    tools.ninja = executable(local("ninja"));
+    tools.picotool = executable(local("picotool"));
+    tools.pioasm = executable(local("pioasm"));
     const auto configured = settings.value("ide/sdk").toString().trimmed();
     const auto paths = configured.isEmpty()
-        ? QStringList{QString::fromLocal8Bit(qgetenv("PICO_SDK_PATH")),
+        ? QStringList{local("sdk"), QString::fromLocal8Bit(qgetenv("PICO_SDK_PATH")),
                       QDir::home().filePath("pico/pico-sdk"), QDir::home().filePath("pico-sdk")}
         : QStringList{configured};
     for (const auto& path : paths) {
@@ -148,7 +157,7 @@ QString boardName(picodbg::Board board) {
 
 QString projectBuildDirectory(const QString& root, picodbg::Board board, const Tools& tools) {
     QByteArray identity;
-    for (const auto& path : {tools.cmake, tools.gcc, tools.sdk}) {
+    for (const auto& path : {tools.cmake, tools.gcc, tools.sdk, tools.ninja, tools.picotool, tools.pioasm}) {
         identity += path.toUtf8();
         identity += '\0';
     }
@@ -170,21 +179,20 @@ QString createProject(const QString& parent, const QString& name, picodbg::Board
     const QDir destination(staging.path());
     const auto boardId = boardName(board).toUtf8();
     const auto projectName = name.toUtf8();
-    const auto prefix = kind == Template::Sdk ? QString("sdk/") : QString("emulator/");
+    const auto prefix = kind == Template::Sdk ? QString("sdk/") : QString("bare-metal/");
     // The resource prefix selects the template. Published files live at the project root.
     const QDir tree(destination.filePath(prefix));
     if (!destination.mkpath(prefix)) fail("Impossible de préparer le projet.");
     for (const auto& path : {"CMakeLists.txt", "src/main.c"}) copyTemplate(destination, prefix + path, projectName, boardId);
-    if (kind == Template::Emulator) {
-        for (const auto& path : {"cmake/arm-none-eabi.cmake", "src/platform_debugger.c", "include/platform.h",
-                                 "include/blink_state.h", "startup/debugger.ld.in", "startup/startup.c",
+    if (kind == Template::BareMetal) {
+        for (const auto& path : {"cmake/arm-none-eabi.cmake", "startup/ram.ld", "startup/startup.c",
                                  "startup/memory_init.h", "startup/memory_init.c"})
             copyTemplate(destination, prefix + path);
     }
     copyTemplate(tree, ".gitignore");
     copyTemplate(tree, ".clang-tidy");
     const QJsonObject defaults{{"board", boardName(board)}, {"language", "c"},
-                              {"template", kind == Template::Emulator ? "emulator" : "sdk"}};
+                              {"template", kind == Template::BareMetal ? "bare-metal" : "sdk"}};
     const auto metadata = QJsonDocument(defaults).toJson();
     QSaveFile projectFile(tree.filePath(".picodbg-project.json"));
     if (!projectFile.open(QIODevice::WriteOnly) || projectFile.write(metadata) != metadata.size() || !projectFile.commit())
@@ -254,6 +262,9 @@ void Build::start(const QString& root, const QString& directory, picodbg::Board 
     QStringList args{"-S", root, "-B", directory, "-DCMAKE_BUILD_TYPE=Debug",
                      "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON", "-DPICO_BOARD=" + boardName(board)};
     if (!tools.sdk.isEmpty()) args << "-DPICO_SDK_PATH=" + tools.sdk;
+    if (!tools.ninja.isEmpty()) args << "-G" << "Ninja" << "-DCMAKE_MAKE_PROGRAM=" + tools.ninja;
+    if (!tools.picotool.isEmpty()) args << "-Dpicotool_DIR=" + QFileInfo(tools.picotool).absolutePath();
+    if (!tools.pioasm.isEmpty()) args << "-Dpioasm_DIR=" + QFileInfo(tools.pioasm).absolutePath();
     stage_ = Configure;
     run(args);
 }

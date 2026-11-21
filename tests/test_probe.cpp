@@ -181,7 +181,7 @@ void failureTests(const ProbeOptions& options, const std::string& elf) {
     pico2.disconnectProbe(); waitUntil([&] { return !pico2.connected(); }, &pico2); mode("");
 }
 template<class T> T* find(QObject& parent, const char* name) { auto* object = parent.findChild<T*>(name); check(object != nullptr, name); return object; }
-void guiTests(const ProbeOptions& options, const QString& elf) {
+void guiTests(const ProbeOptions& options, const QString& elf, const QString& ramElf) {
     MainWindow window; window.resize(1280, 800); window.loadFile(elf); window.show(); window.connectHardware(options);
     auto* run = find<QAction>(window, "runAction"); auto* download = find<QAction>(window, "downloadElfAction");
     waitUntil([&] { return run->isEnabled() && download->isEnabled(); });
@@ -225,7 +225,41 @@ void guiTests(const ProbeOptions& options, const QString& elf) {
     const int downloadAt = launch.indexOf("-target-download");
     const int continueAt = launch.indexOf("-exec-continue");
     check(symbols >= 0 && symbols < downloadAt && downloadAt < continueAt, "IDE opens, downloads and runs using the existing SWD session");
-    find<QAction>(window, "pauseAction")->trigger(); waitUntil([&] { return run->isEnabled(); });
+    window.showIde();
+    QWidget* ide = nullptr;
+    for (auto* widget : QApplication::topLevelWidgets())
+        if (widget->objectName() == "picoIdeWindow") ide = widget;
+    check(ide, "IDE window is visible");
+    auto* pause = find<QAction>(*ide, "idePause");
+    waitUntil([&] { return pause->isEnabled(); });
+    const auto beforePause = commands().size();
+    pause->trigger();
+    waitUntil([&] { return run->isEnabled() && !pause->isEnabled(); });
+    check(commands().mid(beforePause).contains("-exec-interrupt"), "IDE requests a hardware pause via GDB");
+    check(find<QLabel>(*ide, "ideTargetStatus")->text().contains("arrêtée"), "IDE reports a confirmed SWD pause");
+    const auto beforePausedLaunch = commands().size();
+    QTimer::singleShot(0, [&] {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (dialog) dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->click();
+    });
+    window.launchProjectElf(elf, Board::Pico, true, false);
+    waitUntil([&] {
+        return find<QPlainTextEdit>(*ide, "ideBuildOutput")->toPlainText().contains("ELF téléversé. Carte arrêtée.");
+    });
+    const auto pausedLaunch = commands().mid(beforePausedLaunch);
+    check(pausedLaunch.contains("-target-download") && !pausedLaunch.contains("-exec-continue") && run->isEnabled(),
+          "Default board launch downloads the firmware and leaves the target paused");
+    bool ramDefault = false;
+    QTimer::singleShot(0, [&] {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (!dialog) return;
+        auto* startup = dialog->findChild<QComboBox*>("downloadStartup");
+        ramDefault = startup && startup->currentIndex() == 1;
+        dialog->reject();
+    });
+    window.launchProjectElf(ramElf, Board::Pico, true, true);
+    check(ramDefault, "An ELF linked in SRAM defaults to RAM transfer");
+    ide->close();
     find<QAction>(window, "emulationModeAction")->trigger();
     waitUntil([&] { return find<QLabel>(window, "targetModeStatus")->text().contains("ÉMULATION"); });
     check(find<QComboBox>(window, "chipSelector")->isEnabled(), "Return to emulation restores board choice");
@@ -237,7 +271,8 @@ int main(int argc, char** argv) {
     try {
         check(argc == 6, "Expected fake processes and ELF fixture paths"); mode(""); parserTests(); transportTests(QString::fromLocal8Bit(argv[1]));
         ProbeOptions options; options.gdb = QString::fromLocal8Bit(argv[1]); options.launchOpenOcd = false;
-        targetTests(options, argv[2]); failureTests(options, argv[2]); guiTests(options, QString::fromLocal8Bit(argv[2]));
+        targetTests(options, argv[2]); failureTests(options, argv[2]);
+        guiTests(options, QString::fromLocal8Bit(argv[2]), QString::fromLocal8Bit(argv[3]));
         ramTests(options, argv[3], argv[4]); serverTests(options, QString::fromLocal8Bit(argv[5]));
         std::cout << "GDB/MI transport, hardware target and shared GUI checks passed (test peer, no physical probe)\n"; return 0;
     } catch (const std::exception& e) { std::cerr << e.what() << '\n'; return 1; }

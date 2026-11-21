@@ -25,6 +25,8 @@ public:
     void showCompletions(const QJsonArray& items);
     void showProblems(const std::vector<Problem>& problems);
     void goTo(int line, int column);
+    void revealDebugLine(int line);
+    void setDebugLines(int executionLine, int selectionLine);
     std::function<void()> completionRequested;
     int gutterWidth() const;
     void paintGutter(QPaintEvent* event);
@@ -39,6 +41,8 @@ private:
     QCompleter* completer_;
     QStandardItemModel* suggestions_;
     std::vector<Problem> problems_;
+    int executionLine_ = 0;
+    int selectionLine_ = 0;
     void updateGutter();
     void applyCompletion(const QJsonObject& item);
     void decorate();

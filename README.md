@@ -2,9 +2,7 @@
 
 **PicoDebugger, ou PicoDbg, associe un IDE C et un débogueur graphique pour Raspberry Pi Pico, Pico W (RP2040), Pico 2 et Pico 2 W (RP2350 ARM).** Le débogueur propose une **émulation locale partielle** et une **connexion à une vraie carte par SWD**, avec la Raspberry Pi Debug Probe, OpenOCD et GDB.
 
-**Depuis la v0.7.0**, l'IDE ouvre et crée des projets CMake, édite les sources C avec les diagnostics de clangd et lance les ELF dans le débogueur ou sur la carte connectée. [Notes de version](docs/RELEASES.md#v0-7-0)
-
-**Nouveautés de la v0.6.0.** Un ELF compatible peut servir à un essai en émulation, puis au chargement des symboles et au téléversement dans la RAM ou la Flash de la carte. Le menu **Cible** donne accès à la sonde, au transfert et au rafraîchissement de l'état matériel. La v0.6.0 retire l'exécutable autonome `pico-debugger-cli`. La console d'expressions reste accessible dans l'application Qt. [Changelog de la v0.6.0](docs/RELEASES.md#v0-6-0)
+**Nouveautés de la v0.8.0.** L'IDE s'ouvre en premier et lance le débogage à l'arrêt. Il affiche le C et l'assembleur côte à côte, avec une flèche sur la ligne du PC et des couleurs distinctes pour l'exécution et la sélection. Cette version ajoute aussi le panneau Git, l'installation locale des outils, un moniteur UART pour la Debug Probe et des exemples commentés en français. [Changelog de la v0.8.0](docs/RELEASES.md#v0-8-0)
 
 Le moteur est écrit en **C++11**, indépendant de Qt, et l'interface utilise **Qt Widgets**. Compiler le firmware en ELF32 ARM avant de l'ouvrir. Le mode réel utilise des processus GDB et OpenOCD externes.
 
@@ -38,7 +36,7 @@ Depuis la racine du dépôt, avec Qt déjà installé :
 cmake -S . -B build-gui -DCMAKE_BUILD_TYPE=Debug -DPICODBG_GUI=ON -DBUILD_TESTING=ON
 cmake --build build-gui -j2
 ctest --test-dir build-gui --output-on-failure
-./build-gui/pico-debugger --demo
+./build-gui/pico-debugger
 ```
 
 Le script `bash scripts/build-gui.sh --launch` réalise ces opérations. Sur Debian/Ubuntu, `bash scripts/install-qt-debian.sh --launch` installe aussi Qt5 et les outils nécessaires ; il requiert un accès réseau et `sudo` pour les paquets. Il se lance avec l'utilisateur du bureau, pas dans une session graphique exécutée en administrateur.
@@ -50,11 +48,13 @@ cmake -S . -B build-qt6 -DPICODBG_GUI=ON -DPICODBG_QT_MAJOR=6
 cmake --build build-qt6 -j2
 ```
 
-La v0.7.0 a été testée avec **Qt 5.15.15**. Les 19 tests CTest avec Qt et les 13 tests du moteur seul passent. Les tests LSP et SWD utilisent des processus simulés. Les essais avec clangd réel, le Pico SDK, une carte physique et Qt6 restent à faire. `-DPICODBG_GUI=OFF` permet de compiler le moteur et ses tests sans Qt.
+La v0.8.0 a été testée sous Linux avec **Qt 5.15.15**. Les 21 tests de la configuration Qt et les 13 tests du moteur seul passent. Les tests LSP et SWD utilisent des processus simulés. Le moniteur UART a été vérifié via un pseudo-terminal. La validation sur carte physique, avec Qt6, Qt Serial Port, clangd réel et le Pico SDK reste à faire. `-DPICODBG_GUI=OFF` permet de compiler le moteur et ses tests sans Qt.
 
-Lancer un firmware :
+Ouvrir directement un projet ou le débogueur :
 
 ```sh
+./build-gui/pico-debugger /chemin/projet-cmake
+./build-gui/pico-debugger --debugger
 ./build-gui/pico-debugger --chip rp2040 /chemin/firmware.elf
 ./build-gui/pico-debugger --board pico2_w /chemin/firmware.elf
 ./build-gui/pico-debugger --version
@@ -64,11 +64,17 @@ Le choix de carte est explicite : `--board pico|pico_w|pico2|pico2_w`. L'ancienn
 
 ## Programmer en C dans l'IDE
 
-Ouvrir **Fichier → Ouvrir l'IDE C** dans le débogueur, ou lancer `./build-gui/pico-debugger --ide`. L'éditeur et le débogueur s'affichent dans deux fenêtres et partagent la même session. **Projet → Nouveau projet…** propose un exemple C pour l'émulateur ou un firmware Pico SDK pour la carte. **Ouvrir un projet…** accepte un projet CMake existant.
+Sans argument, PicoDebugger ouvre l'IDE. On peut créer, ouvrir et compiler un projet avant d'ouvrir le débogueur. Le bouton **Débogueur**, **Ctrl+F5** et **F5** l'ouvrent à la demande. Dans l'autre sens, **Fichier → Ouvrir l'IDE C** réaffiche la fenêtre de projet. Les deux fenêtres partagent la session. **Projet → Nouveau projet…** propose un exemple C autonome pour l'émulation et le chargement en RAM via SWD, ainsi qu'un modèle Pico SDK.
 
-L'IDE réunit les fichiers du projet, les onglets d'édition, la coloration C et les diagnostics cliquables. **Ctrl+Espace** ouvre l'autocomplétion lorsque clangd est disponible. **Compilation → Outils du projet…** détecte CMake, le compilateur ARM, le SDK, clangd et les outils de la sonde. Les installations hors `PATH` peuvent être configurées dans cette fenêtre.
+Les deux modèles expliquent la compilation et le firmware dans leurs sources. Le modèle autonome commente aussi la toolchain, le script de lien SRAM, les vecteurs, la copie de `.data` et l'effacement de `.bss`. Les démos sans compilateur ARM documentent les instructions Thumb au niveau des opcodes. [Lire les exemples générés](docs/IDE.md#premier-projet)
 
-**Ctrl+B** compile, **Ctrl+F5** ouvre l'ELF à l'arrêt et **F5** le lance dans l'émulateur. **Lancer sur la carte…** utilise une connexion SWD arrêtée avec la même carte, puis propose le téléversement Flash ou RAM. [Guide IDE, outils et mises à jour](docs/IDE.md)
+L'IDE réunit les fichiers du projet, les onglets d'édition, la coloration C et les diagnostics cliquables. **Ctrl+Espace** ouvre l'autocomplétion lorsque clangd est disponible. Le panneau **Projet → Git…** gère l'index, les diffs, les commits et le dépôt distant avec le Git installé.
+
+**Ctrl+B** compile. Dans l'IDE, **F5** ou **Ctrl+F5** charge l'ELF à l'arrêt en émulation. **Téléverser et déboguer sur la carte…** propose la Flash ou la RAM puis laisse la carte arrêtée. **F10** avance d'une instruction depuis les deux fenêtres. Dans le débogueur, **F5** continue l'exécution. **Maj+F5** met en pause depuis les deux fenêtres.
+
+À l'arrêt, l'IDE affiche côte à côte le C et l'assembleur d'un ELF compilé avec `-g`. Une flèche turquoise désigne la ligne C du PC et ses instructions sont surlignées. Placer le curseur sur une autre ligne C affiche ses instructions en violet. Le code reprend toute la largeur de l'éditeur pendant l'exécution continue. Le menu **Vues** du débogueur permet de masquer son propre assembleur pour dégager la place pour les périphériques. [Correspondance C et assembleur](docs/IDE.md#suivre-le-c-et-lassembleur)
+
+**Compilation → Outils du projet…** affiche les outils détectés. **Installer les dépendances localement…** télécharge les outils sélectionnés dans l'espace utilisateur de PicoDebugger. L'installateur lit les versions, les URL et les contrôles d'intégrité dans le catalogue. [Catalogue des dépendances](config/dependencies.json) · [Installation et mises à jour](docs/IDE.md#installer-les-dépendances-dans-lespace-de-picodebugger)
 
 ## Déboguer une vraie carte
 
@@ -92,7 +98,10 @@ Installer un GDB capable de déboguer ARM (`gdb-multiarch` ou `arm-none-eabi-gdb
 | CPU, mémoire, pile, assembleur, expressions | Lectures réelles | Lectures réelles | Lectures réelles | Lectures réelles | Valeurs masquées pendant l'exécution ; registres supplémentaires affichés si GDB les expose. Aucune valeur émulée en remplacement. |
 | Périphériques du SoC | Matériel réel | Matériel réel | Matériel réel | Matériel réel | Leur fonctionnement ne dépend plus du simulateur. Inspection limitée aux registres décrits/accessibles ; certaines lectures nécessitent « Lire une fois ». |
 | CYW43 / Wi-Fi / Bluetooth | Sans objet | Matériel réel | Sans objet | Matériel réel | Pilotés par le firmware des cartes W ; pas d'inspection directe du composant radio par cette connexion SWD. |
-| Temps virtuel / injection UART simulée | Sans objet | Sans objet | Sans objet | Sans objet | Aucun temps virtuel sur une carte réelle. Le port série de la sonde est distinct du SWD et n'est pas intégré au terminal GUI actuel. |
+| Traces UART de la Debug Probe | Lecture | Lecture | Lecture | Lecture | Fenêtre indépendante, port **U / UART** de la sonde, utilisable en parallèle du SWD. |
+| Temps virtuel / injection UART simulée | Sans objet | Sans objet | Sans objet | Sans objet | Fonctions réservées à l'émulation. |
+
+**Cible → Moniteur série de la sonde…** (**Ctrl+Maj+U**) ouvre les traces UART et les `printf` du firmware dans une fenêtre indépendante. Relier le TX de la carte au RX du port **U** de la sonde et relier les masses. Choisir le port et le débit du firmware (115200 par défaut), puis **Connecter**. Le journal défile pendant l'exécution, peut rester sur une ligne pour la relire et s'enregistre en texte. [Câblage et configuration UART](docs/HARDWARE_DEBUG.md#lire-les-traces-uart)
 
 Les périphériques, le DMA et le watchdog peuvent continuer à évoluer pendant l'arrêt des CPU. Les accès dépendent de la puce, de ses protections et du serveur OpenOCD. Pour les registres à effets de lecture, utiliser **Lire une fois · effets possibles** dans l'inspecteur ou **Lire registre 32 bits une fois** dans la vue Mémoire. Une lecture peut consommer une donnée de FIFO, acquérir un spinlock ou effacer un indicateur. [Guide matériel et dépannage](docs/HARDWARE_DEBUG.md)
 
@@ -116,7 +125,7 @@ Le tableau suivant décrit le **mode émulation**. Les différences du mode rée
 | Interface | Comparaison CPU, espace Code/Périphériques, inspecteurs détachables et fenêtre indépendante (`Ctrl+Maj+I`) : catalogue général ou périphérique précis, registres et bits simultanés. |
 | UART | Capture des octets TX et injection de texte UTF-8 dans RX, pour les deux UART modélisés. |
 | Exemples | ELF d'exemple générables sans compilateur ARM et tests d'intégration utilisant directement le moteur. |
-| Source C++ | Symboles ELF seulement. Le panneau « Source C++ — prochaine itération » est un emplacement réservé : aucun import des sources, DWARF, démanglage ni pas source actuellement. |
+| Source C | Correspondance ligne C ↔ adresses via DWARF, aperçu et surlignage partagé avec l'IDE. F10 avance d'une instruction. |
 
 Les tableaux d'état sont en lecture seule. Les modifications de la cible viennent des instructions exécutées, du chargement/reset, du démarrage explicite d'un cœur, de l'injection UART ou d'une avance explicite du temps. Le rafraîchissement lit un instantané cohérent entre les tranches d'exécution ; il ne constitue pas une trace de chaque instruction ou de chaque transition entre deux rafraîchissements.
 

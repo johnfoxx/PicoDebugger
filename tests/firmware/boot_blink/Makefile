@@ -1,10 +1,12 @@
-# Run make here, or make -C tests/firmware/boot_blink from the repository root.
+# Lancer make ici ou utiliser make -C tests/firmware/boot_blink depuis la racine.
+# Les variables ?= gardent les valeurs fournies sur la ligne de commande.
 BOARD ?= pico2
 HALF_PERIOD_MS ?= 500
 JOBS ?= 2
 CMAKE ?= cmake
 PYTHON ?= python3
 PICODBG_ELF_TESTS ?= ../../../build-gui/picodbg_elf_tests
+# Un dossier CMake par carte et par mode évite de mélanger les configurations.
 DEBUG_BUILD = build/debugger-$(BOARD)
 BOARD_BUILD = build/board-$(BOARD)
 CHECK_BUILD = build/check-$(BOARD)
@@ -12,20 +14,23 @@ CHECK_BUILD = build/check-$(BOARD)
 .PHONY: all debugger board check host-test help
 all: debugger
 
+# Configurer puis produire l'ELF pour le débogueur.
 debugger:
 	$(CMAKE) -S . -B $(DEBUG_BUILD) -DBOOT_BLINK_MODE=debugger -DPICO_BOARD=$(BOARD) -DBOOT_BLINK_HALF_PERIOD_MS=$(HALF_PERIOD_MS)
 	$(CMAKE) --build $(DEBUG_BUILD) --parallel $(JOBS)
 
+# Configurer le SDK puis produire l'image amorçable pour la carte.
 board:
 	$(CMAKE) -S . -B $(BOARD_BUILD) -DBOOT_BLINK_MODE=board -DPICO_BOARD=$(BOARD) -DBOOT_BLINK_HALF_PERIOD_MS=$(HALF_PERIOD_MS)
 	$(CMAKE) --build $(BOARD_BUILD) --parallel $(JOBS)
 
-# A separate fast fixture avoids changing the period of the user's build.
+# Un build de test avec 1 ms par état accélère la vérification des transitions.
 check:
 	$(CMAKE) -S . -B $(CHECK_BUILD) -DBOOT_BLINK_MODE=debugger -DPICO_BOARD=$(BOARD) -DBOOT_BLINK_HALF_PERIOD_MS=1
 	$(CMAKE) --build $(CHECK_BUILD) --parallel $(JOBS)
 	$(PYTHON) tests/check_debugger.py --runner "$(PICODBG_ELF_TESTS)" --elf $(CHECK_BUILD)/boot_blink.elf --board $(BOARD)
 
+# Tester les routines C avec le compilateur de l'ordinateur.
 host-test:
 	$(CMAKE) -S tests -B build/host
 	$(CMAKE) --build build/host --parallel $(JOBS)

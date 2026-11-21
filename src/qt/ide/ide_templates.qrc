@@ -4,15 +4,12 @@
     <file alias=".clang-tidy">templates/clang-tidy</file>
     <file alias="sdk/CMakeLists.txt">templates/sdk/CMakeLists.txt</file>
     <file alias="sdk/src/main.c">templates/sdk/src/main.c</file>
-    <file alias="emulator/CMakeLists.txt">templates/emulator/CMakeLists.txt</file>
-    <file alias="emulator/src/main.c">../../../tests/firmware/boot_blink/src/main.c</file>
-    <file alias="emulator/src/platform_debugger.c">../../../tests/firmware/boot_blink/src/platform_debugger.c</file>
-    <file alias="emulator/cmake/arm-none-eabi.cmake">../../../tests/firmware/boot_blink/cmake/arm-none-eabi.cmake</file>
-    <file alias="emulator/include/blink_state.h">../../../tests/firmware/boot_blink/include/blink_state.h</file>
-    <file alias="emulator/include/platform.h">../../../tests/firmware/boot_blink/include/platform.h</file>
-    <file alias="emulator/startup/debugger.ld.in">../../../tests/firmware/boot_blink/startup/debugger.ld.in</file>
-    <file alias="emulator/startup/startup.c">../../../tests/firmware/boot_blink/startup/startup.c</file>
-    <file alias="emulator/startup/memory_init.h">../../../tests/firmware/boot_blink/startup/memory_init.h</file>
-    <file alias="emulator/startup/memory_init.c">../../../tests/firmware/boot_blink/startup/memory_init.c</file>
+    <file alias="bare-metal/CMakeLists.txt">templates/bare-metal/CMakeLists.txt</file>
+    <file alias="bare-metal/src/main.c">templates/bare-metal/src/main.c</file>
+    <file alias="bare-metal/startup/ram.ld">templates/bare-metal/startup/ram.ld</file>
+    <file alias="bare-metal/startup/startup.c">templates/bare-metal/startup/startup.c</file>
+    <file alias="bare-metal/startup/memory_init.h">../../../tests/firmware/boot_blink/startup/memory_init.h</file>
+    <file alias="bare-metal/startup/memory_init.c">../../../tests/firmware/boot_blink/startup/memory_init.c</file>
+    <file alias="bare-metal/cmake/arm-none-eabi.cmake">../../../tests/firmware/boot_blink/cmake/arm-none-eabi.cmake</file>
   </qresource>
 </RCC>

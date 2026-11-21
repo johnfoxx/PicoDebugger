@@ -9,12 +9,12 @@
 namespace picoide {
 
 struct Tools {
-    QString cmake, gcc, sdk, clangd, gdb, openocd;
+    QString cmake, gcc, sdk, clangd, gdb, openocd, openocdScripts, ninja, picotool, pioasm;
     static Tools detect();
     QProcessEnvironment buildEnvironment() const;
 };
 
-enum class Template { Sdk, Emulator };
+enum class Template { Sdk, BareMetal };
 QString createProject(const QString& parent, const QString& name, picodbg::Board board, Template kind);
 QString boardName(picodbg::Board board);
 QString projectBuildDirectory(const QString& root, picodbg::Board board, const Tools& tools);

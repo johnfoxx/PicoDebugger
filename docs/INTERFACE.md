@@ -9,10 +9,12 @@ Le menu **Cible** sélectionne Émulation ou Carte réelle, configure la connexi
 ## Les zones de travail
 
 - **CPU, à gauche** : un tableau compare les registres des deux cœurs, avec leurs flags au-dessus. Le point dans l'en-tête indique le cœur sélectionné pour F10, l'assembleur et la pile. Les changements sont surlignés ; les valeurs hexadécimales restent complètes.
-- **Espace central** : **Code** suit l'instruction courante ; **Périphériques** contient le catalogue et sa recherche. Chaque inspecteur ouvert ajoute un onglet nommé, sans créer de fenêtre supplémentaire.
-- **Inspection, en bas** : **Mémoire**, **Pile**, **Console** et **Carte mémoire** partagent le même espace. La vue Source C++ reste un emplacement réservé, accessible par le menu Vues.
+- **Code**, au centre, suit le PC du cœur sélectionné. La colonne **Source C** indique les lignes DWARF disponibles. **Périphériques** contient le catalogue et sa recherche.
+- **Inspection**, en bas, regroupe **Mémoire**, **Pile**, **Console**, **Carte mémoire** et **Source C**. La vue C affiche la ligne du PC ou celle choisie dans l'assembleur. Elle reste accessible depuis **Vues → Source C**.
 
 La colonne **Surveillance** est masquée au démarrage. Ajouter une expression, un breakpoint ou un watchpoint l'ouvre sur le bon onglet. **Vues → Expressions surveillées** et **Vues → Points d'arrêt / watchpoints** l'affichent aussi. Les onglets indiquent les nombres d'éléments. Fermer le panneau le masque sans supprimer ses données.
+
+Pour suivre l'assembleur à côté du C dans l'IDE et conserver les périphériques au centre du débogueur, décocher **Vues → Afficher l'assembleur dans le débogueur**. **Ctrl+1** rétablit la vue assembleur du débogueur. [Suivre le C et l'assembleur](IDE.md#suivre-le-c-et-lassembleur)
 
 Sans ELF, la page d'accueil propose **Ouvrir un ELF** et **Essayer l'exemple**. Avec une image, l'en-tête indique le fichier, l'état d'exécution, le contexte et le motif d'arrêt. En mode émulation, la mention « simulation partielle » reste visible ; les diagnostics complets sont conservés dans la console et la barre d'état.
 
@@ -46,6 +48,10 @@ Fermer cette fenêtre ne change pas les onglets de l'application. **Rassembler**
 
 **Ctrl+6** ouvre les commandes d'avance en µs/ms, avec exécution du firmware ou CPU figés. Le temps courant reste visible et cliquable dans la barre d'état. **Ctrl+7** affiche le câblage de la carte choisie. Voir [le mode d'emploi du temps](VIRTUAL_TIME.md) et [les quatre cartes](BOARDS.md).
 
+## Suivre les traces d’une carte réelle
+
+**Cible → Moniteur série de la sonde…** affiche les traces UART dans une fenêtre indépendante. On peut la placer à côté de l'IDE et du débogueur sur un écran large ou la rouvrir à la demande sur un petit écran. Elle mémorise sa disposition, le dernier port connecté et son débit. La fermeture libère le port. Le journal reste disponible à la réouverture pendant la même session. [Lire les traces via la Debug Probe](HARDWARE_DEBUG.md#lire-les-traces-uart)
+
 ## Navigation rapide
 
 | Raccourci | Action |
@@ -63,6 +69,7 @@ Fermer cette fenêtre ne change pas les onglets de l'application. **Rassembler**
 | Ctrl+6 | Temps virtuel |
 | Ctrl+7 | Carte et câblage |
 | Ctrl+Maj+I | Fenêtre indépendante des périphériques |
+| Ctrl+Maj+U | Moniteur série de la Debug Probe |
 | Ctrl+Maj+P | Rassembler les inspecteurs détachés |
 | Ctrl+Maj+0 | Rétablir la disposition initiale, sans fermer les inspecteurs |
 

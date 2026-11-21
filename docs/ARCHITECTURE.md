@@ -57,11 +57,11 @@ Les descriptions complémentaires sont réparties par famille dans `src/core/reg
 
 `Debugger::virtualTime()` compte les quanta depuis reset. `clockQuantum()` applique la même politique aux périphériques et SysTick en pas/exécution et en avance avec CPU figés. `runFor` respecte le budget d'ordonnancement et les arrêts habituels ; `advanceTime` ne fait pas entrer les CPU dans les handlers. `VirtualTimePanel` émet une demande ; le contrôleur l'exécute par petits lots et conserve la durée restante. La commande Pause, un changement de cible ou un chargement annule cette durée. Les tests `boards`, `virtual_time` et `qt_session` couvrent ces comportements, en complément des régressions existantes.
 
-## Correspondance source C++
+## Correspondance C et assembleur
 
-`sourceHint(address)` fournit un symbole précédent + offset, pas une ligne C++. La GUI réserve une zone à côté de l'assembleur. La prochaine couche devra charger DWARF, gérer chemins de compilation et répertoires fournis par l'utilisateur, puis résoudre adresse → fichier/ligne/colonne.
+`SourceMap` lit les plages DWARF avec `objdump` et résout les fichiers et lignes avec `addr2line`. Les processus sont asynchrones et les bornes de fin de séquence empêchent de prolonger une ligne au-delà de ses instructions. Le débogueur réindexe l'ELF quand l'émulateur le charge ou quand la révision des symboles GDB change. La colonne **Symbole ELF** utilise toujours `sourceHint(address)`.
 
-Prévoir un `SourceResolver` indépendant de Qt. Le déroulage de pile devra utiliser DWARF CFI et les cadres d'exception, plutôt que deviner les retours en scannant des valeurs. La lecture des variables typées et le démanglage sont distincts de la lecture de mots mémoire.
+L'IDE et le débogueur partagent la ligne du PC et la sélection. Ils peuvent être créés dans l'un ou l'autre ordre. Chaque fenêtre garde un lien faible vers l'autre. La fenêtre de démarrage possède la seconde quand elle la crée.
 
 ## Validation
 

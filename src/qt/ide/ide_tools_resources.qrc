@@ -1,0 +1,6 @@
+<RCC>
+  <qresource prefix="/ide/tools">
+    <file alias="dependencies.json">../../../config/dependencies.json</file>
+    <file alias="install-ide-tools.py">../../../scripts/install-ide-tools.py</file>
+  </qresource>
+</RCC>

@@ -8,8 +8,10 @@
 #error "BOOT_BLINK_HALF_PERIOD_MS must be between 1 and 60000"
 #endif
 
+/* Témoins de .data. Le démarrage doit restaurer leur valeur initiale. */
 volatile uint32_t data_cookie = BOOT_DATA_COOKIE;
 volatile uint32_t half_period_ms = BOOT_BLINK_HALF_PERIOD_MS;
+/* Témoins de .bss et état du clignotement. Le démarrage met la plage à zéro. */
 volatile uint32_t bss_cookie;
 volatile uint32_t boot_stage;
 volatile uint32_t boot_error;
@@ -22,13 +24,13 @@ static void boot_fail(uint32_t reason)
     boot_error = reason;
     boot_stage = BOOT_FAILED;
     for (;;) {
-        /* Deliberately stay here: inspect boot_error and the RAM sections. */
+        /* Rester ici. Inspecter boot_error et les sections en SRAM. */
     }
 }
 
-/* A stable breakpoint after each transition, without injecting a BKPT into
- * the firmware. Calls are retained (noinline, no LTO, separate observable state).
- * Reaching this symbol means SIO and all the counters already agree. */
+/* Ce symbole fournit un point d'arrêt après chaque transition.
+ * noinline, le build sans LTO et la lecture volatile gardent l'appel visible.
+ * À cet endroit, la sortie et les compteurs ont déjà été mis à jour. */
 __attribute__((noinline)) void blink_checkpoint(void)
 {
     (void)led_state;
@@ -36,8 +38,8 @@ __attribute__((noinline)) void blink_checkpoint(void)
 
 int main(void)
 {
-    /* These checks run before overwriting any of the .bss probes. The real
-     * board uses the SDK startup; the debugger uses our small C startup. */
+    /* Vérifier la copie de .data et l'effacement de .bss avant toute mise à jour.
+     * La carte utilise le startup SDK. L'émulateur utilise le startup de ce projet. */
     if (data_cookie != BOOT_DATA_COOKIE ||
         half_period_ms != BOOT_BLINK_HALF_PERIOD_MS) {
         boot_fail(1);
@@ -53,12 +55,14 @@ int main(void)
     boot_stage = BOOT_BLINKING;
 
     for (;;) {
+        /* Allumer la LED et publier l'état avant l'attente. */
         platform_led_write(true);
         led_state = 1;
         ++led_transitions;
         blink_checkpoint();
         platform_delay_ms(half_period_ms);
 
+        /* Éteindre la LED. Une paire allumé/éteint compte pour un cycle. */
         platform_led_write(false);
         led_state = 0;
         ++led_transitions;
