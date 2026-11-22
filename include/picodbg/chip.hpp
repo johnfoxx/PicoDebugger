@@ -19,6 +19,9 @@ struct ChipDescription {
 };
 ChipDescription describe(Chip chip);
 const Region* regionAt(const ChipDescription& chip, uint32_t address);
+inline bool regionWritable(const Region& region) {
+    return region.permissions.compare(0, 3, "R/W") == 0;
+}
 struct PeripheralRegister {
     uint32_t address;
     std::string name;

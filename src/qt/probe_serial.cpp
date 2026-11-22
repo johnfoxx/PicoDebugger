@@ -158,7 +158,7 @@ bool ProbeSerial::open(const QString& path, int baudRate, QString& error) {
     serial->setReadBufferSize(64 * 1024);
     if (!serial->setBaudRate(baudRate) || !serial->setDataBits(QSerialPort::Data8) ||
         !serial->setParity(QSerialPort::NoParity) || !serial->setStopBits(QSerialPort::OneStop) ||
-        !serial->setFlowControl(QSerialPort::NoFlowControl) || !serial->open(QIODevice::ReadOnly)) {
+        !serial->setFlowControl(QSerialPort::NoFlowControl) || !serial->open(QIODevice::ReadWrite)) {
         error = serial->errorString();
         return false;
     }
@@ -182,7 +182,7 @@ bool ProbeSerial::open(const QString& path, int baudRate, QString& error) {
         return false;
     }
     const auto name = QFile::encodeName(path);
-    const int fd = ::open(name.constData(), O_RDONLY | O_NOCTTY | O_NONBLOCK | O_CLOEXEC);
+    const int fd = ::open(name.constData(), O_RDWR | O_NOCTTY | O_NONBLOCK | O_CLOEXEC);
     if (fd < 0) { error = errnoText(errno); return false; }
     termios original{};
     struct stat metadata{};
@@ -255,6 +255,28 @@ bool ProbeSerial::isOpen() const {
     return device_->fd >= 0;
 #else
     return false;
+#endif
+}
+
+qint64 ProbeSerial::write(const QByteArray& bytes, QString& error) {
+    if (!isOpen()) {
+        error = "Port série déconnecté.";
+        return -1;
+    }
+#ifdef PICODBG_QT_SERIALPORT
+    const auto written = device_->serial->write(bytes);
+    if (written < 0) error = device_->serial->errorString();
+    return written;
+#elif defined(Q_OS_UNIX)
+    ssize_t written;
+    do {
+        written = ::write(device_->fd, bytes.constData(), static_cast<size_t>(bytes.size()));
+    } while (written < 0 && errno == EINTR);
+    if (written < 0) error = errnoText(errno);
+    return written;
+#else
+    Q_UNUSED(bytes);
+    return -1;
 #endif
 }
 

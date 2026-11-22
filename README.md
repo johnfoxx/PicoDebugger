@@ -6,17 +6,18 @@ Le moteur est écrit en **C++11**, indépendant de Qt, et l'interface utilise **
 
 **L'émulation reste partielle sur les quatre cartes.** Elle ne reproduit pas tout le silicium et ne garantit pas l'exécution d'un firmware Pico SDK arbitraire. **En mode réel, le firmware s'exécute sur le matériel**, avec ses véritables CPU et périphériques ; les limites portent alors sur les accès de débogage et les vues disponibles. Le catalogue de registres reste incomplet, certains accès sont protégés et les composants externes ne sont pas tous accessibles par SWD. L'intégration matérielle est testée avec des doubles de protocole ; sa validation avec une sonde et une carte physique reste à réaliser.
 
-## Nouveautés de la v0.9.0
+## Nouveautés de la v0.10.0
 
-- **Recherche et édition en lot.** Rechercher en texte simple ou par regex avec surlignage et navigation. Remplacer ou insérer du texte dans le projet avec aperçu par fichier, annulation par onglet et enregistrement explicite. [Recherche et opérations globales](docs/IDE.md#rechercher-et-modifier-du-texte)
-- **TODO et Doxygen.** Filtrer les tâches quelle que soit la casse des marqueurs. Rechercher les balises Doxygen et générer la documentation avec l'exécutable installé. [Documentation dans l'IDE](docs/IDE.md#documenter-le-code-avec-doxygen)
-- **Thème clair.** Choisir **Vues → Thème** dans l'IDE ou le débogueur. La préférence s'applique aux deux fenêtres et est conservée entre les lancements.
-- **Pico 2 et Pico 2 W sans SDK.** L'assistant distingue les environnements avec le Pico SDK et bare metal. Le modèle RP2350 inclut un en-tête commenté pour les registres. Le guide en français accompagne un exemple de LED externe, compilable pour la SRAM et la Flash. [Guide et exemple bare metal](docs/Guide_Pico_2_W_Bare_Metal_RP2350.md)
+- **Espace de débogage modulable.** Juxtaposez Mémoire et Périphériques ou donnez la place à l’un des deux. Détachez les panneaux et retrouvez votre disposition au prochain lancement. La console et le moniteur UART restent accessibles dans Outils.
+- **Mémoire et périphériques éditables.** Lisez les adresses, les octets hexadécimaux et l’ASCII. Suivez plusieurs plages ou registres avec une couleur commune à la grille et à Surveillance. Les couleurs d’accès distinguent notamment lecture seule et écriture.
+- **Registres et piles par cœur.** Affichez les deux cœurs ou ouvrez le détail d’un seul. Un inspecteur détaché associe les octets de la trame aux variables, arguments et registres sauvegardés identifiés, avec édition et indication des changements récents.
+- **Aller-retour entre édition et débogage.** L’IDE s’ouvre maximisé et montre à l’arrêt le désassemblage complet. **Débogage → Quitter le débogage** ferme le débogueur et rend toute la largeur à l’éditeur C.
 
-[Changelog détaillé depuis la v0.8.0](docs/RELEASES.md#v0-9-0)
+[Manuel utilisateur](UserManual.md) · [Changelog détaillé de la v0.10.0](docs/RELEASES.md#v0-10-0)
 
 ## Commencer
 
+- [Manuel utilisateur](UserManual.md)
 - [Installation et lancement](#installation-et-lancement)
 - [Programmer en C dans l'IDE](#programmer-en-c-dans-lide)
 - [Synthèse du projet et contexte de reprise](SYNTHESE.md)
@@ -55,7 +56,7 @@ cmake -S . -B build-qt6 -DPICODBG_GUI=ON -DPICODBG_QT_MAJOR=6
 cmake --build build-qt6 -j2
 ```
 
-La v0.9.0 a été testée sous Linux avec **Qt 5.15.15**. Les 21 tests de la configuration Qt et les 13 tests du moteur seul passent. Les échanges avec clangd, les outils SWD et Doxygen sont vérifiés avec des processus simulés. Le moniteur UART est vérifié via un pseudo-terminal. La validation sur carte physique, avec Qt6, Qt Serial Port, clangd et Doxygen réels ainsi que le Pico SDK reste à faire. `-DPICODBG_GUI=OFF` permet de compiler le moteur et ses tests sans Qt.
+La v0.10.0 a été testée sous Linux avec **Qt 5.15.15**. Les 21 tests de la configuration Qt et les 13 tests du moteur seul passent. Les échanges avec clangd, les outils SWD et Doxygen sont vérifiés avec des processus simulés. Le moniteur UART est vérifié via un pseudo-terminal. La validation sur carte physique, avec Qt6, Qt Serial Port, clangd et Doxygen réels ainsi que le Pico SDK reste à faire. `-DPICODBG_GUI=OFF` permet de compiler le moteur et ses tests sans Qt.
 
 Ouvrir directement un projet ou le débogueur :
 
@@ -104,15 +105,15 @@ Installer un GDB capable de déboguer ARM (`gdb-multiarch` ou `arm-none-eabi-gdb
 |---|---|---|---|---|---|
 | Connexion Debug Probe / SWD | RP2040 | RP2040 | RP2350 ARM | RP2350 ARM | Configurations OpenOCD prévues pour les quatre profils ; validation physique encore à faire. Famille vérifiée, variante W non détectée. |
 | Téléversement ELF Flash ou RAM | Implémenté | Implémenté | Implémenté | Implémenté | ELF ARM adapté à la carte ; boot Flash valide ou vecteurs RAM. UF2/BIN et RISC-V ne sont pas chargés. |
-| Exécution, pause, reset, pas instruction | Implémenté | Implémenté | Implémenté | Implémenté | CPU réels via GDB ; contexte de cœur fourni par OpenOCD. Pas de pas source C/C++. |
+| Exécution, pause, reset, pas instruction | Implémenté | Implémenté | Implémenté | Implémenté | CPU réels via GDB et OpenOCD. La console propose également un pas source avec les informations DWARF. |
 | Breakpoints / watchpoints | Matériels | Matériels | Matériels | Matériels | Nombre limité par la puce et le serveur. Watchpoints alignés de 1, 2 ou 4 octets. En écriture, GDB arrête l'exécution lorsque la valeur surveillée change. |
-| CPU, mémoire, pile, assembleur, expressions | Lectures réelles | Lectures réelles | Lectures réelles | Lectures réelles | Valeurs masquées pendant l'exécution ; registres supplémentaires affichés si GDB les expose. Aucune valeur émulée en remplacement. |
+| CPU, mémoire, pile, assembleur, expressions | Lectures réelles | Lectures réelles | Lectures réelles | Lectures réelles | Valeurs masquées pendant l’exécution. Registres standard éditables à l’arrêt, registres supplémentaires accessibles dans le menu du tableau, piles déroulées par GDB. |
 | Périphériques du SoC | Matériel réel | Matériel réel | Matériel réel | Matériel réel | Leur fonctionnement ne dépend plus du simulateur. Inspection limitée aux registres décrits/accessibles ; certaines lectures nécessitent « Lire une fois ». |
 | CYW43 / Wi-Fi / Bluetooth | Sans objet | Matériel réel | Sans objet | Matériel réel | Pilotés par le firmware des cartes W ; pas d'inspection directe du composant radio par cette connexion SWD. |
-| Traces UART de la Debug Probe | Lecture | Lecture | Lecture | Lecture | Fenêtre indépendante, port **U / UART** de la sonde, utilisable en parallèle du SWD. |
+| Liaison UART de la Debug Probe | TX/RX | TX/RX | TX/RX | TX/RX | Onglet **Outils → Série TX/RX**, utilisable en parallèle du SWD. |
 | Temps virtuel / injection UART simulée | Sans objet | Sans objet | Sans objet | Sans objet | Fonctions réservées à l'émulation. |
 
-**Cible → Moniteur série de la sonde…** (**Ctrl+Maj+U**) ouvre les traces UART et les `printf` du firmware dans une fenêtre indépendante. Relier le TX de la carte au RX du port **U** de la sonde et relier les masses. Choisir le port et le débit du firmware (115200 par défaut), puis **Connecter**. Le journal défile pendant l'exécution, peut rester sur une ligne pour la relire et s'enregistre en texte. [Câblage et configuration UART](docs/HARDWARE_DEBUG.md#lire-les-traces-uart)
+**Cible → Moniteur série de la sonde…** (**Ctrl+Maj+U**) ouvre l’onglet **Série TX/RX**. Relier les masses, le TX de la carte au RX de la sonde et le TX de la sonde au RX de la carte pour envoyer du texte. Choisir le port et le débit du firmware (115200 par défaut), puis **Connecter**. Le journal défile pendant l'exécution, peut rester sur une ligne pour la relire et s'enregistre en texte. [Câblage et configuration UART](docs/HARDWARE_DEBUG.md#lire-les-traces-uart)
 
 Les périphériques, le DMA et le watchdog peuvent continuer à évoluer pendant l'arrêt des CPU. Les accès dépendent de la puce, de ses protections et du serveur OpenOCD. Pour les registres à effets de lecture, utiliser **Lire une fois · effets possibles** dans l'inspecteur ou **Lire registre 32 bits une fois** dans la vue Mémoire. Une lecture peut consommer une donnée de FIFO, acquérir un spinlock ou effacer un indicateur. [Guide matériel et dépannage](docs/HARDWARE_DEBUG.md)
 
@@ -129,11 +130,11 @@ Le tableau suivant décrit le **mode émulation**. Les différences du mode rée
 | Cartes | Quatre profils, câblage décrit et LED GPIO25/CYW43 distinguée ; radio et LED Wi-Fi non émulées. |
 | CPU | Registres des deux cœurs côte à côte, SP/LR/PC, xPSR, MSP/PSP, CONTROL, PRIMASK, flags NZCV/T/IPSR et états retenu/sommeil/lockup. |
 | Assembleur | Désassemblage Thumb, opcodes, adresses, symbole ELF proche, suivi de PC et navigation par expression. PC désigne la prochaine instruction à exécuter. |
-| Mémoire et pile | Vue hexadécimale/ASCII, cartographie des régions et pile brute à partir du SP du cœur sélectionné. Pas de reconstruction des appels C++. |
+| Mémoire et pile | Vue hexadécimale/ASCII, cartographie des régions et piles par cœur avec le nom de fonction, les mots SRAM et les appels observés. |
 | Arrêts | Breakpoints d'adresse avant instruction ; watchpoints de plage mémoire après accès CPU, en lecture, écriture ou les deux ; arrêt sur `BKPT`. |
 | Expressions | Calculs entiers 32 bits, registres, adresses de symboles, lectures `read8/16/32` et déréférencement. Expressions surveillées par cœur et console `print`. Pas de variables typées, d'affectation ou d'appel de fonction cible. |
 | Périphériques | Catalogue, recherche, adresses nommées, accès, valeurs disponibles, bits et significations symboliques. Inspection sans dépiler les FIFO, acquitter les IRQ ou acquérir les spinlocks. |
-| Interface | Comparaison CPU, espace Code/Périphériques, inspecteurs détachables et fenêtre indépendante (`Ctrl+Maj+I`) : catalogue général ou périphérique précis, registres et bits simultanés. |
+| Interface | Cœurs et piles côte à côte, mémoire et périphériques modulables, console repliable, inspecteurs détachables et fenêtre indépendante (`Ctrl+Maj+I`) : catalogue général ou périphérique précis, registres et bits simultanés. |
 | UART | Capture des octets TX et injection de texte UTF-8 dans RX, pour les deux UART modélisés. |
 | Exemples | ELF d'exemple générables sans compilateur ARM et tests d'intégration utilisant directement le moteur. |
 | Source C | Correspondance ligne C ↔ adresses via DWARF, aperçu et surlignage partagé avec l'IDE. F10 avance d'une instruction. |

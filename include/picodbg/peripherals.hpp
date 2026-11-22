@@ -30,6 +30,7 @@ struct PeripheralDescription {
 // Hardware inventory and live state are separate: being listed never means a
 // device is implemented, and the catalog never issues reads against a CPU bus.
 std::vector<PeripheralDescription> peripheralCatalog(Chip chip);
+bool registerWritable(const RegisterDescription& reg);
 uint32_t fieldValue(uint32_t value, const RegisterField& field);
 std::string fieldMeaning(uint32_t registerValue, const RegisterField& field);
 }

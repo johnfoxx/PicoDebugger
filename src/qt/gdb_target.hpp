@@ -1,6 +1,7 @@
 #pragma once
 #include "picodbg/target.hpp"
 #include "gdb_mi.hpp"
+#include "stack_details.hpp"
 #include <QMap>
 #include <QSet>
 #include <map>
@@ -24,6 +25,7 @@ public:
     void download(bool ramEntry);
     bool connected() const { return connected_; }
     bool connecting() const { return connecting_; }
+    bool disconnecting() const { return disconnecting_; }
     QString connectionText() const;
     QString errorText() const { return error_; }
     QString elfPath() const { return elfPath_; }
@@ -41,6 +43,7 @@ public:
     void reset() override;
     void startCore(unsigned core, uint32_t entry, uint32_t stack) override;
     Stop step(unsigned core) override;
+    Stop stepSource(unsigned core, bool over, bool withSource);
     Stop run(size_t) override;
     void pause() override;
     Stop runFor(uint64_t, size_t = 1000) override;
@@ -49,17 +52,24 @@ public:
     size_t injectUart(unsigned, const std::string&) override;
     std::string uartOutput(unsigned) const override { return {}; }
     bool registerAvailable(unsigned core, unsigned index) const override;
+    std::vector<StackFrame> backtrace(unsigned core) const override;
+    FrameDetails stackDetails(unsigned core, unsigned level) const;
+    void writeStackVariable(unsigned core, unsigned level, const FrameField& field, const QString& input);
     uint32_t peek(uint32_t address, unsigned size, unsigned core = 0) const override;
     Instruction disassemble(uint32_t address, unsigned core) override;
     void readRegisterOnce(uint32_t address, unsigned core) const override;
     void addBreakpoint(uint32_t address) override;
     void removeBreakpoint(uint32_t address) override;
+    void clearBreakpoints() override;
     void addWatchpoint(uint32_t address, uint32_t length, bool read, bool write) override;
     void removeWatchpoint(size_t index) override;
     void clearWatchpoints() override;
     const std::array<std::map<std::string, std::string>, 2>& extraRegisters() const { return extras_; }
     std::function<void(const QString&)> logMessage;
 private:
+    void writeTargetValue(uint32_t address, uint32_t value, unsigned size, unsigned core) override;
+    void writeTargetBytes(uint32_t address, uint64_t value, unsigned size, unsigned core) override;
+    void writeCpuValue(unsigned core, unsigned index, uint32_t value) override;
     BoardDescription board_;
     ChipDescription description_;
     std::set<uint32_t> automaticRegisters_;
@@ -82,6 +92,10 @@ private:
     std::array<std::map<std::string, std::string>, 2> extras_;
     struct Read { QByteArray bytes; QString error; bool pending = true; };
     mutable std::map<std::pair<unsigned, uint32_t>, Read> reads_;
+    struct StackRead { std::vector<StackFrame> frames; QString error; bool pending = true; };
+    mutable std::map<unsigned, StackRead> stacks_;
+    struct DetailsRead { FrameDetails details; bool pending = true; QString error; };
+    mutable std::map<std::pair<unsigned, unsigned>, DetailsRead> stackDetails_;
     std::map<std::pair<unsigned, uint32_t>, Instruction> instructions_;
     std::map<std::pair<unsigned, uint32_t>, QString> disassemblyRequests_;
     std::map<uint32_t, QString> breakpointIds_;
@@ -104,6 +118,9 @@ private:
     bool safeRegister(uint32_t address) const;
     bool ordinaryMemory(uint32_t address, unsigned size) const;
     void requestMemory(uint32_t address, unsigned length, unsigned core) const;
+    void requestStack(unsigned core) const;
+    void requestStackDetails(unsigned core, unsigned level) const;
+    Stop stepCommand(unsigned core, const QString& command);
     QString threadOption(unsigned core) const;
     QString registerWrite(unsigned core, unsigned index, uint32_t value) const;
     QString monitor(const QString& command) const;

@@ -14,7 +14,8 @@ class UartTerminal;
 class PeripheralExplorer : public QDialog {
 public:
     PeripheralExplorer(const picodbg::DebugTarget& debugger, unsigned core, QWidget* parent = nullptr);
-    void updateTarget(const picodbg::DebugTarget& debugger);
+    void updateTarget(const picodbg::DebugTarget& debugger, bool running = false);
+    PeripheralPanel& panel() const { return *panel_; }
     std::function<void()> refreshRequested;
     std::function<size_t(unsigned, const std::string&)> injectUart;
 private:

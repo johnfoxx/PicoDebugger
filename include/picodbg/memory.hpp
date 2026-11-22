@@ -22,6 +22,8 @@ public:
     void write(uint32_t address, uint32_t value, unsigned size, unsigned core = 0);
     // Inspection never consumes FIFO words, clears status flags or takes a lock.
     uint32_t peek(uint32_t address, unsigned size, unsigned core = 0) const;
+    // A debugger write uses bus semantics without reporting a CPU access.
+    void poke(uint32_t address, uint32_t value, unsigned size, unsigned core = 0);
     void load(uint32_t address, const std::vector<uint8_t>& bytes);
     void clear();
     void tick(unsigned core);

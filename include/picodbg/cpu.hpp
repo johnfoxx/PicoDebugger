@@ -21,6 +21,7 @@ struct StepResult {
     bool breakpoint = false;
     bool exception = false;
     bool sendEvent = false;
+    bool call = false;
     std::string detail;
 };
 StepResult execute(Cpu& cpu, Memory& memory, unsigned core);

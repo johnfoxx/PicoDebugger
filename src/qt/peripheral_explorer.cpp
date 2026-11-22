@@ -50,8 +50,8 @@ PeripheralExplorer::PeripheralExplorer(const picodbg::DebugTarget& debugger, uns
             [this] { if (refreshRequested) refreshRequested(); });
     updateTarget(debugger);
 }
-void PeripheralExplorer::updateTarget(const picodbg::DebugTarget& debugger) {
-    panel_->updateTarget(debugger, static_cast<unsigned>(core_->currentIndex()));
+void PeripheralExplorer::updateTarget(const picodbg::DebugTarget& debugger, bool running) {
+    panel_->updateTarget(debugger, static_cast<unsigned>(core_->currentIndex()), running);
     for (auto* terminal : terminals_) terminal->updateTarget(debugger);
     if (debugger.hardware()) {
         snapshot_->setText(debugger.executing() ? "Carte réelle en exécution · arrêter pour inspecter" : "Lectures matérielles à l'arrêt · périphériques non figés · certaines lectures ont des effets de bord");

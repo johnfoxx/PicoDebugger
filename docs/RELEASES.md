@@ -1,5 +1,34 @@
 # Versions
 
+<a id="v0-10-0"></a>
+
+## v0.10.0 — 2026-11-22
+
+Changements depuis **v0.9.0** (`88e1822`).
+
+### Espace de débogage
+
+- Mémoire et Périphériques au centre, registres et piles à gauche, Surveillance compacte à droite. Les vues centrales peuvent être affichées seules ou ensemble. Les panneaux se déplacent, se détachent et retrouvent leur disposition au lancement. Outils se replie et se redimensionne.
+- Sélection **Cœur 0**, **Cœur 1** ou **Tous**. Les registres CPU sont éditables à l’arrêt selon les droits de la cible, avec mise en évidence des changements, symboles ELF et signification des bits connus.
+- Grille mémoire adaptative avec adresses, offsets, octets hexadécimaux et ASCII. Écriture sur 8, 16 ou 32 bits à l’arrêt. Le contexte MMIO indique le bloc et le registre connu. Le bleu, le vert, le violet et le gris identifient les droits d’accès dans les vues concernées.
+- Suivis simultanés de valeurs, plages SRAM, registres et blocs de périphériques. Chaque suivi garde son cœur et sa couleur dans Mémoire. Le catalogue permet l’écriture, le zoom, la navigation mémoire et l’ajout d’un suivi.
+
+### Pile, console et sonde
+
+- Synthèse de pile par cœur, organisée par fonction, avec mots alignés, hexadécimal, ASCII, repères `FP` et `RET` aux adresses connues et indication des mots omis.
+- Inspecteur de trame détachable. Les octets, l’ASCII et les lignes décodées partagent la sélection. Des cases permettent d’appliquer une couleur aux zones choisies. L’édition couvre les octets et les valeurs typées disponibles. Un soulignement ambre indique les modifications récentes.
+- Console avec `break`, `watch` et ses variantes, `delete`, `continue`, `next`, `step`, `print` et `backtrace` pour un cœur ou les deux. Moniteur de la Raspberry Pi Debug Probe dans Outils avec choix du débit, réception des traces et envoi TX.
+
+### IDE et documentation
+
+- IDE maximisé au lancement. Le volet Assembleur montre le désassemblage complet de l’ELF à l’arrêt, avec les couleurs du PC et de la ligne C sélectionnée. Le débogueur autonome conserve son panneau Assembleur.
+- **Quitter le débogage** et la fermeture du débogueur ramènent à l’éditeur C sans les repères d’exécution ni le volet Assembleur. Les fichiers restent ouverts. En SWD, la fermeture attend la fin de l’opération en cours et déconnecte la sonde.
+- [Manuel utilisateur](../UserManual.md) intégré au menu **Aide**, avec les commandes et les parcours entre panneaux.
+
+### Validation
+
+- 21 tests CTest sous Linux avec Qt 5.15.15 et 13 avec le moteur seul. Les tests couvrent notamment le désassemblage complet, les trames issues d’un ELF ARM GCC, les écritures et couleurs de surveillance, la sortie du débogage et la déconnexion SWD simulée. Le moniteur UART est vérifié sur pseudo-terminal.
+
 <a id="v0-9-0"></a>
 
 ## v0.9.0 — 2026-11-21

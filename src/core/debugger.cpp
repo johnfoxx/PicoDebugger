@@ -8,6 +8,7 @@ Debugger::Debugger(Chip chip) : Debugger(defaultBoard(chip)) {}
 Debugger::Debugger(Board board) : memory(describeBoard(board).chip), board_(describeBoard(board)) {
     memory.onAccess = [this](const MemoryAccess& access) {
         if (access.kind == Access::Execute) return;
+        if (access.kind == Access::Write) recordStackWrite(access);
         for (const auto& watch : watchpoints) {
             const bool overlap = uint64_t(access.address) < uint64_t(watch.address) + watch.length &&
                                  uint64_t(watch.address) < uint64_t(access.address) + access.size;
@@ -42,6 +43,11 @@ void Debugger::reset() {
     const uint32_t entry = image.hasVectors ? memory.peek(image.vectorAddress + 4, 4) : image.entry;
     const uint32_t sp = image.hasVectors ? memory.peek(image.vectorAddress, 4) : 0x20000000u + memory.description().ramSize;
     cpus = {}; cpus[0].reset(entry, sp);
+    callers_ = {};
+    frameActivations_[0] = ++nextActivation_;
+    frameActivations_[1] = 0;
+    frameWrites_ = {};
+    frameWrites_[0].entrySp = sp;
     memory.system(0).vtor = memory.system(1).vtor = image.hasVectors ? image.vectorAddress : 0;
     terminal_ = watchHit_ = skipBreakpoint_ = false; nextCore_ = 0; virtualTime_ = 0; ++revision_;
     stop.kind = StopKind::Ready; stop.core = 0; stop.address = entry & ~1u;
@@ -55,7 +61,9 @@ void Debugger::startCore(unsigned core, uint32_t entry, uint32_t stack) {
     if (!loaded_ || core > 1 || !(entry & 1u) || (stack & 3u) || stack < 0x20000020u || stack > 0x20000000u + memory.description().ramSize)
         throw Error(ErrorKind::InvalidArgument, "Cœur, entrée Thumb ou pile invalide");
     memory.read(entry & ~1u, 2, core, Access::Execute);
-    cpus[core].reset(entry, stack); ++revision_;
+    cpus[core].reset(entry, stack); callers_[core].clear(); ++revision_;
+    frameActivations_[core] = ++nextActivation_;
+    frameWrites_[core] = {stack, {}};
     stop.kind = StopKind::Ready; stop.core = core; stop.address = entry & ~1u;
     stop.message = "Cœur " + std::to_string(core) + " démarré explicitement ; protocole ROM non émulé";
 }
@@ -74,11 +82,28 @@ Stop Debugger::stepImpl(unsigned core) {
     }
     watchHit_ = false;
     const uint32_t pc = cpu.r[15];
+    const auto sp = cpu.r[13], ipsr = cpu.xpsr & 0x1ffu;
     stop.kind = StopKind::Step; stop.core = core; stop.address = pc; stop.message = "Pas instruction";
     try {
         if (virtualTime_ == std::numeric_limits<uint64_t>::max())
             throw Error(ErrorKind::InvalidArgument, "Temps virtuel maximal atteint ; reset requis");
         const StepResult result = execute(cpu, memory, core);
+        const auto nextIpsr = cpu.xpsr & 0x1ffu;
+        if (result.exception && ipsr != nextIpsr)
+            rememberCaller(core, {pc, sp, 0, ipsr, true, frameActivations_[core], {}});
+        else if (result.call)
+            rememberCaller(core, {pc, sp, cpu.r[14] & ~1u, ipsr, false, frameActivations_[core], {}});
+        else {
+            auto& callers = callers_[core];
+            for (auto frame = callers.rbegin(); frame != callers.rend(); ++frame) {
+                if (frame->ipsr != nextIpsr) continue;
+                if (frame->exception ? ipsr == nextIpsr : frame->resume != cpu.r[15] || cpu.r[13] < frame->sp) continue;
+                frameActivations_[core] = frame->activation;
+                frameWrites_[core] = std::move(frame->writes);
+                callers.erase((frame + 1).base(), callers.end());
+                break;
+            }
+        }
         // One virtual microsecond per scheduler quantum. This is deliberately
         // independent of the host clock and is not an ARM cycle timing claim.
         clockQuantum();
@@ -98,7 +123,10 @@ Stop Debugger::stepImpl(unsigned core) {
         } else if (error.kind == ErrorKind::BusFault || error.kind == ErrorKind::Alignment) {
             cpu.faultAddress = error.address; cpu.lastFault = error.what();
             stop.kind = StopKind::Fault;
-            try { enterException(cpu, memory, core, 3, pc); }
+            try {
+                if (enterException(cpu, memory, core, 3, pc))
+                    rememberCaller(core, {pc, sp, 0, ipsr, true, frameActivations_[core], {}});
+            }
             catch (const Error& nested) { terminal_ = true; stop.kind = StopKind::Unsupported; cpu.lastFault += "; " + std::string(nested.what()); }
             terminal_ = terminal_ || cpu.lockup;
             stop.message = cpu.lastFault + (cpu.lockup ? " — LOCKUP" : stop.kind == StopKind::Fault ? " — entrée HardFault, reprise possible" : " — modèle incomplet");
@@ -122,11 +150,7 @@ Stop Debugger::run(size_t budget) {
         const uint32_t pc = cpus[core].r[15];
         if (breakpoints.count(pc) && !cpus[core].sleeping) {
             if (skipBreakpoint_ && skipCore_ == core && skipAddress_ == pc) skipBreakpoint_ = false;
-            else {
-                stop.kind = StopKind::Breakpoint; stop.core = core; stop.address = pc; stop.message = "Point d'arrêt avant instruction";
-                skipBreakpoint_ = true; skipCore_ = core; skipAddress_ = pc; nextCore_ = core;
-                return stop;
-            }
+            else return stopAtBreakpoint(core);
         }
         const auto result = stepImpl(core);
         if (result.kind == StopKind::Breakpoint || result.kind == StopKind::Watchpoint || result.kind == StopKind::Fault || result.kind == StopKind::Unsupported) return stop;
@@ -138,6 +162,18 @@ Stop Debugger::run(size_t budget) {
         if (idle) { stop.kind = StopKind::Idle; stop.message = "Cœurs endormis ; aucune source d'événement modélisée active"; return stop; }
     }
     stop.kind = StopKind::Budget; stop.message = "Tranche d'exécution terminée (ordonnancement alterné déterministe)";
+    return stop;
+}
+Stop Debugger::stopAtBreakpoint(unsigned core) {
+    const auto pc = cpus.at(core).r[15];
+    stop.kind = StopKind::Breakpoint;
+    stop.core = core;
+    stop.address = pc;
+    stop.message = "Point d’arrêt avant instruction à " + hex(pc);
+    skipBreakpoint_ = true;
+    skipCore_ = core;
+    skipAddress_ = pc;
+    nextCore_ = core;
     return stop;
 }
 void Debugger::pause() { if (!terminal_) { stop.kind = StopKind::User; stop.message = "Pause demandée"; } }
@@ -172,6 +208,87 @@ Stop Debugger::runFor(uint64_t microseconds, size_t budget) {
         stop.kind = StopKind::User; stop.message = "Durée virtuelle atteinte ; exécution en pause";
     } else { stop.kind = StopKind::Budget; stop.message = "Durée virtuelle en cours"; }
     return stop;
+}
+void Debugger::writeTargetValue(uint32_t address, uint32_t value, unsigned size, unsigned core) {
+    memory.poke(address, value, size, core);
+    ++revision_;
+}
+void Debugger::writeCpuValue(unsigned core, unsigned index, uint32_t value) {
+    auto& cpu = cpus[core];
+    if (index < 16) {
+        cpu.r[index] = index == 15 ? value & ~1u : value;
+        if (index == 13) cpu.syncSp();
+    } else if (index == 16) {
+        const uint32_t mask = description().chip == Chip::RP2040 ? 0xf0000000u : 0xf8000000u;
+        cpu.xpsr = (cpu.xpsr & ~mask) | (value & mask);
+    } else {
+        cpu.syncSp();
+        if (index == 17) cpu.msp = value & ~3u;
+        if (index == 18) cpu.psp = value & ~3u;
+        if (index == 19) cpu.control = value & 2u;
+        if (index == 20) cpu.primask = value & 1u;
+        cpu.r[13] = !cpu.handlerMode() && (cpu.control & 2u) ? cpu.psp : cpu.msp;
+    }
+    if ((index >= 13 && index <= 15) || (index >= 17 && index <= 19)) {
+        callers_[core].clear();
+        if (index != 14) {
+            frameActivations_[core] = ++nextActivation_;
+            frameWrites_[core] = {cpu.r[13], {}};
+        }
+    }
+    if (index == 15) {
+        cpu.sleeping = false;
+        if (stop.core == core) stop.address = cpu.r[15];
+        skipBreakpoint_ = false;
+    }
+    ++revision_;
+}
+void Debugger::rememberCaller(unsigned core, Caller caller) {
+    auto& frames = callers_[core];
+    if (frames.size() == 64) frames.erase(frames.begin());
+    caller.writes = std::move(frameWrites_[core]);
+    frames.push_back(std::move(caller));
+    frameActivations_[core] = ++nextActivation_;
+    frameWrites_[core] = {cpus[core].r[13], {}};
+}
+void Debugger::recordStackWrite(const MemoryAccess& access) {
+    auto& frame = frameWrites_[access.core];
+    uint32_t start = access.address;
+    const uint64_t wideEnd = uint64_t(start) + access.size;
+    if (start < cpus[access.core].r[13] || wideEnd > frame.entrySp) return;
+    const auto* region = regionAt(description(), start);
+    if (!region || !regionWritable(*region) || region->name.find("SRAM") == std::string::npos || wideEnd > region->end) return;
+
+    auto end = static_cast<uint32_t>(wideEnd);
+    auto it = frame.spans.lower_bound(start);
+    if (it != frame.spans.begin()) {
+        const auto previous = std::prev(it);
+        if (previous->second >= start) it = previous;
+    }
+    if (frame.spans.size() >= 256 && (it == frame.spans.end() || it->first > end)) return;
+    while (it != frame.spans.end() && it->first <= end) {
+        start = std::min(start, it->first);
+        end = std::max(end, it->second);
+        it = frame.spans.erase(it);
+    }
+    frame.spans.emplace_hint(it, start, end);
+}
+
+bool Debugger::stackBytesWritten(unsigned core, uint32_t address, unsigned size) const {
+    const auto& spans = frameWrites_.at(core).spans;
+    const auto found = spans.upper_bound(address);
+    return size && found != spans.begin() && std::prev(found)->second >= uint64_t(address) + size;
+}
+
+std::vector<StackFrame> Debugger::backtrace(unsigned core) const {
+    if (!loaded_ || core >= cpus.size() || cpus[core].held)
+        throw Error(ErrorKind::InvalidArgument, "Pile indisponible pour ce cœur");
+    const auto& cpu = cpus[core];
+    std::vector<StackFrame> frames{{cpu.r[15], cpu.r[13], true, image.functionAt(cpu.r[15]), frameActivations_[core]}};
+    const auto& callers = callers_[core];
+    for (auto frame = callers.rbegin(); frame != callers.rend(); ++frame)
+        frames.push_back({frame->pc, frame->sp, true, image.functionAt(frame->pc), frame->activation});
+    return frames;
 }
 size_t Debugger::injectUart(unsigned index, const std::string& bytes) {
     if (!loaded_ || terminal_ || index > 1) throw Error(ErrorKind::InvalidArgument, "Session/UART indisponible");

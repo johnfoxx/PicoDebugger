@@ -100,13 +100,24 @@ std::vector<PeripheralDescription> peripheralCatalog(Chip chip) {
         if (region.begin == 0x50110000) device.name = "USBCTRL_REGS";
         for (const auto& reg : readable) {
             if (reg.address < region.begin || reg.address >= region.end) continue;
-            device.registers.push_back({reg.address, reg.name, "Lecture", reg.note, {}});
+            const bool writable = (reg.address >= 0xd0000100 && reg.address < 0xd0000180) ||
+                (reg.address >= 0xd0000010 && reg.address < 0xd0000050) || region.begin == 0xe0000000;
+            device.registers.push_back({reg.address, reg.name, writable ? "RW" : "RO", reg.note, {}});
+            if (reg.address == 0xd0000050) device.registers.back().access = "W1C";
             if (reg.address == 0xd0000050)
                 device.registers.back().fields = {{"VLD", 0, 1}, {"RDY", 1, 1}, {"WOF", 2, 1}, {"ROE", 3, 1}};
             if (reg.address == 0xe000e010)
                 device.registers.back().fields = {{"ENABLE", 0, 1}, {"TICKINT", 1, 1}, {"CLKSOURCE", 2, 1}, {"COUNTFLAG", 16, 1}};
         }
         if (!device.registers.empty()) device.coverage = "Partiel";
+        if (device.name == "SIO") {
+            add(device, 0x54, "SIO.FIFO_WR", "WO", "Envoie un mot dans la FIFO du cœur opposé");
+        }
+        if (device.name == "SIO" || region.begin == 0xe0000000) {
+            std::sort(device.registers.begin(), device.registers.end(), [](const RegisterDescription& a, const RegisterDescription& b) {
+                return a.address < b.address;
+            });
+        }
         if (device.name == "TIMER" || device.name == "TIMER0" || device.name == "TIMER1") {
             device.registers.clear(); timerRegisters(device, chip == Chip::RP2350);
             device.coverage = "Partiel (temps virtuel)";
@@ -129,5 +140,8 @@ std::vector<PeripheralDescription> peripheralCatalog(Chip chip) {
     }
     std::sort(result.begin(), result.end(), [](const PeripheralDescription& a, const PeripheralDescription& b) { return a.name < b.name; });
     return result;
+}
+bool registerWritable(const RegisterDescription& reg) {
+    return reg.access == "RW" || reg.access == "WO" || reg.access == "W1C";
 }
 }

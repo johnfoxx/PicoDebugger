@@ -20,17 +20,19 @@ const QHash<QString, QString>& lightColors() {
     static const QHash<QString, QString> colors{
         {"#222426", "#f1f3f4"}, {"#eef0f1", "#22292d"}, {"#1b1d1f", "#ffffff"},
         {"#26282b", "#f5f7f8"}, {"#303337", "#e3e8eb"}, {"#345a55", "#b5ded5"},
-        {"#3b4748", "#d1dfdf"}, {"#ffffff", "#172528"}, {"#fff", "#172528"},
+        {"#3b4748", "#d1dfdf"}, {"#24567d", "#bcd8f4"}, {"#ffffff", "#172528"}, {"#fff", "#172528"},
         {"#54595f", "#819097"}, {"#404448", "#c4ced4"}, {"#383c40", "#c0c9ce"},
         {"#181a1c", "#68777e"}, {"#86d5c7", "#126557"}, {"#a8afb5", "#536169"},
         {"#a1a6aa", "#66757c"}, {"#282b2e", "#e9edef"}, {"#303639", "#e4efee"},
         {"#d1d5d8", "#3b484e"}, {"#34383b", "#e7ecee"}, {"#41474a", "#d4e3e2"},
         {"#76c8bd", "#167b6b"}, {"#8bd6bb", "#1c6950"}, {"#757b80", "#65777e"},
-        {"#8b9db1", "#4b6275"}, {"#add7a2", "#2c6c3d"}, {"#83cbde", "#146581"},
+        {"#8b9db1", "#4b6275"}, {"#add7a2", "#2c6c3d"}, {"#83cbde", "#146581"}, {"#a8c7ff", "#174b9b"},
         {"#f5c47e", "#874a0e"}, {"#d5adf4", "#73389a"}, {"#8ce4d6", "#0e7065"},
         {"#ff9490", "#a62725"}, {"#f1ce80", "#805000"}, {"#ffb591", "#963e19"},
         {"#ffd780", "#8b4f00"}, {"#dce6f0", "#243746"}, {"#e5ac74", "#824612"},
-        {"#234d57", "#c1ebe9"}, {"#514070", "#e5d8f6"}, {"#655021", "#fae29a"}
+        {"#234d57", "#c1ebe9"}, {"#514070", "#e5d8f6"}, {"#655021", "#fae29a"},
+        {"#285168", "#c4e8fb"}, {"#554477", "#e9dafa"}, {"#365740", "#d3efd7"},
+        {"#695028", "#fae7bf"}, {"#673e53", "#f6d8e8"}, {"#285a56", "#caeee9"}
     };
     return colors;
 }
@@ -126,8 +128,7 @@ void applyPicoTheme(QWidget& window) {
     theme.setColor(QPalette::Text, picoThemeColor("#eef0f1"));
     theme.setColor(QPalette::Button, picoThemeColor("#303337"));
     theme.setColor(QPalette::ButtonText, picoThemeColor("#eef0f1"));
-    theme.setColor(QPalette::Highlight, picoThemeColor("#345a55"));
-    theme.setColor(QPalette::Inactive, QPalette::Highlight, picoThemeColor("#3b4748"));
+    theme.setColor(QPalette::Highlight, picoThemeColor("#24567d"));
     theme.setColor(QPalette::HighlightedText, picoThemeColor("#ffffff"));
     theme.setColor(QPalette::ToolTipBase, picoThemeColor("#303337"));
     theme.setColor(QPalette::ToolTipText, picoThemeColor("#eef0f1"));
@@ -149,13 +150,13 @@ void applyPicoTheme(QWidget& window) {
         "QMenu::item:selected,QMenuBar::item:selected {background:#345a55;color:#fff;}"
         "QDockWidget::title {background:#303337;padding:7px;font-weight:600;}"
         "QAbstractItemView,QPlainTextEdit,QTextEdit {background:#1b1d1f;color:#eef0f1;"
-        "alternate-background-color:#26282b;selection-background-color:#345a55;selection-color:#fff;border:1px solid #404448;}"
-        "QTreeView::item:selected {background:#345a55;color:#fff;}"
-        "QTreeView::item:selected:!active {background:#3b4748;color:#fff;}"
+        "alternate-background-color:#26282b;selection-background-color:#24567d;selection-color:#fff;border:1px solid #404448;}"
+        "QTreeView::item:selected {background:#24567d;color:#fff;}"
+        "QTreeView::item:selected:!active {background:#24567d;color:#fff;}"
         "QTreeView::item:hover:!selected {background:#303639;color:#fff;}"
         "QHeaderView::section {background:#303337;color:#d1d5d8;padding:5px;border:none;}"
         "QLineEdit,QComboBox,QSpinBox {background:#1b1d1f;color:#eef0f1;border:1px solid #54595f;border-radius:3px;"
-        "padding:5px;selection-background-color:#345a55;selection-color:#fff;}"
+        "padding:5px;selection-background-color:#24567d;selection-color:#fff;}"
         "QPushButton {background:#34383b;color:#eef0f1;border:1px solid #54595f;border-radius:3px;padding:5px 9px;}"
         "QPushButton:hover,QToolButton:hover {background:#41474a;}"
         "QToolButton {background:#303337;color:#eef0f1;border:none;border-radius:3px;padding:7px;}"

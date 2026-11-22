@@ -1,4 +1,5 @@
 #include "gdb_target.hpp"
+#include <QLocale>
 #include "picodbg/peripherals.hpp"
 #include <QCryptographicHash>
 #include <QFile>
@@ -157,7 +158,7 @@ void GdbTarget::requireStopped() const {
     if (!loaded() || busy() || running_ || disconnecting_) throw Error(ErrorKind::InvalidArgument, "Cible indisponible : connecter, attendre l'opération et mettre en pause");
 }
 void GdbTarget::invalidate() {
-    ++generation_; reads_.clear(); instructions_.clear(); disassemblyRequests_.clear(); valid_ = {};
+    ++generation_; reads_.clear(); stacks_.clear(); stackDetails_.clear(); instructions_.clear(); disassemblyRequests_.clear(); valid_ = {};
     for (auto& extra : extras_) extra.clear();
     mi_.cancelInspections(); ++revision_;
 }
@@ -230,7 +231,7 @@ QString GdbTarget::threadOption(unsigned core) const {
     return " --thread " + threads_[core];
 }
 QString GdbTarget::registerWrite(unsigned core, unsigned index, uint32_t value) const {
-    if (!registerAvailable(core, index)) throw Error(ErrorKind::Unsupported, "Registre requis pour le démarrage non exposé par GDB");
+    if (!registerAvailable(core, index)) throw Error(ErrorKind::Unsupported, "Registre indisponible ou non exposé par GDB");
     for (int n = 0; n < registerNames_.size(); ++n)
         if (registerIndex(registerNames_[n]) == static_cast<int>(index))
             return "-data-write-register-values" + threadOption(core) + " x " + QString::number(n) + " " + hx(value);
@@ -357,13 +358,25 @@ Stop GdbTarget::run(size_t) {
     }); return stop;
 }
 Stop GdbTarget::step(unsigned core) {
+    return stepCommand(core, "-exec-step-instruction");
+}
+Stop GdbTarget::stepSource(unsigned core, bool over, bool withSource) {
+    return stepCommand(core, over ? (withSource ? "-exec-next" : "-exec-next-instruction")
+                                  : (withSource ? "-exec-step" : "-exec-step-instruction"));
+}
+Stop GdbTarget::stepCommand(unsigned core, const QString& command) {
     if (executionBlocked_) unavailable("Téléversement incomplet : réussir un nouveau téléversement avant de reprendre");
     const auto thread = threadOption(core); begin("Pas instruction…"); running_ = true; stop.core = core;
-    mi_.command("-exec-step-instruction" + thread, [this](const MiRecord& r) {
+    mi_.command(command + thread, [this](const MiRecord& r) {
         busy_ = false;
         if (r.error()) { running_ = false; fail(r.data.get("msg").text); snapshotNeeded_ = true; }
         ++revision_;
     }); return stop;
+}
+void GdbTarget::writeCpuValue(unsigned core, unsigned index, uint32_t value) {
+    const auto command = registerWrite(core, index, index == 15 ? value & ~1u : value);
+    begin("Écriture d’un registre CPU…");
+    commands({command}, [this] { busy_ = false; snapshotNeeded_ = true; ++revision_; });
 }
 void GdbTarget::pause() {
     if (!connected_ || !running_ || busy_) return;
@@ -485,6 +498,150 @@ void GdbTarget::readRegisterOnce(uint32_t address, unsigned core) const {
     if (ordinaryMemory(address, 4)) throw Error(ErrorKind::InvalidArgument, "Cette adresse est en mémoire ordinaire ; utiliser Lire ou Relire l'état matériel");
     requestMemory(address, 4, core);
 }
+std::vector<StackFrame> GdbTarget::backtrace(unsigned core) const {
+    requireStopped();
+    if (!registerAvailable(core, 15)) unavailable("Pile indisponible pour ce cœur");
+    const auto found = stacks_.find(core);
+    if (found == stacks_.end()) {
+        requestStack(core);
+        unavailable("Backtrace GDB en cours…");
+    }
+    if (found->second.pending) unavailable("Backtrace GDB en cours…");
+    if (!found->second.error.isEmpty()) throw Error(ErrorKind::Unsupported, found->second.error.toStdString());
+    return found->second.frames;
+}
+void GdbTarget::requestStack(unsigned core) const {
+    const auto context = threadOption(core);
+    const auto generation = generation_;
+    stacks_[core] = StackRead();
+    mi_.command("-stack-list-frames" + context + " --no-frame-filters 0 31", [this, core, context, generation](const MiRecord& reply) {
+        if (generation != generation_ || !loaded()) return;
+        auto& stack = stacks_.at(core);
+        stack.pending = false;
+        try {
+            if (reply.error()) throw Error(ErrorKind::Unsupported, reply.data.get("msg").text.toStdString());
+            for (const auto& frame : reply.data.get("stack").items) {
+                if (stack.frames.size() == 32 || frame.name != "frame" ||
+                    frame.get("level").text != QString::number(static_cast<unsigned>(stack.frames.size()))) break;
+                const auto pc = number(frame.get("addr").text);
+                const auto name = frame.get("func").text;
+                const bool first = stack.frames.empty();
+                stack.frames.push_back({pc, first ? cpus[core].r[13] : 0, first && registerAvailable(core, 13),
+                    name.isEmpty() || name == "??" ? image.functionAt(pc) : name.toStdString()});
+            }
+            if (stack.frames.empty()) unavailable("GDB ne fournit aucune trame");
+        } catch (const Error& error) {
+            if (stack.frames.empty()) stack.error = q(error.what());
+        }
+        ++revision_;
+        const auto count = std::min<size_t>(stack.frames.size(), 8);
+        for (size_t i = 1; i < count; ++i) {
+            mi_.command("-data-evaluate-expression" + context + " --frame " + QString::number(static_cast<unsigned>(i)) + " $sp",
+                [this, core, generation, i](const MiRecord& value) {
+                    if (generation != generation_ || !loaded() || value.error()) return;
+                    try {
+                        auto& frame = stacks_.at(core).frames[i];
+                        frame.sp = number(value.data.get("value").text);
+                        frame.hasSp = true;
+                        ++revision_;
+                    } catch (const Error&) { /* GDB could not recover this stack pointer. */ }
+                }, 8000, true);
+        }
+    }, 8000, true);
+}
+FrameDetails GdbTarget::stackDetails(unsigned core, unsigned level) const {
+    requireStopped();
+    if (!registerAvailable(core, 15) || level >= 32) unavailable("Trame non exposée par GDB");
+    const auto key = std::make_pair(core, level);
+    const auto found = stackDetails_.find(key);
+    if (found == stackDetails_.end()) {
+        requestStackDetails(core, level);
+        unavailable("Variables GDB en cours…");
+    }
+    if (found->second.pending) unavailable("Variables GDB en cours…");
+    if (!found->second.error.isEmpty()) throw Error(ErrorKind::Unsupported, found->second.error.toStdString());
+    return found->second.details;
+}
+
+void GdbTarget::requestStackDetails(unsigned core, unsigned level) const {
+    const auto key = std::make_pair(core, level);
+    const auto generation = generation_;
+    const auto context = threadOption(core) + " --frame " + QString::number(level);
+    stackDetails_[key] = DetailsRead();
+    mi_.command("-stack-list-variables" + context + " --simple-values", [this, key, generation, context](const MiRecord& reply) {
+        if (generation != generation_ || !loaded()) return;
+        auto& view = stackDetails_.at(key);
+        view.pending = false;
+        if (reply.error()) view.error = reply.data.get("msg").text;
+        static const QRegularExpression identifier("^[A-Za-z_][A-Za-z0-9_]*$");
+        const auto& variables = reply.data.get("variables").items;
+        QHash<QString, int> names;
+        for (const auto& variable : variables) ++names[variable.get("name").text];
+        for (const auto& variable : variables) {
+            auto& fields = view.details.fields;
+            if (fields.size() >= 32) break;
+            FrameField field;
+            field.name = variable.get("name").text;
+            if (field.name.isEmpty()) continue;
+            field.role = variable.get("arg").text == "1" ? "Argument" : "Locale";
+            field.type = frameType(variable.get("type").text);
+            field.rendered = variable.get("value").text;
+            if (names.value(field.name) == 1 && identifier.match(field.name).hasMatch()) field.expression = field.name;
+            field.editable = field.type.kind != FrameType::Unknown && field.type.size
+                && !field.type.readOnly && !field.expression.isEmpty() && !field.rendered.startsWith('<');
+            const int slot = fields.size();
+            fields.push_back(field);
+            if (!field.expression.isEmpty() && field.type.size && !field.rendered.startsWith('<')) {
+                mi_.command("-data-evaluate-expression" + context + " " + miQuote("(unsigned long)&(" + field.expression + ")"),
+                    [this, key, generation, slot](const MiRecord& address) {
+                        if (generation != generation_ || !loaded() || address.error()) return;
+                        auto& data = stackDetails_.at(key).details.fields[slot];
+                        try {
+                            data.address = number(address.data.get("value").text);
+                            data.inMemory = !data.type.isArray || stackMemory(*this, data.address, data.type.size * data.type.count);
+                            ++revision_;
+                        } catch (const Error&) { /* GDB can report a value with no address. */ }
+                    }, 8000, true);
+            }
+        }
+        ++revision_;
+    }, 8000, true);
+}
+
+void GdbTarget::writeStackVariable(unsigned core, unsigned level, const FrameField& field, const QString& input) {
+    requireStopped();
+    static const QRegularExpression identifier(R"(^[A-Za-z_][A-Za-z0-9_]*(?:\[\d+\])?$)");
+    if (!field.editable || field.type.isArray || !identifier.match(field.expression).hasMatch())
+        unavailable("Cette variable est indisponible en écriture");
+    const auto raw = parseFrameValue(input, field.type);
+    auto value = QString("0x%1").arg(raw, 0, 16);
+    if (field.type.kind == FrameType::Float) value = QString::number(QLocale::c().toDouble(input), 'g', 17);
+    else if (field.type.kind == FrameType::Pointer) value.prepend("(void*)");
+    const auto context = threadOption(core) + " --frame " + QString::number(level);
+    begin("Écriture d’une variable de pile…");
+    commands({"-data-evaluate-expression" + context + " " + miQuote(field.expression + " = " + value)}, [this] {
+        busy_ = false; snapshotNeeded_ = true; ++revision_;
+        if (logMessage) logMessage("Variable modifiée sur la cible");
+    });
+}
+
+void GdbTarget::writeTargetValue(uint32_t address, uint32_t value, unsigned size, unsigned core) {
+    writeTargetBytes(address, value, size, core);
+}
+
+void GdbTarget::writeTargetBytes(uint32_t address, uint64_t value, unsigned size, unsigned core) {
+    const auto context = threadOption(core);
+    QByteArray bytes;
+    for (unsigned i = 0; i < size; ++i) bytes += static_cast<char>((value >> (8 * i)) & 0xffu);
+    begin("Écriture mémoire cible…");
+    commands({"-data-write-memory-bytes" + context + " " + hx(address) + " " + QString::fromLatin1(bytes.toHex())},
+             [this, address] {
+                 busy_ = false;
+                 snapshotNeeded_ = true;
+                 ++revision_;
+                 if (logMessage) logMessage("Écriture effectuée à " + hx(address));
+             });
+}
 Instruction GdbTarget::disassemble(uint32_t address, unsigned core) {
     if (!loaded() || busy_ || running_) unavailable("Désassemblage matériel indisponible pendant l'exécution ou une opération");
     threadOption(core);
@@ -531,6 +688,18 @@ void GdbTarget::removeBreakpoint(uint32_t address) {
     requireStopped(); address &= ~1u; if (!breakpointIds_.count(address)) return;
     const QString id = breakpointIds_.at(address); begin("Suppression du breakpoint…");
     commands({"-break-delete " + id}, [this, address] { breakpointIds_.erase(address); breakpoints.erase(address); busy_ = false; snapshotNeeded_ = true; ++revision_; });
+}
+void GdbTarget::clearBreakpoints() {
+    requireStopped();
+    if (breakpointIds_.empty()) return;
+    QStringList ids;
+    for (const auto& point : breakpointIds_) ids << point.second;
+    begin("Suppression des points d’arrêt…");
+    commands({"-break-delete " + ids.join(' ')}, [this] {
+        breakpointIds_.clear();
+        breakpoints.clear();
+        busy_ = false; snapshotNeeded_ = true; ++revision_;
+    });
 }
 void GdbTarget::addWatchpoint(uint32_t address, uint32_t length, bool read, bool write) {
     if ((length != 1 && length != 2 && length != 4) || (address % length) || (!read && !write) || uint64_t(address) + length > 0x100000000ull)

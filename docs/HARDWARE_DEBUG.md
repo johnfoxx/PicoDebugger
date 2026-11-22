@@ -67,7 +67,7 @@ Les limites matérielles des breakpoints/watchpoints sont renvoyées par GDB/Ope
 
 ## Lire l'état matériel
 
-Les registres CPU de chaque cœur sont lus par GDB ; les registres supplémentaires exposés, par exemple FPU ou sécurité, sont ajoutés au tableau. Une valeur non exposée reste indisponible. Le désassemblage vient de GDB, ce qui évite de limiter la carte au décodeur Thumb partiel du simulateur. Mémoire, pile et expressions utilisent les lectures de la cible, jamais les octets d'un modèle émulé.
+Les registres CPU de chaque cœur sont lus par GDB ; le clic droit sur le tableau ouvre les registres supplémentaires exposés, par exemple FPU ou sécurité. Le double-clic édite un registre standard à l’arrêt. Une valeur non exposée reste indisponible. Le désassemblage vient de GDB, ce qui évite de limiter la carte au décodeur Thumb partiel du simulateur. Mémoire, pile et expressions utilisent les lectures de la cible, jamais les octets d'un modèle émulé.
 
 Les valeurs sont masquées pendant l'exécution et renouvelées après un arrêt. À l'arrêt, les lectures sont conservées pour que le tableau, les bits et les expressions partagent les mêmes valeurs. **Cible → Relire l'état matériel** invalide ce cache et relit les registres CPU ainsi que les plages demandées par les vues. Ce n'est pas une trace continue : les périphériques, DMA et watchdog ne sont pas nécessairement figés avec les CPU, et les deux cœurs/périphériques ne forment pas un instantané atomique.
 
@@ -75,12 +75,12 @@ Le catalogue décrit les mêmes registres et champs qu'en émulation, y compris 
 
 Seuls les registres dont la lecture automatique a été retenue sont interrogés par un rafraîchissement. Les autres affichent **Lecture explicite**. Sélectionner le registre puis **Lire une fois · effets possibles** pour une lecture réelle unique, dont la valeur est réutilisée pour les bits. Cette action peut consommer une donnée UART/SPI, acquérir un spinlock ou acquitter un indicateur. Un nouvel arrêt/rafraîchissement invalide cette lecture sans la répéter automatiquement. Les registres en écriture seule ne sont pas lus. Dans **Mémoire**, le bouton **Lire registre 32 bits une fois** permet également une lecture explicite d'une adresse MMIO alignée absente du catalogue. Le risque d'effet de lecture est le même ; les trois autres octets du mot sont réutilisés dans la vue hexadécimale sans nouveaux accès matériels.
 
-La lecture d'une zone protégée ou inaccessible affiche l'erreur du serveur ; aucune valeur de reset ou zéro fictif ne la remplace. Les tables restent en lecture seule : pas d'éditeur arbitraire de mémoire ou de registres, ni d'appels de fonctions cibles dans les expressions.
+La lecture d'une zone protégée ou inaccessible affiche l'erreur du serveur ; aucune valeur de reset ou zéro fictif ne la remplace. À l’arrêt, les actions des tableaux permettent d’écrire dans une zone autorisée ou dans un registre inscriptible. Les expressions évaluent des valeurs et des lectures.
 
 ## Limites qui restent présentes
 
 - ARM/Thumb uniquement, pas de chargement ELF Hazard3/RISC-V, UF2 ou BIN.
-- Désassemblage, symboles ELF et lignes C via DWARF pour le PC arrêté. Le pas s'effectue à l'instruction. Les variables DWARF et le déroulage de pile restent à implémenter.
+- Désassemblage, symboles ELF et lignes C via DWARF pour le PC arrêté. F10 avance d’une instruction. La console propose `s` et `n` pour le pas source et `bt 0` ou `bt 1` pour le déroulage de pile par GDB. Les expressions utilisent les registres, les symboles ELF et les adresses.
 - Pas de contournement des permissions de debug, de TrustZone, des protections OTP ou d'une configuration verrouillée. Les registres accessibles dépendent de la cible et du serveur.
 - Le CYW43 des cartes W est un composant externe piloté par le firmware ; ses registres internes et son état radio ne sont pas exposés directement par le SWD du RP2040/RP2350.
 - Le temps virtuel et l'injection UART simulée sont réservés à l'émulation.
@@ -91,7 +91,9 @@ La lecture d'une zone protégée ou inaccessible affiche l'erreur du serveur ; a
 1. Connecter la Debug Probe au PC par USB. Sur son port **U / UART**, relier d'abord les masses **GND**, puis le **RX de la sonde au TX de la carte**. Alimenter la carte séparément. [Câblage officiel de la Debug Probe](https://www.raspberrypi.com/documentation/microcontrollers/debug-probe.html#serial-connections)
 2. Configurer le firmware pour émettre sur l'UART et les broches câblées. Avec le Pico SDK, activer `pico_enable_stdio_uart(nom_de_la_cible 1)` dans CMake et appeler `stdio_init_all()` avant les `printf`. Le débit du firmware et celui du moniteur doivent correspondre. Pour envoyer immédiatement un message conservé dans le tampon de sortie, appeler `fflush(stdout)`.
 3. Dans le débogueur, ouvrir **Cible → Moniteur série de la sonde…** (**Ctrl+Maj+U**). Si une seule Debug Probe est identifiée, son port est proposé automatiquement. Sinon, choisir le port ou saisir son chemin. Si la sonde vient d'être branchée, cliquer **Actualiser**. Le débit initial est de **115200 bauds**, en **8N1**.
-4. Cliquer **Connecter**, puis lancer ou réinitialiser le firmware si les premiers messages sont émis au démarrage. Le moniteur lit l'UART même si la session SWD est déconnectée. **Défilement automatique** suit la sortie. **Enregistrer…** exporte en UTF-8 le journal affiché, qui conserve les dernières traces dans la limite de 10 000 lignes ou 256 K caractères.
+4. Dans **Outils → Série TX/RX**, cliquer **Connecter**, puis lancer ou réinitialiser le firmware si les premiers messages sont émis au démarrage. Le moniteur lit l'UART même si la session SWD est déconnectée. **Défilement automatique** suit la sortie. **Enregistrer…** exporte en UTF-8 le journal affiché, qui conserve les dernières traces dans la limite de 10 000 lignes ou 256 K caractères.
+
+Pour envoyer du texte au firmware, relier également le **TX de la sonde au RX de la carte** et utiliser **Envoyer**. Le champ transmet le texte en UTF-8 sans fin de ligne automatique.
 
 Si le port est introuvable, vérifier le câble USB de la sonde et, sous Linux, les droits sur son périphérique série, souvent `/dev/ttyACM0`. Si le port est occupé, fermer le terminal qui l'utilise. Si le port est ouvert et le journal reste vide, vérifier que le firmware sort bien sur l'UART, le débit, la masse commune et le raccordement TX vers RX.
 

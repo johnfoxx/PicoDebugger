@@ -109,7 +109,10 @@ ElfImage ElfImage::parse(const std::vector<uint8_t>& bytes) {
             const auto value = r.number(p + 4, 4);
             if (name.empty() || name[0] == '$') continue;
             image.symbols[name] = value;
-            if ((r.number(p + 12, 1) & 15u) == 2) image.functions[value & ~1u] = name;
+            if ((r.number(p + 12, 1) & 15u) == 2) {
+                image.functions[value & ~1u] = name;
+                image.functionSizes[value & ~1u] = r.number(p + 8, 4);
+            }
             if (name == "__vectors" || name == "__VECTOR_TABLE") {
                 image.vectorAddress = value; image.hasVectors = true;
             }
@@ -119,6 +122,18 @@ ElfImage ElfImage::parse(const std::vector<uint8_t>& bytes) {
 }
 void ElfImage::install(Memory& memory) const {
     for (const auto& segment : segments) memory.load(segment.address, segment.bytes);
+}
+std::string ElfImage::functionAt(uint32_t address) const {
+    auto it = functions.upper_bound(address);
+    if (it == functions.begin()) return {};
+    --it;
+    if (address == it->first) return it->second;
+    const auto size = functionSizes.find(it->first);
+    if (size != functionSizes.end() && size->second)
+        return address - it->first < size->second ? it->second : std::string();
+    for (const auto& segment : segments)
+        if (it->first >= segment.address && address - segment.address < segment.bytes.size()) return it->second;
+    return {};
 }
 std::string ElfImage::symbolAt(uint32_t address) const {
     auto it = functions.upper_bound(address);

@@ -71,6 +71,10 @@ uint32_t Memory::readImpl(uint32_t address, unsigned size, unsigned core, Access
     return readDevice(address, core, inspect);
 }
 void Memory::write(uint32_t address, uint32_t value, unsigned size, unsigned core) {
+    poke(address, value, size, core);
+    if (onAccess) onAccess({address, size, Access::Write, core});
+}
+void Memory::poke(uint32_t address, uint32_t value, unsigned size, unsigned core) {
     check(address, size, core);
     if (description_.chip == Chip::RP2040 && address % size)
         throw Error(ErrorKind::Alignment, "Écriture non alignée Cortex-M0+", address);
@@ -85,7 +89,6 @@ void Memory::write(uint32_t address, uint32_t value, unsigned size, unsigned cor
         if (size != 4 || address % 4) throw Error(ErrorKind::Unsupported, "Écriture MMIO hors modèle", address);
         writeDevice(address, value, core);
     }
-    if (onAccess) onAccess({address, size, Access::Write, core});
 }
 void Memory::load(uint32_t address, const std::vector<uint8_t>& bytes) {
     if (bytes.empty()) return;

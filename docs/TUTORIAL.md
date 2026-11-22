@@ -54,11 +54,9 @@ Les quatre cartes du sélecteur utilisent deux modèles de puces partiels : celu
 | Lire la couverture actuelle | **Aide → Couverture et limites** |
 | Fermer l'application | **Fichier → Quitter** ou fermeture de la fenêtre principale |
 
-Le tableau **CPU** à gauche compare les deux cœurs. Au centre, **Code** affiche l'assembleur et **Périphériques** le catalogue ; les inspecteurs ouverts y ajoutent leurs propres onglets. En bas, **Inspection** regroupe Mémoire, Pile, Console et Carte mémoire. La colonne **Surveillance**, masquée au départ, apparaît à l'ajout d'un point ou d'une expression ; le menu **Vues** permet également de l'ouvrir.
+**Mémoire** et **Périphériques** occupent le centre. Les deux cœurs et leurs piles sont à gauche. **Surveillance** se trouve à droite. Les inspecteurs s’ouvrent dans **Périphériques**, et l’assembleur s’ajoute au centre quand l’IDE est fermé. Le panneau repliable **Outils** rassemble la console, la carte mémoire, le temps virtuel, le câblage et le port série de la sonde. La console permet par exemple de saisir `bt 0` ou `bt all` pour voir les piles.
 
-Faire glisser les séparations pour redimensionner les zones. Fermer un panneau le masque sans effacer ses données ; **Vues** ou la restauration de disposition le réaffiche. Cette dernière revient à Code/Mémoire et masque Surveillance, sans fermer les inspecteurs. La disposition n'est pas sauvegardée entre deux lancements.
-
-Sous Qt5/Wayland, le détachement d'un dock par glisser-déposer est désactivé pour contourner une demande d'activation interne à Qt. Le bouton **Détacher** des inspecteurs reste disponible ; le placement et le focus des fenêtres dépendent du compositeur.
+Les barres de titre permettent de réorganiser les panneaux et les séparateurs règlent leurs tailles. **Vues → Panneaux** permet de les afficher ou de les masquer. **Vues → Fenêtres flottantes** permet de les détacher. La disposition est mémorisée à la fermeture. **Ctrl+Maj+0** rétablit l’agencement initial. [Manuel utilisateur](../UserManual.md)
 
 ## 2. Pas, registres et assembleur
 
@@ -141,9 +139,9 @@ Les lectures d'inspection n'ont pas d'effet de bord : `read32` d'une FIFO ne la 
 
 ## 5. Mémoire, pile et cartographie
 
-Dans **Inspection → Mémoire** (`Ctrl+3`), saisir `counter` ou `0x20000000`, choisir **16** octets, puis **Lire**. Les octets sont présentés dans l'ordre des adresses : le mot `1` apparaît `01 00 00 00`. La longueur se règle de 16 à 4 096 octets. Les octets non imprimables apparaissent comme des points en ASCII ; `??` indique une lecture indisponible, dont l'infobulle précise la cause. La vue est en lecture seule.
+Dans **Vues → Mémoire** (`Ctrl+3`), saisir `counter` ou `0x20000000`, choisir **16** octets, puis **Lire**. Les octets sont présentés dans l'ordre des adresses : le mot `1` apparaît `01 00 00 00`. La longueur se règle de 16 à 4 096 octets. Les octets non imprimables apparaissent comme des points en ASCII ; `??` indique une lecture indisponible, dont l'infobulle précise la cause. Le double-clic sur un octet ouvre l’éditeur si la zone est inscriptible et la cible à l’arrêt.
 
-La vue **Inspection → Pile** (`Ctrl+4`) affiche jusqu'à 32 mots depuis son SP. La première ligne est marquée `SP ▶`. Les noms de régions aident à reconnaître une adresse en Flash/SRAM ; ils ne prouvent pas qu'un mot soit une adresse de retour. Il n'existe pas encore de déroulage de pile C++ ou de liste de variables locales. Un cœur retenu dont SP vaut zéro n'a pas de pile initialisée à inspecter.
+Le panneau **Piles par cœur** (`Ctrl+4`) montre la fonction courante (**#0**) et les appels de chaque cœur. Le survol indique le PC et le SP. Un double-clic sur une valeur ouvre sa zone en mémoire. La console affiche la même remontée d’appels avec `bt all`. Un cœur simulé retenu n’a pas encore de pile initialisée.
 
 La **Carte mémoire**, dans les onglets du bas, expose début, fin incluse, permissions et couverture de chaque région. Double-cliquer une région place son adresse de début dans la vue mémoire. Une plage cartographiée n'est pas nécessairement lisible intégralement : ROM absente, réserves et registres non implémentés restent indisponibles.
 

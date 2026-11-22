@@ -23,6 +23,7 @@ public:
     static std::vector<ProbeSerialPort> ports();
     static QList<int> baudRates();
     bool open(const QString& path, int baudRate, QString& error);
+    qint64 write(const QByteArray& bytes, QString& error);
     void close();
     bool isOpen() const;
 

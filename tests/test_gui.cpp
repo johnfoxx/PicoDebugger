@@ -6,21 +6,27 @@
 #include <QComboBox>
 #include <QDockWidget>
 #include <QDialog>
+#include <QDialogButtonBox>
+#include <QTimer>
 #include <QElapsedTimer>
 #include <QLineEdit>
 #include <QKeyEvent>
 #include <QPixmap>
 #include <QPushButton>
+#include <QSettings>
 #include <QPointer>
 #include <QPlainTextEdit>
 #include <QRegion>
 #include <QTableWidget>
+#include <QTemporaryDir>
+#include <QTextBrowser>
 #include <QThread>
 #include <QTabWidget>
 #include <QHeaderView>
 #include <QLabel>
 #include <QStyleFactory>
 #include <QTreeWidget>
+#include <QToolButton>
 #include <functional>
 #include <iostream>
 #include <stdexcept>
@@ -57,25 +63,66 @@ int main(int argc, char** argv) {
     QApplication::setOrganizationName("PicoDebuggerTests");
     QApplication::setApplicationName("PicoDebuggerGuiTests");
     try {
+        QTemporaryDir settings;
+        require(settings.isValid(), "Temporary settings");
+        QSettings::setDefaultFormat(QSettings::IniFormat);
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settings.path());
         MainWindow window;
         window.resize(1366, 900);
         window.show();
         QApplication::processEvents();
         require(!find<QAction>(window, "stepAction")->isEnabled(), "Empty session must not execute");
-        require(find<QPushButton>(window, "welcomeDemoButton")->isVisible(), "Empty session needs a clear entry action");
+        require(find<QAction>(window, "demoAction")->isEnabled(), "Empty session needs a clear entry action");
         if (argc >= 2) require(window.grab().save(QString::fromLocal8Bit(argv[1]) + ".welcome.png"), "Cannot save welcome page");
-        find<QPushButton>(window, "welcomeDemoButton")->click();
+        find<QAction>(window, "demoAction")->trigger();
         QApplication::processEvents();
         auto* workspace = find<QTabWidget>(window, "inspectionWorkspace");
-        require(workspace->count() == 2, "Start with Code and Peripherals, no floating inspectors");
-        require(window.findChildren<QDockWidget*>().size() == 3, "Too many competing docks in the default layout");
+        require(workspace->count() == 1 && workspace->isVisible(), "Start with the peripheral catalogue");
+        auto* memoryDock = find<QDockWidget>(window, "memoryDock");
+        auto* ioDock = find<QDockWidget>(window, "peripheralDock");
+        auto* cpuDock = find<QDockWidget>(window, "cpuDock");
+        auto* stackDock = find<QDockWidget>(window, "stackDock");
+        auto* assemblyDock = find<QDockWidget>(window, "assemblyDock");
+        auto* monitorDock = find<QDockWidget>(window, "monitorDock");
+        require(memoryDock->isVisible() && ioDock->isVisible() && monitorDock->isVisible(), "Memory, peripherals and watches coexist");
+        require(monitorDock->width() <= 155, "Surveillance leaves width for memory and stack details");
+        require(cpuDock->x() < memoryDock->x() && memoryDock->x() < monitorDock->x() &&
+                memoryDock->y() < ioDock->y() && cpuDock->y() < stackDock->y() && ioDock->y() < assemblyDock->y() &&
+                assemblyDock->y() < find<QDockWidget>(window, "toolsDock")->y(),
+                "Default arrangement puts stack below the CPU and assembler and tools below the middle panels");
         for (const char* name : {"registersTable", "assemblyTable", "memoryTable"}) {
             auto* view = find<QTableWidget>(window, name);
             require(view->isVisible() && !view->visibleRegion().isEmpty(), "An essential panel is hidden");
-            require(view->viewport()->width() >= 200 && view->viewport()->height() >= 60, "Essential viewport collapsed");
+            const int minHeight = view->rowHeight(0) * 2;
+            if (view->viewport()->width() < 200 || view->viewport()->height() < minHeight)
+                throw std::runtime_error(std::string("Essential viewport collapsed: ") + name + " "
+                    + std::to_string(view->viewport()->width()) + "x" + std::to_string(view->viewport()->height()));
         }
+        require(cpuDock->widget()->minimumHeight() == cpuDock->widget()->maximumHeight() &&
+                stackDock->geometry().bottom() == monitorDock->geometry().bottom(), "Fixed CPU height leaves the full remaining column to the stack");
         auto* regs = find<QTableWidget>(window, "registersTable");
-        require(regs->columnCount() == 3 && regs->item(0, 2)->text() == "0x00000000", "Both CPU values must be visible");
+        require(regs->columnCount() == 4 && regs->isColumnHidden(3) && regs->item(0, 2)->text() == "0x00000000", "Both CPU values must be visible");
+        require(regs->visualItemRect(regs->item(20, 2)).bottom() < regs->viewport()->height(), "All standard register rows fit without scrolling");
+        auto* stack0 = find<QTreeWidget>(window, "stackCore0");
+        auto* stack1 = find<QTreeWidget>(window, "stackCore1");
+        require(stack0->isVisible() && stack1->isVisible() && stack0->topLevelItem(0)->text(0).startsWith("#0 "),
+                "Both stacks visible with the current frame");
+        auto* coreSelector = find<QComboBox>(window, "coreSelector");
+        require(coreSelector->currentIndex() == 2, "Both cores selected at startup");
+        coreSelector->setCurrentIndex(0);
+        require(!regs->isColumnHidden(3) && regs->isColumnHidden(2) && !regs->item(15, 3)->text().isEmpty() &&
+                stack0->isVisible() && !stack1->isVisible() && !stack0->isColumnHidden(3), "Single core keeps stack ASCII and adds register meanings");
+        coreSelector->setCurrentIndex(1);
+        require(regs->isColumnHidden(1) && !regs->isColumnHidden(2) && !stack0->isVisible() && stack1->isVisible(), "Core 1 fills the focus area");
+        coreSelector->setCurrentIndex(0);
+        coreSelector->setCurrentIndex(2);
+        require(!regs->isColumnHidden(1) && !regs->isColumnHidden(2) && stack0->isVisible() && stack1->isVisible(), "All restores both contexts");
+        find<QAction>(window, "focusView_memory")->trigger();
+        require(memoryDock->isVisible() && ioDock->isHidden() && assemblyDock->isHidden(), "Memory focus");
+        find<QAction>(window, "focusView_split")->trigger();
+        require(memoryDock->isVisible() && ioDock->isVisible() && assemblyDock->isHidden(), "Memory and peripherals split");
+        find<QAction>(window, "focusView_all")->trigger();
+        require(assemblyDock->isVisible(), "Restore standalone views");
         for (const auto& view : {std::make_pair("stackViewAction", "stackTable"),
                                 std::make_pair("mappingViewAction", "mappingTable"),
                                 std::make_pair("consoleViewAction", "consoleView"),
@@ -87,10 +134,60 @@ int main(int argc, char** argv) {
         if (argc >= 2) require(window.grab().save(QString::fromLocal8Bit(argv[1]) + ".overview.png"), "Cannot save overview");
         auto* assembly = find<QTableWidget>(window, "assemblyTable");
         auto* memory = find<QTableWidget>(window, "memoryTable");
+        find<QAction>(window, "userManualAction")->trigger();
+        auto* manual = find<QDialog>(window, "userManualDialog");
+        auto* manualText = manual->findChild<QTextBrowser*>();
+        require(manualText && manualText->toPlainText().contains("Organiser les panneaux"), "The bundled user manual opens in Help");
+        manual->close();
+        QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
         auto* step = find<QAction>(window, "stepAction");
         auto* run = find<QAction>(window, "runAction");
+        const auto console = [&](const QString& command) {
+            auto* input = find<QLineEdit>(window, "consoleExpression");
+            input->setText(command);
+            QMetaObject::invokeMethod(input, "returnPressed");
+        };
+        auto* consoleToggle = find<QAction>(window, "consoleToggleAction");
+        const auto shownHeight = memoryDock->height() + ioDock->height() + assemblyDock->height();
+        require(consoleToggle->isChecked(), "Console open by default");
+        consoleToggle->trigger();
+        QApplication::processEvents();
+        require(find<QDockWidget>(window, "toolsDock")->isHidden() &&
+                memoryDock->height() + ioDock->height() + assemblyDock->height() > shownHeight, "Folding console frees central space");
+        consoleToggle->trigger();
+        require(find<QPlainTextEdit>(window, "consoleView")->isVisible(), "Toolbar restores the console");
+        auto* toolsToggle = find<QToolButton>(window, "toolsToggleButton");
+        toolsToggle->click();
+        require(find<QDockWidget>(window, "toolsDock")->isHidden(), "Small bottom button folds tools");
+        toolsToggle->click();
+        require(find<QPlainTextEdit>(window, "consoleView")->isVisible(), "Small bottom button restores the active tool");
+        console("bt all");
+        const auto journal = find<QPlainTextEdit>(window, "consoleView")->toPlainText();
+        require(journal.contains("Backtrace · cœur 0") && journal.contains("#0 0x10000200") &&
+                journal.contains("Backtrace · cœur 1"), "Console can address both cores");
+        console("watch 0x20000000, 4");
+        console("break *0x10000206");
+        require(find<QTableWidget>(window, "pointsTable")->rowCount() == 2, "Console creates execution and data breakpoints");
+        console("delete breakpoints");
+        require(find<QTableWidget>(window, "pointsTable")->rowCount() == 1, "Removing all execution breakpoints preserves watchpoints");
+        console("delete watchpoints");
+        require(find<QTableWidget>(window, "pointsTable")->rowCount() == 0, "Console can remove watchpoints");
+        bool edited = false;
+        QTimer::singleShot(0, [&] {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            if (!dialog) return;
+            auto* value = dialog->findChild<QLineEdit*>("cpuRegisterWriteValue");
+            if (value) {
+                value->setText("0x1122");
+                dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->click();
+                edited = true;
+            } else dialog->reject();
+        });
+        QMetaObject::invokeMethod(regs, "cellDoubleClicked", Q_ARG(int, 7), Q_ARG(int, 1));
+        require(edited && regs->item(7, 1)->text() == "0x00001122" && regs->item(7, 2)->text() == "0x00000000" &&
+                regs->item(7, 1)->background().style() != Qt::NoBrush, "CPU edits target one core and highlight differences");
         require(regs->item(0, 1)->text() == "0x00000000", "Image must start halted");
-        step->trigger(); step->trigger(); step->trigger();
+        console("n"); console("s"); step->trigger();
         require(regs->item(0, 1)->text() == "0x00000001", "Step did not refresh R0");
         require(assembly->item(0, 1)->text() == "0x10000206", "Assembly did not follow PC");
         toggleBreakpoint(assembly);
@@ -98,15 +195,15 @@ int main(int argc, char** argv) {
         run->trigger();
         waitUntil([run] { return run->isEnabled(); });
         require(assembly->item(0, 1)->text() == "0x10000206", "Breakpoint did not stop before instruction");
-        require(memory->item(0, 1)->text().startsWith("00 00 00 00"), "Store executed past breakpoint");
+        require(memory->item(0, 1)->text() == "00" && memory->item(0, 2)->text() == "00", "Store executed past breakpoint");
         toggleBreakpoint(assembly);
         run->trigger();
         waitUntil([run] { return run->isEnabled(); });
         require(regs->item(0, 1)->text() == "0x00000005", "Run failed to reach demo BKPT");
-        require(memory->item(0, 1)->text().startsWith("05 00 00 00"), "Memory view not refreshed");
+        require(memory->item(0, 1)->text() == "05" && memory->item(0, 2)->text() == "00", "Memory view not refreshed");
         find<QAction>(window, "resetAction")->trigger();
         require(regs->item(0, 1)->text() == "0x00000000", "Reset did not restore register view");
-        require(memory->item(0, 1)->text().startsWith("00 00 00 00"), "Reset did not restore memory view");
+        require(memory->item(0, 1)->text() == "00" && memory->item(0, 2)->text() == "00", "Reset did not restore memory view");
         for (auto* panel : window.findChildren<QDockWidget*>()) {
             if (panel->isAncestorOf(regs)) panel->hide();
         }
@@ -140,7 +237,7 @@ int main(int argc, char** argv) {
         require(peripheralRegisters->item(2, 1)->text() == "0x00000090", "UART reset flags missing");
         find<QPushButton>(*catalogPage, "openDeviceWindowButton")->click();
         QPointer<QWidget> uartWindow = find<QWidget>(window, "deviceInspection_UART0");
-        require(workspace->indexOf(uartWindow) >= 2 && window.findChildren<QDialog*>().isEmpty(), "Inspect in a tab before opening windows");
+        require(workspace->indexOf(uartWindow) >= 1 && window.findChildren<QDialog*>().isEmpty(), "Inspect in a tab before opening windows");
         const int openedTabs = workspace->count();
         find<QAction>(window, "peripheralWindowAction")->trigger();
         find<QPushButton>(*catalogPage, "openDeviceWindowButton")->click();
@@ -188,7 +285,7 @@ int main(int argc, char** argv) {
         filter->clear(); devices->setCurrentItem(timer);
         find<QPushButton>(*catalogPage, "openDeviceWindowButton")->click();
         QPointer<QWidget> timerWindow = find<QWidget>(window, "deviceInspection_TIMER");
-        require(timerWindow->isVisible() && uartWindow && workspace->indexOf(uartWindow) >= 2, "Several inspection tabs must coexist");
+        require(timerWindow->isVisible() && uartWindow && workspace->indexOf(uartWindow) >= 1, "Several inspection tabs must coexist");
         auto* timerValues = timerWindow->findChild<QTableWidget*>("peripheralsTable");
         step->trigger(); require(timerValues->item(10, 1)->text() == "0x00000002", "Mini window values not refreshed");
         require(QMetaObject::invokeMethod(workspace, "tabCloseRequested", Qt::DirectConnection,
@@ -210,7 +307,7 @@ int main(int argc, char** argv) {
             throw std::runtime_error("Layout exceeds a small desktop: " + std::to_string(window.width()) + "x" + std::to_string(window.height())
                 + " workspace minimum " + std::to_string(workspace->minimumSizeHint().width()) + "x" + std::to_string(workspace->minimumSizeHint().height()));
         require(regs->viewport()->width() >= regs->columnWidth(0) + regs->columnWidth(1) + regs->columnWidth(2), "CPU values clipped on small desktop");
-        require(assembly->viewport()->width() >= 380, "Code area too narrow on small desktop");
+        require(assembly->viewport()->width() >= 220 && memory->isVisible() && ioDock->isVisible(), "Compact desktop retains assembler and both main panels");
         if (argc >= 2) require(window.grab().save(QString::fromLocal8Bit(argv[1]) + ".compact.png"), "Cannot save compact layout");
         window.resize(1366, 900); QApplication::processEvents();
         // Exercise profile cleanup while an inspector is detached.
@@ -229,7 +326,7 @@ int main(int argc, char** argv) {
         QApplication::sendEvent(choiceView, &chooseChip);
         require(chipSelector->currentIndex() == 1 && !choiceView->isVisible(), "Chip selection through popup failed");
         QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
-        require(uartWindow.isNull() && workspace->count() == 2 && window.findChildren<QDialog*>().isEmpty(), "Profile change must remove all old inspectors");
+        require(uartWindow.isNull() && workspace->count() == 1 && window.findChildren<QDialog*>().isEmpty(), "Profile change must remove all old inspectors");
         find<QAction>(window, "peripheralWindowAction")->trigger();
         require(devices->topLevelItemCount() >= 60, "RP2350 catalog not rebuilt");
         const auto timer1 = devices->findItems("TIMER1", Qt::MatchExactly, 0);
@@ -263,7 +360,7 @@ int main(int argc, char** argv) {
         require(QMetaObject::invokeMethod(workspace, "tabCloseRequested", Qt::DirectConnection,
                                          Q_ARG(int, workspace->indexOf(duplicate))), "Cannot close duplicate");
         QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
-        require(duplicate.isNull() && workspace->indexOf(sioWindow) >= 2, "Closing duplicate lost the original");
+        require(duplicate.isNull() && workspace->indexOf(sioWindow) >= 1, "Closing duplicate lost the original");
         if (argc == 2) {
             require(timer1Window->grab().save(QString::fromLocal8Bit(argv[1]) + ".timer1.png"), "Cannot save timer1 mini window");
             require(sioWindow->grab().save(QString::fromLocal8Bit(argv[1]) + ".sio.png"), "Cannot save SIO mini window");
@@ -286,7 +383,32 @@ int main(int argc, char** argv) {
             find<QAction>(window, "codeViewAction")->trigger();
             require(window.grab().save(QString::fromLocal8Bit(argv[1]) + ".rp2350.png"), "Cannot save live Pico2 view");
         }
-        std::cout << "GUI checks passed: compact layout, navigation, execution, devices, tab reuse, detach/gather, contexts and profile cleanup\n";
+        find<QAction>(window, "float_memoryDock")->trigger();
+        find<QAction>(window, "float_peripheralDock")->trigger();
+        QApplication::processEvents();
+        require(memoryDock->isFloating() && ioDock->isFloating() && memoryDock->isAncestorOf(memory),
+                "Both panels can float at once with their original widgets");
+        find<QAction>(window, "float_memoryDock")->trigger();
+        find<QAction>(window, "float_peripheralDock")->trigger();
+        window.addDockWidget(Qt::BottomDockWidgetArea, memoryDock);
+        window.tabifyDockWidget(memoryDock, ioDock);
+        find<QAction>(window, "float_assemblyDock")->trigger();
+        window.close();
+        MainWindow restored;
+        restored.show();
+        QApplication::processEvents();
+        auto* restoredMemory = find<QDockWidget>(restored, "memoryDock");
+        auto* restoredPeripherals = find<QDockWidget>(restored, "peripheralDock");
+        require(restored.dockWidgetArea(restoredMemory) == Qt::BottomDockWidgetArea &&
+                restored.tabifiedDockWidgets(restoredMemory).contains(restoredPeripherals), "Custom moves and tabs persist across windows");
+        auto* restoredAssembly = find<QDockWidget>(restored, "assemblyDock");
+        require(restoredAssembly->isFloating(), "Floating state is restored");
+        find<QAction>(restored, "overviewAction")->trigger();
+        QApplication::processEvents();
+        require(restoredMemory->isVisible() && restoredPeripherals->isVisible() &&
+                restored.tabifiedDockWidgets(restoredMemory).isEmpty() && !restoredAssembly->isFloating(),
+                "Reset restores both visible main panels and reattaches assembly");
+        std::cout << "GUI checks passed: dock layout, navigation, execution, devices, tab reuse, detach/gather, contexts and profile cleanup\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "GUI FAIL: " << error.what() << '\n';

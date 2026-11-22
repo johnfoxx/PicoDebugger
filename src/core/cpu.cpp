@@ -223,9 +223,13 @@ StepResult execute(Cpu& cpu, Memory& memory, unsigned core) {
     case Op::Branch: cpu.r[15] = d.immediate; break;
     case Op::CondBranch: if (cpu.condition(d.condition)) cpu.r[15] = d.immediate; break;
     case Op::Cbz: if ((a != 0) == d.signExtend) cpu.r[15] = d.immediate; break;
-    case Op::Bl: cpu.r[14] = (pc + 4u) | 1u; cpu.r[15] = d.immediate; break;
+    case Op::Bl:
+        cpu.r[14] = (pc + 4u) | 1u; cpu.r[15] = d.immediate;
+        result.call = true; break;
     case Op::Bx: branchExchange(cpu, memory, core, b); break;
-    case Op::Blx: cpu.r[14] = (pc + 2u) | 1u; branchExchange(cpu, memory, core, b); break;
+    case Op::Blx:
+        cpu.r[14] = (pc + 2u) | 1u; branchExchange(cpu, memory, core, b);
+        result.call = (b & 0xfffffff0u) != 0xfffffff0u; break;
     case Op::Svc:
         if (cpu.primask || cpu.handlerMode()) throw Error(ErrorKind::BusFault, "SVC masqué ou imbriqué", pc);
         enterException(cpu, memory, core, 11, pc + 2u); result.exception = true; result.detail = "SVC"; break;

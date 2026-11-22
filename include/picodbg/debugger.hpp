@@ -33,8 +33,30 @@ public:
     uint32_t peek(uint32_t address, unsigned size, unsigned core = 0) const override { return memory.peek(address, size, core); }
     Instruction disassemble(uint32_t address, unsigned core) override { return decode(memory, address, core); }
     std::string uartOutput(unsigned index) const override { return memory.uartOutput(index); }
+    std::vector<StackFrame> backtrace(unsigned core) const override;
+    Stop stopAtBreakpoint(unsigned core);
+    size_t callDepth(unsigned core) const { return callers_.at(core).size(); }
+    bool stackBytesWritten(unsigned core, uint32_t address, unsigned size) const;
     Memory memory;
 private:
+    void writeTargetValue(uint32_t address, uint32_t value, unsigned size, unsigned core) override;
+    void writeCpuValue(unsigned core, unsigned index, uint32_t value) override;
+    struct StackWrites {
+        uint32_t entrySp;
+        std::map<uint32_t, uint32_t> spans; // Start -> exclusive end, sorted and disjoint.
+    };
+    struct Caller {
+        uint32_t pc, sp, resume, ipsr;
+        bool exception;
+        uint64_t activation;
+        StackWrites writes;
+    };
+    std::array<std::vector<Caller>, 2> callers_;
+    std::array<uint64_t, 2> frameActivations_{};
+    std::array<StackWrites, 2> frameWrites_{};
+    uint64_t nextActivation_ = 0;
+    void rememberCaller(unsigned core, Caller caller);
+    void recordStackWrite(const MemoryAccess& access);
     BoardDescription board_;
     uint64_t virtualTime_ = 0;
     void clockQuantum();

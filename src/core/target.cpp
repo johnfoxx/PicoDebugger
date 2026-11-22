@@ -1,4 +1,5 @@
 #include "picodbg/target.hpp"
+#include "picodbg/peripherals.hpp"
 #include <cctype>
 
 namespace picodbg {
@@ -106,6 +107,56 @@ uint32_t DebugTarget::registerValue(unsigned core, unsigned index) const {
     if (index < 16) return cpu.r[index];
     const uint32_t extras[] = {cpu.xpsr, cpu.msp, cpu.psp, cpu.control, cpu.primask};
     return extras[index - 16];
+}
+void DebugTarget::writeCpuRegister(unsigned core, unsigned index, uint32_t value) {
+    if (!registerAvailable(core, index) || executing() || busy())
+        throw Error(ErrorKind::InvalidArgument, "Registre CPU indisponible. Arrêtez la cible et choisissez un registre exposé.");
+    writeCpuValue(core, index, value);
+}
+void DebugTarget::checkMemoryWrite(uint32_t address, uint64_t value, unsigned size, unsigned core) const {
+    if (!loaded() || busy() || executing())
+        throw Error(ErrorKind::InvalidArgument, "L’écriture nécessite une cible arrêtée et disponible");
+    if (core > 1 || !size || size > 8 || uint64_t(address) + size > 0x100000000ull)
+        throw Error(ErrorKind::InvalidArgument, "Plage d’écriture invalide", address);
+    if (size < 8 && value >= (uint64_t(1) << (8 * size)))
+        throw Error(ErrorKind::InvalidArgument, "La valeur dépasse la largeur sélectionnée", address);
+    for (unsigned i = 0; i < size; ++i) {
+        const auto* region = regionAt(description(), address + i);
+        if (!region || !regionWritable(*region))
+            throw Error(ErrorKind::Unsupported, "Adresse hors mémoire inscriptible", address + i);
+    }
+}
+void DebugTarget::writeMemory(uint32_t address, uint32_t value, unsigned size, unsigned core) {
+    if (size != 1 && size != 2 && size != 4)
+        throw Error(ErrorKind::InvalidArgument, "Plage d’écriture invalide", address);
+    checkMemoryWrite(address, value, size, core);
+    writeTargetValue(address, value, size, core);
+}
+void DebugTarget::writeMemoryBytes(uint32_t address, uint64_t value, unsigned size, unsigned core) {
+    checkMemoryWrite(address, value, size, core);
+    writeTargetBytes(address, value, size, core);
+}
+void DebugTarget::writeTargetBytes(uint32_t address, uint64_t value, unsigned size, unsigned core) {
+    for (unsigned i = 0; i < size; ++i)
+        writeTargetValue(address + i, static_cast<uint32_t>((value >> (8 * i)) & 0xffu), 1, core);
+}
+void DebugTarget::writePeripheralRegister(uint32_t address, uint32_t value, unsigned core) {
+    if (!loaded() || busy() || executing())
+        throw Error(ErrorKind::InvalidArgument, "L’écriture nécessite une cible arrêtée et disponible");
+    if (core > 1 || (address & 3u))
+        throw Error(ErrorKind::InvalidArgument, "Adresse de registre ou cœur invalide", address);
+    for (const auto& device : peripheralCatalog(description().chip)) {
+        for (const auto& reg : device.registers) {
+            if (reg.address != address) continue;
+            if (!registerWritable(reg))
+                throw Error(ErrorKind::Unsupported, "Registre en lecture seule", address);
+            if (!hardware() && device.coverage == "Non émulé")
+                throw Error(ErrorKind::Unsupported, "Périphérique non émulé", address);
+            writeTargetValue(address, value, 4, core);
+            return;
+        }
+    }
+    throw Error(ErrorKind::Unsupported, "Registre absent du catalogue", address);
 }
 void DebugTarget::removeWatchpoint(size_t index) {
     if (index >= watchpoints.size()) throw Error(ErrorKind::InvalidArgument, "Watchpoint inconnu");

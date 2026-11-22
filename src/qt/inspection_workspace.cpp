@@ -3,17 +3,13 @@
 #include "window_policy.hpp"
 #include <QDialog>
 #include <QTabBar>
-#include <QToolButton>
 #include <QVBoxLayout>
 
 InspectionWorkspace::InspectionWorkspace(QWidget* parent) : QTabWidget(parent) {
     setObjectName("inspectionWorkspace");
     setDocumentMode(true); setTabsClosable(true); setUsesScrollButtons(true);
-    auto* gather = new QToolButton;
-    gather->setObjectName("gatherInspectorsButton"); gather->setText("Rassembler");
-    gather->setToolTip("Rattacher tous les inspecteurs à cette fenêtre (Ctrl+Maj+P)");
-    setCornerWidget(gather);
-    connect(gather, &QToolButton::clicked, this, [this] { gatherInspections(); });
+    tabBar()->setAutoHide(true);
+    setMovable(true);
     connect(this, &QTabWidget::tabCloseRequested, this, [this](int index) {
         QWidget* page = widget(index);
         for (const auto& entry : entries_) {

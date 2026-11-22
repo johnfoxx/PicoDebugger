@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(PicoDebugger VERSION 0.9.0 LANGUAGES CXX)
+project(PicoDebugger VERSION 0.10.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -43,7 +43,8 @@ if(PICODBG_GUI)
             find_package(Qt6 REQUIRED COMPONENTS Widgets)
         endif()
         add_library(picodbg_widgets src/qt/main_window.cpp src/qt/window_theme.cpp src/qt/source_map.cpp src/qt/peripheral_panel.cpp src/qt/choice_box.cpp
-            src/qt/register_inspector.cpp src/qt/inspection_workspace.cpp src/qt/peripheral_inspection.cpp
+            src/qt/register_inspector.cpp src/qt/inspection_workspace.cpp src/qt/peripheral_inspection.cpp src/qt/value_watches.cpp
+            src/qt/memory_table.cpp src/qt/stack_details.cpp src/qt/stack_view.cpp src/qt/debugger_resources.qrc
             src/qt/gdb_mi.cpp src/qt/gdb_target.cpp src/qt/probe_dialog.cpp
             src/qt/probe_serial.cpp src/qt/probe_serial_monitor.cpp
             src/qt/board_panel.cpp src/qt/uart_terminal.cpp src/qt/peripheral_explorer.cpp src/qt/virtual_time_panel.cpp

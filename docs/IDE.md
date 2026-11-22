@@ -1,5 +1,7 @@
 # Programmer une Pico avec l'IDE C
 
+L’IDE s’ouvre maximisé. Vous pouvez ensuite redimensionner sa fenêtre avec les commandes du système.
+
 Lancer `pico-debugger` ou `pico-debugger /chemin/projet` pour commencer dans l'IDE. Créer, ouvrir et compiler un projet depuis cette fenêtre. Le bouton **Débogueur** ouvre la session à la demande. Pour commencer dans le débogueur, utiliser `pico-debugger --debugger` ou passer directement un ELF. **Fichier → Ouvrir l'IDE C** ou **Ctrl+Maj+E** l'ouvrent dans l'autre sens. Les deux fenêtres peuvent rester côte à côte ou sur deux écrans. Leurs barres d'état indiquent si l'autre fenêtre est reliée ou fermée et si l'émulateur ou la carte est en cours d'exécution.
 
 Dans l'IDE ou le débogueur, choisir **Vues → Thème → Clair** ou **Sombre**. Le changement s'applique immédiatement aux deux fenêtres et aux fenêtres d'inspection ouvertes. Il est conservé entre les lancements.
@@ -64,6 +66,7 @@ unsigned period_us(unsigned frequency_hz);
 | **F5** dans le débogueur | Continue l'exécution jusqu'au prochain arrêt ou à la demande de pause. |
 | **Maj+F5** | Demande l'arrêt de l'exécution dans la session partagée. En SWD, l'état « arrêtée » apparaît après confirmation par la carte. |
 | **F10** | Avance d'une instruction du cœur sélectionné dans la session partagée. |
+| **Débogage → Quitter le débogage** | Ferme le débogueur, retire les repères dans le C et rend à l’éditeur la largeur du volet Assembleur. Fermer la fenêtre du débogueur produit le même résultat. |
 
 Pour le lancement SWD, ouvrir le débogueur, choisir le même profil de carte, connecter la sonde et arrêter la cible. L'IDE affiche l'état de cette session. Un échec de compilation ou de transfert empêche le lancement. Un ELF entièrement lié en SRAM avec une table de vecteurs présélectionne **RAM**. La Flash requiert une image amorçable conçue pour la carte. Après un reset matériel, retéléverser l'ELF RAM pour relancer le projet autonome. Les anciens projets générés avec le modèle d'émulation v0.7.0 gardent leur script de lien d'origine. [Câblage et conditions du téléversement](HARDWARE_DEBUG.md)
 
@@ -76,8 +79,8 @@ La portée de l'émulation dépend du firmware. Les interfaces de projet, de ser
 Compiler avec les lignes DWARF dans l'ELF (`-g`, inclus dans les modèles Debug). Quand la session est à l'arrêt, un volet redimensionnable affiche l'assembleur à droite du C dans l'IDE. GNU Binutils lit directement l'ELF. L'éditeur reprend toute la largeur du volet pendant l'exécution continue. Pour garder cette disposition à l'arrêt, décocher **Débogage → Afficher l'assembleur à l'arrêt**.
 
 - **Turquoise** marque les instructions de la ligne C du PC, avec une flèche en marge de l'éditeur et sur l'instruction exacte. **Débogage → Suivre le PC dans le C** commande le défilement automatique. En émulation, l'éditeur échantillonne les tranches d'exécution. Via SWD, le PC est actualisé aux arrêts.
-- **Violet** marque les instructions d'une autre ligne C dès qu'on y place le curseur. L'IDE affiche aussi les plages disjointes qu'un compilateur peut attribuer à une même ligne. **Ctrl+Alt+A** place la vue assembleur du débogueur à la première adresse de la sélection. Cocher **Suivre PC** dans le débogueur pour revenir au PC.
-- Dans le débogueur, cliquer une cellule de la colonne **Source C** affiche la ligne dans l'aperçu et dans l'IDE si le fichier appartient au projet. Un double-clic dans les autres colonnes pose ou retire un point d'arrêt. Décocher **Vues → Afficher l'assembleur dans le débogueur** pour libérer le centre au profit des périphériques. **Ctrl+1** rétablit le tableau.
+- **Violet** marque les instructions d'une autre ligne C dès qu'on y place le curseur. **Ctrl+Alt+A** amène à cette ligne dans le désassemblage complet de l’IDE. Si vous fermez l’IDE, le panneau Assembleur du débogueur peut reprendre à la première adresse correspondante. Sa case **PC** réactive le suivi du compteur ordinal.
+- Dans le débogueur, le clic droit sur l’assembleur permet d’afficher la colonne **Source C**. Un clic sur une ligne source la révèle dans l’IDE si le fichier appartient au projet. Un double-clic dans les autres colonnes bascule le point d’arrêt. **Vues → Panneaux** permet de masquer l’assembleur et **Ctrl+1** le révèle.
 
 Les adresses et les lignes dépendent des tables produites par le compilateur. Une ligne peut correspondre à plusieurs plages, et l'optimisation peut fusionner ou éliminer des instructions. Un fichier modifié dans l'éditeur doit être recompilé pour retrouver une correspondance fiable. Les fichiers doivent être accessibles aux chemins enregistrés lors de la compilation. F10 reste un pas instruction. [Lecture des lignes DWARF dans Binutils](https://sourceware.org/binutils/docs/binutils/objdump.html)
 

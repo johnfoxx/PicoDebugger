@@ -29,10 +29,46 @@ void boards() {
             check(baseMap.regions[i].begin == d.memory.description().regions[i].begin, "Wi-Fi must not shift MCU addresses");
         const uint32_t timer = pico2 ? 0x400b0000 : 0x40054000;
         d.advanceTime(9); check(d.memory.peek(timer + 0x28, 4) == 9, "Board uses correct timer model");
+        const auto revision = d.revision();
+        unsigned cpuAccesses = 0;
+        d.memory.onAccess = [&](const MemoryAccess&) { ++cpuAccesses; };
+        d.writeMemory(0x20000000, 0x1234, 2);
+        d.writePeripheralRegister(0xd0000010, 0x1234);
+        d.writePeripheralRegister(0xe000e014, 10, 1);
+        d.writePeripheralRegister(0xd0000054, 42, 0);
+        check(d.peek(0x20000000, 4) == 0x1234 && d.peek(0xd0000010, 4) == 0x1234, "Debugger writes RAM and GPIO through the bus");
+        check(d.peek(0xe000e014, 4, 0) == 0 && d.peek(0xe000e014, 4, 1) == 10, "Debugger write selects the intended core");
+        check(d.peek(0xd0000058, 4, 1) == 42 && d.peek(0xd0000058, 4, 1) == 42, "Watching FIFO must not consume it");
+        rejected([&] { d.writePeripheralRegister(0xd0000000, 0); });
+        rejected([&] { d.writeMemory(0xd0000010, 0, 4); });
+        rejected([&] { d.writeMemory(0x10000000, 0, 4); });
+        rejected([&] { d.writeMemory(0x20000000, 0x100, 1); });
+        check(d.revision() == revision + 4 && cpuAccesses == 0, "Debugger writes notify views without triggering CPU accesses");
     }
     Board board = Board::Pico;
     check(!parseBoard("pico3", board), "Unknown board rejected");
     check(Debugger(Chip::RP2350).board().board == Board::Pico2, "Old chip API remains compatible");
+}
+void stacks() {
+    Debugger debugger;
+    debugger.loadImage(demoImage());
+    debugger.startCore(1, 0x10000201, 0x20042000);
+    debugger.memory.load(0x10000200, {0x00, 0xf0, 0x02, 0xf8}); // BL 0x10000208.
+    debugger.memory.load(0x10000208, {0x80, 0xb5, 0x80, 0xbd}); // PUSH {r7, lr}; POP {r7, pc}.
+    debugger.writeCpuRegister(1, 7, 0x11223344);
+    check(debugger.registerValue(1, 7) == 0x11223344 && debugger.registerValue(0, 7) == 0, "Register edits select a core");
+    debugger.step(1);
+    debugger.step(1);
+    const auto frames = debugger.backtrace(1);
+    check(frames.size() == 2 && frames[0].pc == 0x1000020a && frames[1].pc == 0x10000200 &&
+          frames[0].sp + 8 == frames[1].sp && debugger.backtrace(0).size() == 1, "Calls show the current and caller frames per core");
+    debugger.step(1);
+    check(debugger.backtrace(1).size() == 1 && debugger.registerValue(1, 15) == 0x10000204, "Return removes the observed caller");
+    debugger.writeCpuRegister(1, 17, 0x20000402);
+    check(debugger.registerValue(1, 13) == 0x20000400, "Editing the active stack bank updates SP");
+    rejected([&] { debugger.writeCpuRegister(2, 0, 1); });
+    debugger.reset();
+    rejected([&] { debugger.backtrace(1); });
 }
 void time() {
     Debugger d;
@@ -83,7 +119,7 @@ void time() {
 }
 int main(int argc, char** argv) {
     try {
-        if (argc > 1 && std::string(argv[1]) == "boards") boards(); else time();
+        if (argc > 1 && std::string(argv[1]) == "boards") boards(); else { time(); stacks(); }
         std::cout << "Session checks passed\n"; return 0;
     } catch (const std::exception& e) { std::cerr << e.what() << '\n'; return 1; }
 }

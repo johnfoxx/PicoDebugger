@@ -16,7 +16,7 @@ class QPlainTextEdit;
 class QHideEvent;
 class QShowEvent;
 class QSplitter;
-class QTableWidget;
+class QTableView;
 class QTabWidget;
 class QTreeWidget;
 class QTreeView;
@@ -24,6 +24,7 @@ class QTreeView;
 namespace picoide {
 
 class TextTools;
+class AssemblyModel;
 
 class IdeWindow : public QMainWindow {
 public:
@@ -72,7 +73,8 @@ private:
     TextTools* textTools_;
     QSplitter* codeSplit_;
     QWidget* assemblyPane_;
-    QTableWidget* assembly_;
+    QTableView* assembly_;
+    AssemblyModel* assemblyModel_;
     QLabel* assemblyStatus_;
     QTabWidget* bottom_;
     QPlainTextEdit* output_;
@@ -89,6 +91,7 @@ private:
     QAction* boardRun_;
     QAction* pause_;
     QAction* step_;
+    QAction* stopDebugging_;
     QAction* followSource_;
     QAction* goToAssembly_;
     QAction* showAssembly_;
@@ -136,7 +139,7 @@ private:
     bool applyProjectTextEdits(const std::vector<TextEdit>& edits, QString& error);
     void highlightDebugLines(Source& source);
     void updateAssemblyVisibility();
-    void refreshAssembly(const picosource::SourceMap& map, bool hasPc, uint32_t pc);
+    void refreshAssembly(const picosource::SourceMap& map, bool hasPc, uint32_t pc, bool revealSelection);
     void revealDebugLocation(const picosource::Location& location);
     bool sourceMatchesElf(const Source& source) const;
     void selectSource(bool navigate);

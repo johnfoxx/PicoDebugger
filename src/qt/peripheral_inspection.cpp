@@ -3,11 +3,11 @@
 #include "peripheral_panel.hpp"
 #include "uart_terminal.hpp"
 #include <QComboBox>
-#include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QToolButton>
 #include <QTabWidget>
 #include <QVBoxLayout>
@@ -15,9 +15,17 @@
 PeripheralInspection::PeripheralInspection(const QString& name, unsigned core, QWidget* parent) : QWidget(parent) {
     setAttribute(Qt::WA_StyledBackground);
     setObjectName("deviceInspection_" + name);
-    auto* layout = new QVBoxLayout(this); layout->setContentsMargins(6, 6, 6, 6);
+    auto* outer = new QVBoxLayout(this);
+    outer->setContentsMargins(0, 0, 0, 0);
+    auto* scroll = new QScrollArea;
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setWidgetResizable(true);
+    auto* pane = new QWidget;
+    scroll->setWidget(pane);
+    outer->addWidget(scroll);
+    auto* layout = new QVBoxLayout(pane);
+    layout->setContentsMargins(6, 6, 6, 6);
     auto* header = new QHBoxLayout;
-    auto* title = new QLabel(name); title->setObjectName("sectionTitle"); header->addWidget(title);
     header->addStretch();
     core_ = new ChoiceBox; core_->setObjectName("inspectionCore");
     core_->addItems({"Contexte : cœur 0", "Contexte : cœur 1"}); core_->setCurrentIndex(static_cast<int>(core));
@@ -51,7 +59,11 @@ void PeripheralInspection::setDetached(bool detached) {
                                 : "Déplacer cet inspecteur dans une fenêtre indépendante");
 }
 unsigned PeripheralInspection::core() const { return static_cast<unsigned>(core_->currentIndex()); }
-void PeripheralInspection::updateTarget(const picodbg::DebugTarget& debugger) {
-    panel_->updateTarget(debugger, static_cast<unsigned>(core_->currentIndex()));
+void PeripheralInspection::selectRegister(uint32_t address) {
+    if (auto* tabs = findChild<QTabWidget*>("uartTabs")) tabs->setCurrentIndex(0);
+    panel_->selectRegister(address);
+}
+void PeripheralInspection::updateTarget(const picodbg::DebugTarget& debugger, bool running) {
+    panel_->updateTarget(debugger, core(), running);
     if (terminal_) terminal_->updateTarget(debugger);
 }

@@ -3,6 +3,7 @@
 #include "picodbg/elf.hpp"
 #include "picodbg/board.hpp"
 #include <set>
+#include <utility>
 
 namespace picodbg {
 enum class StopKind { Ready, Step, Breakpoint, Watchpoint, Fault, Unsupported, Idle, User, Budget };
@@ -16,6 +17,15 @@ struct Watchpoint {
     uint32_t address;
     uint32_t length;
     bool read, write;
+};
+struct StackFrame {
+    StackFrame(uint32_t address, uint32_t stack, bool stackKnown, std::string name, uint64_t id = 0)
+        : pc(address), sp(stack), hasSp(stackKnown), function(std::move(name)), activation(id) {}
+    uint32_t pc;
+    uint32_t sp;
+    bool hasSp;
+    std::string function;
+    uint64_t activation;
 };
 
 // Shared frontend contract. Hardware implementations contain snapshots only;
@@ -35,6 +45,11 @@ public:
     virtual const BoardDescription& board() const = 0;
     virtual const ChipDescription& description() const = 0;
     virtual uint32_t peek(uint32_t address, unsigned size, unsigned core = 0) const = 0;
+    void writeMemory(uint32_t address, uint32_t value, unsigned size, unsigned core = 0);
+    void writeMemoryBytes(uint32_t address, uint64_t value, unsigned size, unsigned core = 0);
+    void writePeripheralRegister(uint32_t address, uint32_t value, unsigned core = 0);
+    void writeCpuRegister(unsigned core, unsigned index, uint32_t value);
+    virtual std::vector<StackFrame> backtrace(unsigned core) const = 0;
     virtual Instruction disassemble(uint32_t address, unsigned core) = 0;
     virtual void pause() = 0;
     virtual size_t injectUart(unsigned index, const std::string& bytes) = 0;
@@ -44,6 +59,7 @@ public:
     virtual void removeWatchpoint(size_t index);
     virtual void addBreakpoint(uint32_t address) { breakpoints.insert(address & ~1u); }
     virtual void removeBreakpoint(uint32_t address) { breakpoints.erase(address & ~1u); }
+    virtual void clearBreakpoints() { breakpoints.clear(); }
     virtual bool loaded() const = 0;
     virtual bool terminalStop() const = 0;
     virtual uint64_t revision() const = 0;
@@ -60,6 +76,12 @@ public:
     std::set<uint32_t> breakpoints;
     std::vector<Watchpoint> watchpoints;
     Stop stop;
+private:
+
+    void checkMemoryWrite(uint32_t address, uint64_t value, unsigned size, unsigned core) const;
+    virtual void writeTargetValue(uint32_t address, uint32_t value, unsigned size, unsigned core) = 0;
+    virtual void writeTargetBytes(uint32_t address, uint64_t value, unsigned size, unsigned core);
+    virtual void writeCpuValue(unsigned core, unsigned index, uint32_t value) = 0;
 };
 std::string stopName(StopKind kind);
 }

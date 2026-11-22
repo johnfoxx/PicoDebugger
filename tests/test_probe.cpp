@@ -61,6 +61,34 @@ void targetTests(const ProbeOptions& options, const std::string& elf) {
     check(!commands().contains("-target-download"), "Connection must not flash anything");
     target.load(elf); ready(target); check(target.image.symbols.count("counter"), "ELF symbols loaded for shared evaluator");
     check(!commands().contains("-target-download"), "Loading symbols must not program target");
+    waitUntil([&] {
+        try {
+            const auto frames = target.backtrace(1);
+            return frames.size() == 2 && frames[0].function == "Core1_current" &&
+                   frames[1].hasSp && frames[1].sp == 0x20041020;
+        } catch (const Error&) { return false; }
+    }, &target);
+    FrameField argument;
+    waitUntil([&] {
+        try {
+            const auto fields = target.stackDetails(1, 0).fields;
+            if (fields.size() != 2 || !fields.front().inMemory || !fields.back().inMemory) return false;
+            argument = fields.front();
+            return argument.name == "amount" && argument.type.size == 2 && argument.rendered == "7" &&
+                   argument.address == 0x20041010 && fields.back().type.count == 4;
+        } catch (const Error&) { return false; }
+    }, &target);
+    target.writeStackVariable(1, 0, argument, "123"); ready(target);
+    waitUntil([&] {
+        try { return target.stackDetails(1, 0).fields.front().rendered == "123"; }
+        catch (const Error&) { return false; }
+    }, &target);
+    check(commands().contains("-data-evaluate-expression --thread 2 --frame 0"), "Typed stack inspection and edit are scoped to the core and frame");
+    target.writeCpuRegister(1, 7, 0x1234); ready(target);
+    check(target.registerValue(1, 7) == 0x1234 && target.registerValue(0, 7) == 7 &&
+          commands().contains("-data-write-register-values --thread 2 x 7 0x00001234"),
+          "Editing a register writes to the selected core and refreshes the snapshot");
+    rejected([&] { target.writeCpuRegister(1, 18, 1); });
     rejected([&] { target.peek(0x20000000, 4); });
     waitUntil([&] { try { return target.peek(0x20000000, 4) == 0x12345678; } catch (const Error&) { return false; } }, &target);
     check(target.evaluate("read32(counter) + r0") == 0x12345678, "Watch uses target memory, never simulated memory");
@@ -80,18 +108,38 @@ void targetTests(const ProbeOptions& options, const std::string& elf) {
     const auto failedRead = commands();
     rejected([&] { target.peek(0x20001000, 4); });
     check(commands() == failedRead, "Unreadable memory is cached as an error without repeated I/O");
+    rejected([&] { target.writeMemory(0x10000000, 0, 4); });
+    rejected([&] { target.writePeripheralRegister(0xd0000000, 0); });
+    target.writeMemory(0x20000002, 0xbeef, 2, 1); ready(target);
+    waitUntil([&] { try { return target.peek(0x20000000, 4) == 0xbeef5678; } catch (const Error&) { return false; } }, &target);
+    target.writeMemoryBytes(0x20000005, 0x554433, 3, 1); ready(target);
+    waitUntil([&] { try { return target.peek(0x20000004, 4, 1) == 0x55443378; } catch (const Error&) { return false; } }, &target);
+    check(commands().contains("-data-write-memory-bytes --thread 2 0x20000005 334455"),
+          "Stack bytes are written at the exact unaligned address in one hardware operation");
+    target.writePeripheralRegister(0xd0000010, 0x123456, 1); ready(target);
+    waitUntil([&] { try { return target.peek(0xd0000010, 4, 1) == 0x123456; } catch (const Error&) { return false; } }, &target);
+    check(commands().contains("-data-write-memory-bytes --thread 2 0x20000002 efbe")
+          && commands().contains("-data-write-memory-bytes --thread 2 0xd0000010 56341200"),
+          "Writes use little-endian bytes in the selected GDB thread");
+    target.writeMemory(0x20001000, 0, 1); ready(target);
+    check(target.errorText() == "Cannot write memory", "Rejected hardware write reports the GDB error");
     rejected([&] { target.disassemble(0x10000200, 0); });
     waitUntil([&] { try { return target.disassemble(0x10000200, 0).text == "nop"; } catch (const Error&) { return false; } }, &target);
     target.step(1); ready(target); check(target.cpus[1].r[15] == 0x10000222, "Step selects physical core context");
     target.run(0); waitUntil([&] { return target.executing() && !target.busy(); }, &target);
     check(!target.registerAvailable(0, 0), "Running register values unavailable");
     rejected([&] { target.peek(0x20000000, 4); }); rejected([&] { target.download(false); });
+    rejected([&] { target.writeMemory(0x20000000, 0, 1); });
     target.pause(); ready(target); check(target.stop.kind == StopKind::User, "Interrupt waits for stop notification");
     target.addBreakpoint(0x10000204); ready(target); check(target.breakpoints.count(0x10000204), "Confirmed hardware breakpoint exposed");
     target.run(0); ready(target); check(target.stop.kind == StopKind::Breakpoint, "Async breakpoint stop preserved");
     target.removeBreakpoint(0x10000204); ready(target); check(target.breakpoints.empty(), "Remove real breakpoint");
     target.addWatchpoint(0x20000000, 4, true, true); ready(target); check(target.watchpoints.size() == 1, "Hardware watchpoint verified");
     rejected([&] { target.addWatchpoint(0x20000001, 4, false, true); });
+    target.addBreakpoint(0x10000204); ready(target);
+    target.addBreakpoint(0x10000206); ready(target);
+    target.clearBreakpoints(); ready(target);
+    check(target.breakpoints.empty() && target.watchpoints.size() == 1, "Deleting instruction breakpoints preserves hardware watchpoints");
     target.removeWatchpoint(0); ready(target); check(target.watchpoints.empty(), "Remove real watchpoint");
     rejected([&] { target.download(true); }); // Flash fixture cannot be silently treated as RAM.
     target.download(false); ready(target); check(commands().contains("-target-download"), "Explicit download reaches GDB");
@@ -188,17 +236,23 @@ void guiTests(const ProbeOptions& options, const QString& elf, const QString& ra
     check(find<QLabel>(window, "targetModeStatus")->text().contains("CARTE RÉELLE"), "Mode status is persistent");
     check(!find<QComboBox>(window, "chipSelector")->isEnabled(), "Board cannot change while connected");
     auto* registers = find<QTableWidget>(window, "registersTable");
-    check(registers->item(18, 1)->text() == "—" && registers->rowCount() > 21, "GUI shows missing and extended registers honestly");
-    check(!find<QPushButton>(window, "readHardwareRegisterOnce")->isHidden(), "Explicit hardware inspection available");
+    check(registers->item(18, 1)->text() == "—" && registers->rowCount() == 21, "GUI keeps unavailable standard registers visible");
+    check(find<QAction>(window, "readHardwareRegisterOnce")->isVisible(), "Explicit hardware inspection available");
     check(!find<QAction>(window, "virtualTimeViewAction")->isEnabled(), "Virtual time unavailable on a physical board");
     auto* expression = find<QLineEdit>(window, "consoleExpression");
+    expression->setText("bt all"); QMetaObject::invokeMethod(expression, "returnPressed");
+    waitUntil([&] {
+        const auto text = find<QPlainTextEdit>(window, "consoleView")->toPlainText();
+        return text.contains("Core0_current") && text.contains("Core1_current") && text.contains("caller");
+    });
     expression->setText("print read32(0x20002000)"); QMetaObject::invokeMethod(expression, "returnPressed");
     waitUntil([&] { return find<QPlainTextEdit>(window, "consoleView")->toPlainText().contains("read32(0x20002000) = 0x12345678"); });
     find<QLineEdit>(window, "memoryAddress")->setText("0x40008000");
-    find<QPushButton>(window, "readHardwareAddressOnce")->click();
+    find<QAction>(window, "readHardwareAddressOnce")->trigger();
     waitUntil([&] {
         auto* memory = find<QTableWidget>(window, "memoryTable");
-        return memory->rowCount() && memory->item(0, 1)->text().startsWith("78 56 34 12");
+        return memory->rowCount() && memory->item(0, 1)->text() == "78" && memory->item(0, 2)->text() == "56" &&
+               memory->item(0, 3)->text() == "34" && memory->item(0, 4)->text() == "12";
     });
     if (!qgetenv("PICODBG_TEST_SCREENSHOT").isEmpty())
         check(window.grab().save(QString::fromLocal8Bit(qgetenv("PICODBG_TEST_SCREENSHOT"))), "Save optional GUI capture");
@@ -259,6 +313,19 @@ void guiTests(const ProbeOptions& options, const QString& elf, const QString& ra
     });
     window.launchProjectElf(ramElf, Board::Pico, true, true);
     check(ramDefault, "An ELF linked in SRAM defaults to RAM transfer");
+    auto* leaveDebugging = find<QAction>(*ide, "ideStopDebugging");
+    const auto beforeClose = commands().size();
+    find<QAction>(window, "stepAction")->trigger();
+    check(!run->isEnabled(), "Hardware step is pending before leaving debug mode");
+    leaveDebugging->trigger();
+    waitUntil([&] { return !window.isVisible(); });
+    check(ide->isVisible() && !leaveDebugging->isEnabled() &&
+        find<QLabel>(*ide, "ideDebuggerLink")->text() == "Débogueur fermé" &&
+        commands().mid(beforeClose).contains("-target-disconnect"),
+        "Leaving debug mode waits for the hardware operation, disconnects and keeps the IDE open");
+    find<QAction>(*ide, "ideShowDebugger")->trigger();
+    window.connectHardware(options);
+    waitUntil([&] { return run->isEnabled(); });
     ide->close();
     find<QAction>(window, "emulationModeAction")->trigger();
     waitUntil([&] { return find<QLabel>(window, "targetModeStatus")->text().contains("ÉMULATION"); });

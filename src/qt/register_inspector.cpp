@@ -1,4 +1,6 @@
 #include "register_inspector.hpp"
+#include "debug_access.hpp"
+#include "debug_value.hpp"
 #include "window_theme.hpp"
 #include <QHeaderView>
 #include <QLabel>
@@ -26,6 +28,7 @@ RegisterInspector::RegisterInspector(QWidget* parent) : QWidget(parent) {
 void RegisterInspector::clear() {
     selected_ = false; fields_->setRowCount(0); note_->clear();
     title_->setText("Sélectionner un registre pour examiner ses bits.");
+    title_->setToolTip({});
 }
 void RegisterInspector::setRegister(const picodbg::RegisterDescription& description) {
     if (selected_ && register_.address == description.address && register_.name == description.name) return;
@@ -48,7 +51,11 @@ void RegisterInspector::setRegister(const picodbg::RegisterDescription& descript
 }
 void RegisterInspector::setValue(bool available, uint32_t value, const QString& status) {
     if (!selected_) return;
-    title_->setText(q(register_.name + " @ " + picodbg::hex(register_.address) + " · " + register_.access) + " · " + status);
+    const auto address = q(register_.name + " @ " + picodbg::hex(register_.address));
+    title_->setText(QString("%1 · <b style=\"color:%2\">%3</b> · %4")
+        .arg(address.toHtmlEscaped(), debugAccessColor(registerAccess(register_)).name(),
+             q(register_.access).toHtmlEscaped(), status.toHtmlEscaped()));
+    title_->setToolTip(registerAccessText(register_));
     for (size_t i = 0; i < register_.fields.size(); ++i) {
         const auto& field = register_.fields[i];
         auto* raw = fields_->item(static_cast<int>(i), 2);

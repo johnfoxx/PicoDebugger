@@ -12,6 +12,9 @@ log = os.environ.get('PICODBG_TEST_GDB_LOG')
 chip = 0x4927 if mode in ('rp2350', 'wrong_arch') else 0x2927
 pc = [0x10000200, 0x10000220]
 breakpoints = {}
+written_memory = {}
+written_registers = {}
+frame_values = {}
 next_id = 0
 elf_loaded = False
 
@@ -82,7 +85,32 @@ for line in sys.stdin:
     elif op == '-data-list-register-values':
         core = int(args[args.index('--thread') + 1]) - 1
         values = [i + core * 100 for i in range(13)] + [0x20041000, 0xffffffff, pc[core], 0x01000000, 0x20041000, 0, 0, 0, 0, 0x3f800000]
-        result += ',register-values=[' + ','.join('{number=' + quote(i) + ',value=' + quote('<unavailable>' if i == 18 else hex(v)) + '}' for i, v in enumerate(values)) + ']'
+        result += ',register-values=[' + ','.join('{number=' + quote(i) + ',value=' + quote('<unavailable>' if i == 18 else hex(written_registers.get((core, i), v))) + '}' for i, v in enumerate(values)) + ']'
+    elif op == '-stack-list-frames':
+        core = int(args[args.index('--thread') + 1]) - 1
+        frames = [(pc[core], 'Core' + str(core) + '_current'), (0x10000080 + core * 16, 'caller')]
+        result += ',stack=[' + ','.join('frame={level=' + quote(i) + ',addr=' + quote(hex(address)) +
+                                      ',func=' + quote(name) + '}' for i, (address, name) in enumerate(frames)) + ']'
+    elif op == '-data-evaluate-expression' and args[-1] == '$sp':
+        core = int(args[args.index('--thread') + 1]) - 1
+        level = int(args[args.index('--frame') + 1])
+        result += ',value=' + quote(hex(0x20041000 + core * 16 + 16 * level))
+    elif op == '-stack-list-variables':
+        core = int(args[args.index('--thread') + 1]) - 1
+        level = int(args[args.index('--frame') + 1])
+        value = frame_values.get((core, level), '7')
+        result += ',variables=[{name="amount",arg="1",type="short",value=' + quote(value) + '},' \
+                  '{name="buffer",type="unsigned char [4]"}]'
+    elif op == '-data-evaluate-expression' and args[-1].startswith('(unsigned long)&('):
+        core = int(args[args.index('--thread') + 1]) - 1
+        offset = 0 if args[-1].endswith('(amount)') else 4
+        result += ',value=' + quote(hex(0x20041000 + core * 16 + offset))
+    elif op == '-data-evaluate-expression' and args[-1].startswith('amount = '):
+        core = int(args[args.index('--thread') + 1]) - 1
+        level = int(args[args.index('--frame') + 1])
+        value = int(args[-1].split(' = ')[1], 0)
+        frame_values[core, level] = str(value)
+        result += ',value=' + quote(value)
     elif op == '-data-read-memory-bytes':
         address, length = int(args[-2], 0), int(args[-1])
         if mode == 'drop' and address == 0x20000000:
@@ -95,17 +123,25 @@ for line in sys.stdin:
             data = bytes((0x78, 0x56, 0x34, 0x12)) * ((length + 3) // 4)
             data = data[:length]
         if data is not None:
+            data = bytes(written_memory.get(address + offset, byte) for offset, byte in enumerate(data))
             result += ',memory=[{begin=' + quote(hex(address)) + ',offset="0",end=' + quote(hex(address + length)) + ',contents=' + quote(data.hex()) + '}]'
+    elif op == '-data-write-memory-bytes':
+        address = int(args[-2], 0)
+        if address == 0x20001000:
+            result = '^error,msg="Cannot write memory"'
+        else:
+            for offset, byte in enumerate(bytes.fromhex(args[-1])):
+                written_memory[address + offset] = byte
     elif op == '-data-disassemble':
         address = int(args[args.index('-s') + 1], 0)
         result += ',asm_insns=[' + ','.join('{address=' + quote(hex(address + 2 * i)) + ',func-name="Reset_Handler",offset=' + quote(2 * i) + ',inst="nop",opcodes="00 bf"}' for i in range(64)) + ']'
-    elif op in ('-exec-continue', '-exec-step-instruction'):
+    elif op in ('-exec-continue', '-exec-step-instruction', '-exec-next-instruction', '-exec-step', '-exec-next'):
         if mode == 'run_error':
             result = '^error,msg="Cannot insert hardware breakpoint: no resources"'
         else:
             result = '^running'
             after.append('*running,thread-id="all"')
-            if op == '-exec-step-instruction':
+            if op != '-exec-continue':
                 core = int(args[args.index('--thread') + 1]) - 1
                 pc[core] += 2
                 after.append('*stopped,reason="end-stepping-range",thread-id=' + quote(core + 1))
@@ -134,9 +170,12 @@ for line in sys.stdin:
             result = '^error,msg="Flash programming failed"'
     elif op == '-data-write-register-values':
         core = int(args[args.index('--thread') + 1]) - 1
-        if int(args[-2]) == 15:
-            pc[core] = int(args[-1], 0)
-    elif op not in ('-gdb-set', '-interpreter-exec', '-thread-select', '-data-write-memory-bytes', '-target-disconnect'):
+        index, value = int(args[-2]), int(args[-1], 0)
+        if index == 15:
+            pc[core] = value
+        else:
+            written_registers[core, index] = value
+    elif op not in ('-gdb-set', '-interpreter-exec', '-thread-select', '-target-disconnect'):
         result = '^error,msg=' + quote('Unexpected test command: ' + command)
     send(token + result)
     for event in after:

@@ -7,10 +7,12 @@
 #include <QRegularExpression>
 #include <QSignalBlocker>
 #include <QStandardPaths>
+#include <algorithm>
 
 namespace picosource {
 namespace {
 constexpr int outputLimit = 32 * 1024 * 1024;
+constexpr int assemblyOutputLimit = 96 * 1024 * 1024;
 constexpr size_t maxRanges = 200000;
 
 QString binutil(const QString& compiler, const QString& name) {
@@ -81,7 +83,7 @@ void SourceMap::stop(bool preserveLines) {
         ranges_.clear();
         sourceAddresses_.clear();
     }
-    instructions_.clear();
+    instructions_.reset();
     assemblyAddresses_.clear();
 }
 
@@ -96,28 +98,35 @@ void SourceMap::index(const QString& file, const QString& compiler) {
     if (path_.isEmpty()) { report("Ouvrir un ELF compilé avec les informations de débogage (-g)."); return; }
     objdump_ = binutil(compiler, "objdump");
     addr2line_ = binutil(compiler, "addr2line");
-    if (objdump_.isEmpty() || addr2line_.isEmpty()) {
+    if (objdump_.isEmpty()) {
+        assemblyStatus_ = "Installer Binutils ARM pour désassembler l'ELF.";
         report("Installer Binutils ARM pour lire les lignes DWARF de l'ELF.");
+        return;
+    }
+    if (addr2line_.isEmpty()) {
+        startAssembly("addr2line indisponible pour associer les lignes source.");
         return;
     }
     stage_ = Decode;
     status_ = "Lecture des lignes DWARF…";
+    assemblyStatus_ = "Préparation du désassemblage…";
     deadline_.start(15000);
     process_.start(objdump_, {"--wide", "--dwarf=decodedline,no-follow-links", path_});
 }
 
 void SourceMap::readOutput() {
     output_ += process_.readAllStandardOutput();
-    if (output_.size() > outputLimit) {
+    if (output_.size() > (stage_ == Assembly ? assemblyOutputLimit : outputLimit)) {
         failIndex(stage_ == Assembly ? "Désassemblage de l'ELF trop volumineux."
                                      : "Table de lignes DWARF trop volumineuse.");
     }
 }
 
 void SourceMap::finished(int code, QProcess::ExitStatus state) {
-    if (stage_ == Idle) return;
+    const auto completed = stage_;
+    if (completed == Idle) return;
     readOutput();
-    if (stage_ == Idle) return;
+    if (stage_ != completed) return;
     if (code != 0 || state != QProcess::NormalExit) {
         failIndex(stage_ == Assembly ? "Binutils n'a pas pu désassembler l'ELF."
                                      : "Binutils n'a pas pu lire les lignes DWARF.");
@@ -147,15 +156,14 @@ void SourceMap::decode() {
         if (havePrevious && address > previous) ranges_[previous].end = address;
         if (ranges_.size() > maxRanges) {
             stop();
-            report("Trop de plages de lignes DWARF.");
+            startAssembly("Trop de plages de lignes DWARF.");
             return;
         }
         previous = address;
         havePrevious = match.captured(1) != "-";
     }
     if (ranges_.empty()) {
-        stop();
-        report("Cet ELF ne fournit pas de lignes DWARF exploitables. Compiler avec -g.");
+        startAssembly("Cet ELF ne fournit pas de lignes DWARF exploitables. Compiler avec -g.");
         return;
     }
     output_.clear();
@@ -189,19 +197,18 @@ void SourceMap::resolve() {
         range->second.source.line = line;
         sourceAddresses_.emplace(std::make_pair(path->second, line), address);
     }
-    deadline_.stop();
+    startAssembly(sourceAddresses_.empty() ? "Aucune ligne source n'a pu être associée à l'ELF."
+                                          : "Lignes DWARF chargées");
+}
+
+void SourceMap::startAssembly(const QString& sourceStatus) {
     output_.clear();
     addresses_.clear();
-    if (sourceAddresses_.empty()) {
-        stage_ = Idle;
-        report("Aucune ligne source n'a pu être associée à l'ELF.");
-        return;
-    }
     stage_ = Assembly;
     assemblyStatus_ = "Désassemblage de l'ELF…";
     deadline_.start(15000);
     process_.start(objdump_, {"--disassemble", "--disassemble-zeroes", "--wide", "--no-show-raw-insn", path_});
-    report("Lignes DWARF chargées");
+    report(sourceStatus);
 }
 
 void SourceMap::failIndex(const QString& message) {
@@ -209,7 +216,7 @@ void SourceMap::failIndex(const QString& message) {
     const bool assemblyFailed = stage_ == Assembly;
     stop(assemblyFailed);
     if (!assemblyFailed) {
-        report(message);
+        startAssembly(message);
         return;
     }
     assemblyStatus_ = message;
@@ -218,6 +225,7 @@ void SourceMap::failIndex(const QString& message) {
 
 void SourceMap::readAssembly() {
     static const QRegularExpression row(R"(^\s*([0-9a-fA-F]+):\s+(\S.*)$)");
+    auto instructions = std::make_shared<AssemblyListing>();
     for (const auto& raw : output_.split('\n')) {
         const auto match = row.match(QString::fromLocal8Bit(raw));
         if (!match.hasMatch()) continue;
@@ -226,14 +234,24 @@ void SourceMap::readAssembly() {
         auto instruction = match.captured(2).trimmed();
         if (!ok || instruction.startsWith('.')) continue;
         instruction.replace('\t', ' ');
-        if (!instructions_.emplace(address, instruction).second) continue;
-        const auto source = location(address);
-        if (source.valid()) assemblyAddresses_[{source.path, source.line}].push_back(address);
+        instructions->push_back({address, std::move(instruction), {}});
+    }
+    const auto byAddress = [](const AssemblyInstruction& a, const AssemblyInstruction& b) { return a.address < b.address; };
+    if (!std::is_sorted(instructions->begin(), instructions->end(), byAddress))
+        std::stable_sort(instructions->begin(), instructions->end(), byAddress);
+    instructions->erase(std::unique(instructions->begin(), instructions->end(), [](const AssemblyInstruction& a, const AssemblyInstruction& b) {
+        return a.address == b.address;
+    }), instructions->end());
+    for (auto& instruction : *instructions) {
+        instruction.source = location(instruction.address);
+        if (instruction.source.valid())
+            assemblyAddresses_[{instruction.source.path, instruction.source.line}].push_back(instruction.address);
     }
     stage_ = Idle;
     deadline_.stop();
     output_.clear();
-    assemblyStatus_ = instructions_.empty() ? "Aucune instruction trouvée dans l'ELF." : QString();
+    assemblyStatus_ = instructions->empty() ? "Aucune instruction trouvée dans l'ELF." : QString();
+    instructions_ = std::move(instructions);
     if (updated) updated();
 }
 
@@ -256,11 +274,6 @@ const std::vector<uint32_t>& SourceMap::assemblyAddresses(const Location& source
     static const std::vector<uint32_t> empty;
     const auto found = assemblyAddresses_.find({source.path, source.line});
     return found == assemblyAddresses_.end() ? empty : found->second;
-}
-
-QString SourceMap::instruction(uint32_t address) const {
-    const auto found = instructions_.find(address);
-    return found == instructions_.end() ? QString() : found->second;
 }
 
 void SourceMap::report(const QString& message) {

@@ -7,6 +7,7 @@
 #include <QAbstractItemView>
 #include <QAction>
 #include <QApplication>
+#include <QBrush>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QCompleter>
@@ -15,14 +16,21 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
 #include <QFileSystemModel>
 #include <QImage>
+#include <QHeaderView>
+#include <QMouseEvent>
 #include <QLineEdit>
 #include <QLabel>
 #include <QColor>
+#include <QColorDialog>
+#include <QDateTime>
 #include <QPlainTextEdit>
+#include <QProcess>
 #include <QPushButton>
 #include <QSettings>
+#include <QScrollBar>
 #include <QStandardPaths>
 #include <QTabWidget>
 #include <QTableWidget>
@@ -400,24 +408,48 @@ bool hasDebugLine(picoide::CodeEditor& editor, const QString& color) {
     return false;
 }
 
-void verifySourceMapping(picoide::IdeWindow& ide, MainWindow& debugger, const QDir& project) {
+void verifySourceMapping(picoide::IdeWindow& ide, MainWindow& debugger, const QDir& project, const picodbg::ElfImage& image) {
     auto* assembly = get<QTableWidget>(debugger, "assemblyTable");
-    auto* ideAssembly = get<QTableWidget>(ide, "ideAssemblyTable");
-    auto* preview = get<QLabel>(debugger, "debugSourceStatus");
-    waitFor([&] { return preview->text().contains("startup.c:"); }, "DWARF index locates startup source");
+    auto* ideAssembly = get<QTableView>(ide, "ideAssemblyTable");
+    auto* model = ideAssembly->model();
+    const auto text = [model](int row, int column) { return model->index(row, column).data().toString(); };
     const auto pcInIde = [&] {
-        for (int row = 0; row < ideAssembly->rowCount(); ++row)
-            if (ideAssembly->item(row, 0)->text() == "▶") return ideAssembly->item(row, 1)->text();
+        for (int row = 0; row < model->rowCount(); ++row)
+            if (text(row, 0) == "▶") return text(row, 1);
         return QString();
     };
     waitFor([&] { return ideAssembly->isVisible() && ideAssembly->width() > 120 && !pcInIde().isEmpty(); },
             "IDE shows PC beside the C editor");
+    const auto mainAddress = QString::fromStdString(picodbg::hex(image.symbols.at("main") & ~1u));
+    QModelIndex mainInstruction;
+    QModelIndex pcInstruction;
+    for (int row = 0; row < model->rowCount(); ++row) {
+        if (text(row, 1) == mainAddress) mainInstruction = model->index(row, 2);
+        if (text(row, 0) == "▶") pcInstruction = model->index(row, 1);
+    }
+    check(mainInstruction.isValid() && mainAddress != pcInIde(), "Full listing includes main while the PC is in startup");
+    check(ideAssembly->visualRect(pcInstruction).intersects(ideAssembly->viewport()->rect()), "The initial PC is visible in the full listing");
+    const QPersistentModelIndex persistentMain(mainInstruction);
+    const int instructionCount = model->rowCount();
+    auto* scroll = ideAssembly->verticalScrollBar();
+    scroll->setValue(scroll->maximum());
+    check(scroll->value() > 0, "The entire assembly listing can be scrolled");
+    const int scrolled = scroll->value();
+    debugger.refreshIdeSource();
+    check(scroll->value() == scrolled, "A refresh with the same selection and PC preserves assembly scroll");
     auto* step = get<QAction>(ide, "ideStepInstruction");
     check(step->isEnabled(), "IDE can step a loaded target");
-    const auto address = assembly->item(0, 1)->text();
+    const auto* registers = get<QTableWidget>(debugger, "registersTable");
+    const auto address = registers->item(15, 1)->text();
     step->trigger();
-    check(assembly->item(0, 1)->text() != address, "IDE single-steps the same debugger");
-    check(pcInIde() == assembly->item(0, 1)->text(), "IDE assembly arrow updates at instruction granularity");
+    check(registers->item(15, 1)->text() != address, "IDE single-steps the same debugger");
+    check(pcInIde() == registers->item(15, 1)->text(), "IDE assembly arrow updates at instruction granularity");
+    check(persistentMain.isValid() && model->rowCount() == instructionCount, "Stepping updates the highlights without replacing the listing");
+    for (int row = 0; row < model->rowCount(); ++row) {
+        if (text(row, 0) == "▶")
+            check(model->index(row, 2).data(Qt::BackgroundRole).value<QBrush>().color() == QColor(picosource::executionColor()),
+                  "The current instruction keeps the execution colour");
+    }
     check(ide.openSource(project.filePath("src/main.c")), "Open C file for source-to-assembly mapping");
     auto* tabs = get<QTabWidget>(ide, "ideEditors");
     auto* editor = dynamic_cast<picoide::CodeEditor*>(tabs->currentWidget());
@@ -427,28 +459,341 @@ void verifySourceMapping(picoide::IdeWindow& ide, MainWindow& debugger, const QD
     const QString location = "main.c:" + QString::number(counter.blockNumber() + 1);
     editor->setTextCursor(counter);
     int selectedRows = 0;
-    for (int row = 0; row < ideAssembly->rowCount(); ++row)
-        if (ideAssembly->item(row, 3)->text() == location &&
-            ideAssembly->item(row, 2)->background().color() == QColor(picosource::selectionColor())) ++selectedRows;
-    check(selectedRows > 1 && !pcInIde().isEmpty(), "Selecting C highlights its instructions alongside the current PC");
+    QModelIndex firstSelected;
+    for (int row = 0; row < model->rowCount(); ++row) {
+        const auto instruction = model->index(row, 2);
+        if (text(row, 3) == location && instruction.data(Qt::BackgroundRole).value<QBrush>().color() == QColor(picosource::selectionColor())) {
+            ++selectedRows;
+            if (!firstSelected.isValid()) firstSelected = instruction;
+        }
+    }
+    check(selectedRows > 1 && !pcInIde().isEmpty() && model->rowCount() == instructionCount,
+          "Selecting C highlights its instructions within the full listing alongside the current PC");
+    scroll->setValue(0);
     get<QAction>(ide, "ideGoToAssembly")->trigger();
-    check(assembly->item(0, 5) && assembly->item(0, 5)->text() == location, "C line jumps to matching assembly");
-    check(assembly->item(0, 5)->background().color() == QColor(picosource::selectionColor()) &&
-          hasDebugLine(*editor, picosource::selectionColor()), "Both windows use the selection color for the C line");
+    check(ideAssembly->visualRect(firstSelected).intersects(ideAssembly->viewport()->rect()), "Explicit C navigation brings its instructions into view");
+    check(hasDebugLine(*editor, picosource::selectionColor()), "The IDE uses the selection color for the C line");
+    auto* showDebuggerAssembly = get<QAction>(debugger, "showDebuggerAssemblyAction");
+    check(!assembly->isVisible() && !showDebuggerAssembly->isEnabled(), "Visible IDE frees the central assembler slot");
+    ide.hide();
+    QApplication::processEvents();
+    check(assembly->isVisible() && showDebuggerAssembly->isEnabled(), "The debugger restores its stand-alone assembler when the IDE closes");
+    check(assembly->item(0, 5) && assembly->item(0, 5)->text() == location &&
+          assembly->item(0, 5)->background().color() == QColor(picosource::selectionColor()),
+          "Stand-alone assembler preserves source navigation and its color");
     check(ide.openSource(project.filePath("CMakeLists.txt")), "Switch to another editor tab");
     QMetaObject::invokeMethod(assembly, "cellClicked", Q_ARG(int, 0), Q_ARG(int, 5));
-    check(tabs->currentWidget() == editor && preview->text().endsWith(location),
-          "Assembly source cell opens the matching line in the IDE and previews it");
-    auto* showDebuggerAssembly = get<QAction>(debugger, "showDebuggerAssemblyAction");
-    showDebuggerAssembly->trigger();
-    check(!assembly->isVisible() && ideAssembly->isVisible(), "Debugger layout can yield space to the peripheral views");
-    get<QAction>(debugger, "codeViewAction")->trigger();
-    check(assembly->isVisible(), "Code view restores the debugger assembly");
+    check(ide.isVisible() && !assembly->isVisible() && tabs->currentWidget() == editor &&
+          hasDebugLine(*editor, picosource::selectionColor()), "Assembler source link restores IDE and navigates to the line");
     auto* showIdeAssembly = get<QAction>(ide, "ideShowAssembly");
     showIdeAssembly->trigger();
     check(!ideAssembly->isVisible(), "Assembly pane can be hidden to edit in the full width");
     showIdeAssembly->trigger();
     check(ideAssembly->isVisible() && !pcInIde().isEmpty(), "Restoring the pane shows the current PC");
+}
+
+void verifyStackVariables(MainWindow& debugger, const QString& compiler, const QDir& temporary) {
+    const auto source = temporary.filePath("stack_variables.c");
+    QFile file(source);
+    check(file.open(QIODevice::WriteOnly), "Create DWARF stack fixture");
+    file.write("int probe(short amount, unsigned char flag) {\n"
+               "    __asm__ volatile (\"\" ::: \"lr\");\n"
+               "    volatile unsigned char bytes[15];\n"
+               "    bytes[0] = 1; bytes[1] = 2; bytes[14] = 90;\n"
+               "    long result = amount + flag + bytes[0];\n"
+               "    return result;\n"
+               "}\n"
+               "void entry(void) { (void)probe(22, 3); for (;;) {} }\n");
+    file.close();
+    const auto elf = temporary.filePath("stack_variables.elf");
+    QProcess gcc;
+    gcc.start(compiler, {"-mcpu=cortex-m0plus", "-mthumb", "-O0", "-g", "-ffreestanding", "-nostdlib",
+                         "-Wl,-Ttext=0x10000200,--entry=entry", "-o", elf, source});
+    check(gcc.waitForFinished(5000) && gcc.exitCode() == 0, "Compile a real ARM ELF with typed arguments and locals");
+    check(debugger.loadFile(elf), "Load stack fixture");
+    auto* core = get<QComboBox>(debugger, "coreSelector");
+    core->setCurrentIndex(0);
+    auto* stack = get<QTreeWidget>(debugger, "stackCore0");
+    auto* step = get<QAction>(debugger, "stepAction");
+    for (int i = 0; i < 16 && !stack->topLevelItem(0)->text(0).contains("probe"); ++i) step->trigger();
+    check(stack->topLevelItem(0)->text(0).contains("probe"), "The selected core entered the fixture function");
+    auto* root = stack->topLevelItem(0);
+    QMetaObject::invokeMethod(stack, "itemDoubleClicked", Q_ARG(QTreeWidgetItem*, root), Q_ARG(int, 0));
+    auto* inspector = get<QDialog>(debugger, "stackInspector");
+    auto* memory = get<QTreeWidget>(*inspector, "stackInspectorMemory");
+    auto* fields = get<QTreeWidget>(*inspector, "stackInspectorFields");
+    auto* context = get<QLabel>(*inspector, "stackInspectorContext");
+    check(inspector->isWindow() && inspector->isVisible() && context->text().contains("Cœur 0") &&
+        context->text().contains("#0 probe"), "A double click opens the exact frame in a detached window");
+    waitFor([&] { return context->text().contains("CFA"); }, "Inspector displays indexed frame rules");
+    const auto findField = [fields](const QString& name) {
+        for (int i = 0; i < fields->topLevelItemCount(); ++i)
+            if (fields->topLevelItem(i)->text(2) == name) return fields->topLevelItem(i);
+        return static_cast<QTreeWidgetItem*>(nullptr);
+    };
+    auto* registers = get<QTableWidget>(debugger, "registersTable");
+    const auto oldFp = registers->item(7, 1)->text();
+    check(registers->item(0, 1)->text() == "0x00000016" && registers->item(1, 1)->text() == "0x00000003",
+        "At function entry GCC passes the two arguments in r0 and r1");
+    check(findField("amount") && findField("amount")->text(4) != "0",
+        "A fixed DWARF slot below SP is not shown as an argument with value zero");
+    check(stack->header()->sectionResizeMode(1) == QHeaderView::Fixed && memory->header()->sectionResizeMode(1) == QHeaderView::Fixed &&
+          memory->header()->sectionResizeMode(3) == QHeaderView::Stretch, "The marker column keeps its width while ASCII gets the remaining space");
+    step->trigger();
+    auto* saved = findField("r7 sauvegardé");
+    check(saved && saved->text(0) == "S7" && saved->text(4).compare(oldFp, Qt::CaseInsensitive) == 0,
+        "Immediately after PUSH, the saved r7 value is the caller's register, not the current CFA register");
+    bool sawUnwritten = false;
+    bool sawFp = false;
+    for (int i = 0; i < 35; ++i) {
+        const auto* amount = findField("amount");
+        if (amount && amount->text(4).contains("Copie en pile non observée")) sawUnwritten = true;
+        const auto* fp = findField("Ancien pointeur de trame (r7)");
+        if (fp && fp->text(0) == "FP" && fp->text(4).compare(oldFp, Qt::CaseInsensitive) == 0) sawFp = true;
+        const auto* bytes = findField("bytes");
+        if (amount && amount->text(4) == "22" && bytes && bytes->childCount() == 15 &&
+            bytes->child(0)->text(4) == "1" && bytes->child(14)->text(4) == "90") break;
+        step->trigger();
+    }
+    auto* amount = findField("amount");
+    auto* array = findField("bytes");
+    check(amount && amount->text(0) == "a1" && amount->text(3).contains("2 o") && amount->text(4) == "22",
+        "Decoded argument has its label, type, width and value");
+    check(array && array->text(0).startsWith('l') && array->text(3).contains("15 o") && array->childCount() == 15,
+        "The decoded table exposes a 15-byte local with its elements");
+    check(sawUnwritten && sawFp, "A reserved spill slot stays unavailable until written and the CFI identifies FP once established");
+    const uint32_t sp = registers->item(13, 1)->text().toUInt(nullptr, 16);
+    const uint32_t first = sp + array->text(1).mid(3).toUInt(nullptr, 16);
+    check(array->checkState(5) == Qt::Unchecked && array->background(0).style() == Qt::NoBrush,
+        "Detailed field colors are opt-in");
+    array->setCheckState(5, Qt::Checked);
+    check(findField("bytes")->background(0).style() != Qt::NoBrush, "Checking a field gives it a color");
+    array = findField("bytes");
+    fields->setCurrentItem(array, 2);
+    auto* colorButton = get<QPushButton>(*inspector, "stackFieldColorButton");
+    check(colorButton->isEnabled(), "A memory field can be assigned a custom color");
+    const QColor custom("#7dd7ce");
+    bool accepted = false;
+    QTimer chooseColor;
+    chooseColor.setSingleShot(true);
+    QObject::connect(&chooseColor, &QTimer::timeout, [&] {
+        auto* dialog = qobject_cast<QColorDialog*>(QApplication::activeModalWidget());
+        if (!dialog) return;
+        dialog->setCurrentColor(custom);
+        dialog->accept();
+        accepted = true;
+    });
+    chooseColor.start(0);
+    colorButton->click();
+    check(accepted && findField("bytes")->background(0).color() == custom, "Changing the field color updates the detailed table");
+    array = findField("bytes");
+    const auto arrayColor = array->background(0).color();
+    unsigned colored = 0;
+    for (int i = 0; i < memory->topLevelItemCount(); ++i) {
+        const auto* row = memory->topLevelItem(i);
+        const auto address = row->text(0).toUInt(nullptr, 16);
+        check((address & 3u) == 0 && row->text(2).size() == 11 && row->text(3).size() == 4, "Rows show aligned words, four hex bytes and four ASCII characters");
+        const auto colors = row->data(0, Qt::UserRole + 2).toList();
+        for (int b = 0; b < colors.size(); ++b) {
+            const bool belongsToArray = address + unsigned(b) >= first && address + unsigned(b) < first + 15;
+            if (colors[b].value<QColor>() == arrayColor) ++colored;
+            check((colors[b].value<QColor>() == arrayColor) == belongsToArray, "Each array byte and only those bytes have its band");
+        }
+    }
+    check(colored == 15, "The color spans exactly fifteen bytes across word boundaries");
+    const auto mouse = [](QTreeWidget* tree, QTreeWidgetItem* item, int column, int x, QEvent::Type type) {
+        tree->scrollToItem(item);
+        const QPoint point(tree->header()->sectionViewportPosition(column) + x, tree->visualItemRect(item).center().y());
+        QMouseEvent event(type, QPointF(point), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(tree->viewport(), &event);
+    };
+    const auto memoryRow = [](QTreeWidget* tree, QTreeWidgetItem* frame, uint32_t address) {
+        const int count = frame ? frame->childCount() : tree->topLevelItemCount();
+        for (int i = 0; i < count; ++i) {
+            auto* row = frame ? frame->child(i) : tree->topLevelItem(i);
+            if (row->text(0).toUInt(nullptr, 16) == (address & ~uint32_t(3))) return row;
+        }
+        return static_cast<QTreeWidgetItem*>(nullptr);
+    };
+    const int previousHeight = stack->maximumHeight();
+    stack->setMaximumHeight(105);
+    waitFor([&] {
+        for (int i = 0; i < root->childCount(); ++i)
+            if (root->child(i)->text(0).startsWith("…")) return true;
+        return false;
+    }, "A compact summary indicates the words omitted between SP and the saved registers");
+    for (const auto& name : {"Ancien pointeur de trame (r7)", "Adresse de retour sauvegardée"}) {
+        const auto* field = findField(name);
+        check(field && field->text(1).startsWith("+0x"), "CFI provides the address of the saved register");
+        const auto address = sp + field->text(1).mid(3).toUInt(nullptr, 16);
+        const auto* summary = memoryRow(stack, root, address);
+        const auto* detailed = memoryRow(memory, nullptr, address);
+        check(summary && detailed && summary->text(1).split(' ').contains(field->text(0)) &&
+            summary->text(2) == detailed->text(2) && summary->text(3) == detailed->text(3),
+            "Compact summary keeps each saved FP and RET at the real address with the same hex and ASCII bytes");
+    }
+    stack->setMaximumHeight(previousHeight);
+    waitFor([&] { return memoryRow(stack, root, first); }, "Restore the expanded summary");
+    QMetaObject::invokeMethod(fields, "itemClicked", Q_ARG(QTreeWidgetItem*, array), Q_ARG(int, 2));
+    unsigned selected = 0;
+    for (int i = 0; i < memory->topLevelItemCount(); ++i) {
+        const auto* row = memory->topLevelItem(i);
+        const auto mask = row->data(2, Qt::UserRole + 3).toUInt();
+        check(mask == row->data(3, Qt::UserRole + 3).toUInt(), "Hex and ASCII share the same selection mask");
+        for (unsigned bit = 0; bit < 4; ++bit) selected += (mask >> bit) & 1u;
+    }
+    check(selected == 15, "Selecting the decoded array selects its full span");
+    auto* raw = memoryRow(memory, nullptr, first + 14);
+    check(raw, "The last array byte has a raw row");
+    const auto digit = memory->fontMetrics().horizontalAdvance(QLatin1Char('0'));
+    mouse(memory, raw, 3, 4 + int((first + 14) & 3u) * digit, QEvent::MouseButtonPress);
+    check(findField("bytes")->background(0).color() == inspector->palette().highlight().color(),
+        "Clicking one ASCII character keeps the full decoded variable selected");
+    const auto edit = [&](const QString& input, const std::function<void()>& open) {
+        bool written = false;
+        QTimer timer;
+        timer.setSingleShot(true);
+        QObject::connect(&timer, &QTimer::timeout, [&] {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            if (!dialog) return;
+            auto* value = dialog->findChild<QLineEdit*>("stackWriteValue");
+            if (value) {
+                value->setText(input);
+                dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok)->click();
+                written = !dialog->isVisible();
+            }
+            if (!written) dialog->reject();
+        });
+        timer.start(0);
+        open();
+        check(written, "The paused stack editor accepts this value");
+    };
+    edit("Y", [&] { mouse(memory, raw, 3, 4 + int((first + 14) & 3u) * digit, QEvent::MouseButtonDblClick); });
+    check(findField("bytes")->child(14)->text(4) == "89" && raw->text(3).at(int((first + 14) & 3u)) == 'Y',
+        "An ASCII edit updates the hex and decoded representations");
+    auto* compact = memoryRow(stack, stack->topLevelItem(0), first);
+    check(compact, "Summary contains the beginning of the array");
+    int markerX = 4;
+    bool markerFound = false;
+    for (const auto& value : compact->data(1, Qt::UserRole + 5).toList()) {
+        const auto label = value.toList().front().toString();
+        if (label == findField("bytes")->text(0)) { markerFound = true; break; }
+        markerX += stack->fontMetrics().horizontalAdvance(label) + 5;
+    }
+    check(markerFound, "Summary shows the variable's short label in the first row");
+    QMetaObject::invokeMethod(fields, "itemClicked", Q_ARG(QTreeWidgetItem*, findField("amount")), Q_ARG(int, 2));
+    mouse(stack, compact, 1, markerX, QEvent::MouseButtonPress);
+    check(findField("bytes")->background(0).color() == inspector->palette().highlight().color(),
+        "Clicking a summary label selects the same variable in the inspector");
+    for (const auto& color : compact->data(2, Qt::UserRole + 2).toList())
+        check(!color.value<QColor>().isValid(), "Checked zone colors never bleed into the summary");
+    const auto summaryByte = (stack->columnWidth(2) - 6) / 4;
+    edit("09", [&] { mouse(stack, compact, 2, 4 + int(first & 3u) * summaryByte, QEvent::MouseButtonDblClick); });
+    check(findField("bytes")->child(0)->text(4) == "9" && findField("bytes")->child(1)->text(4) == "2",
+        "A hex edit in the summary updates the inspector and preserves adjacent bytes");
+    const auto byteIndex = int(first & 3u);
+    const auto changedHex = compact->data(2, Qt::UserRole + 8).toList()[byteIndex].toLongLong();
+    const auto changedAscii = compact->data(3, Qt::UserRole + 8).toList()[byteIndex].toLongLong();
+    check(changedHex > QDateTime::currentMSecsSinceEpoch() && changedHex == changedAscii &&
+          findField("bytes")->child(0)->data(4, Qt::UserRole + 8).toLongLong() == changedHex,
+          "A recent edit underlines the same byte in hex, ASCII and the decoded table");
+    const auto* inspected = memoryRow(memory, nullptr, first);
+    check(inspected && inspected->data(2, Qt::UserRole + 8).toList()[byteIndex].toLongLong() == changedHex &&
+        inspected->data(3, Qt::UserRole + 8).toList()[byteIndex].toLongLong() == changedHex,
+        "The detailed hex and ASCII highlight uses the same deadline as the decoded field");
+    auto* currentArray = findField("bytes");
+    currentArray->setCheckState(5, Qt::Unchecked);
+    check(!memoryRow(memory, nullptr, first)->data(2, Qt::UserRole + 2).toList()[byteIndex].value<QColor>().isValid(),
+        "Unchecking removes the pinned color while the manual selection stays");
+    currentArray->setCheckState(5, Qt::Checked);
+    check(memoryRow(memory, nullptr, first)->data(2, Qt::UserRole + 2).toList()[byteIndex].value<QColor>() == custom,
+        "Rechecking restores the same manually chosen color");
+    edit("-7", [&] { QMetaObject::invokeMethod(fields, "itemDoubleClicked", Q_ARG(QTreeWidgetItem*, findField("amount")), Q_ARG(int, 4)); });
+    check(findField("amount")->text(4) == "-7", "A typed edit updates the signed short");
+    for (int i = 0; i < 45 && !findField("Valeur de retour"); ++i) step->trigger();
+    auto* result = findField("Valeur de retour");
+    check(result && result->text(4) == "5", "Inspector follows the live activation and identifies its result");
+    edit("-12", [&] { QMetaObject::invokeMethod(fields, "itemDoubleClicked", Q_ARG(QTreeWidgetItem*, result), Q_ARG(int, 4)); });
+    step->trigger();
+    check(registers->item(0, 1)->text() == "0xfffffff4", "The new result is delivered to the caller");
+    check(!memory->isEnabled(), "A completed frame cannot write stale memory");
+    inspector->close();
+    core->setCurrentIndex(2);
+}
+
+void verifyRegisterLocationLists(const QString& compiler, const QDir& temporary) {
+    const auto source = temporary.filePath("stack_loclists.c");
+    QFile file(source);
+    check(file.open(QIODevice::WriteOnly), "Create optimized DWARF fixture");
+    file.write("volatile int observed;\n"
+               "__attribute__((noinline)) void sink(int x) { observed = x; }\n"
+               "__attribute__((noinline)) int probe(int a,int b,int c,int d,int e) {\n"
+               "    int x = a+b+c+d+e; sink(x); return x+1;\n"
+               "}\n"
+               "void entry(void) { (void)probe(11,22,33,44,55); for (;;) {} }\n");
+    file.close();
+    for (const auto version : {QString("-gdwarf-4"), QString("-gdwarf-5")}) {
+        const auto elf = temporary.filePath("loclists" + version + ".elf");
+        QProcess gcc;
+        gcc.start(compiler, {"-mcpu=cortex-m0plus", "-mthumb", "-Og", version, "-fno-omit-frame-pointer", "-ffreestanding",
+                            "-nostdlib", "-Wl,-Ttext=0x10000200,-Tbss=0x20000000,--entry=entry", "-o", elf, source});
+        check(gcc.waitForFinished(5000) && gcc.exitCode() == 0, "Compile an ELF with address-dependent DWARF locations");
+        picodbg::Debugger target;
+        target.load(elf.toStdString());
+        const auto entry = target.image.symbols.at("probe") & ~1u;
+        for (int step = 0; step < 30 && target.cpus[0].r[15] != entry; ++step) target.step(0);
+        check(target.cpus[0].r[15] == entry, "Step into optimized function");
+        StackDebugInfo info(nullptr);
+        info.index(elf, compiler);
+        waitFor([&] { return info.status().isEmpty(); }, "Read location list and CFI");
+        const auto frame = info.frame(target, 0, entry);
+        const auto named = [](const FrameDetails& details, const QString& name) {
+            return std::find_if(details.fields.cbegin(), details.fields.cend(), [&](const FrameField& field) { return field.name == name; });
+        };
+        for (int i = 0; i < 4; ++i) {
+            const auto field = named(frame, QString(QChar('a' + i)));
+            check(field != frame.fields.cend() && field->reg == i && !field->inMemory &&
+                  frameValue(target, 0, *field) == QString::number((i + 1) * 11), "A current DWARF location range resolves the argument to the real CPU register");
+        }
+        const auto fifth = named(frame, "e");
+        check(fifth != frame.fields.cend() && fifth->inMemory && fifth->address == target.cpus[0].r[13] &&
+              frameValue(target, 0, *fifth) == "55", "The incoming stack argument is valid before any store in the callee");
+        bool multipleSaves = false, registerExpired = false;
+        for (int i = 0; i < 18 && target.image.functionAt(target.cpus[0].r[15]) == "probe"; ++i) {
+            target.step(0);
+            if (target.image.functionAt(target.cpus[0].r[15]) != "probe") break;
+            const auto current = info.frame(target, 0, target.cpus[0].r[15]);
+            const auto savedCount = std::count_if(current.fields.cbegin(), current.fields.cend(), [](const FrameField& field) {
+                return field.savedRegister >= 0 && field.inMemory;
+            });
+            multipleSaves |= savedCount >= 3;
+            const auto field = named(current, "a");
+            registerExpired |= field != current.fields.cend() && field->reg < 0 && !field->inMemory && !field->editable;
+        }
+        check(multipleSaves, "Several saved CFI registers coexist in the current frame");
+        check(registerExpired, "A register is no longer offered when the location expression at PC is unsupported");
+    }
+}
+
+void verifyAssemblyWithoutDwarf(picoide::IdeWindow& ide, MainWindow& debugger,
+                                const QString& elf, const QString& stripped) {
+    const auto compiler = picoide::Tools::detect().gcc;
+    const auto gcc = compiler.lastIndexOf("gcc");
+    const auto objcopy = gcc < 0 ? QString() : compiler.left(gcc) + "objcopy" + compiler.mid(gcc + 3);
+    QProcess strip;
+    strip.start(QFileInfo(objcopy).isExecutable() ? objcopy : QString("arm-none-eabi-objcopy"),
+                {"--strip-debug", elf, stripped});
+    check(strip.waitForFinished(5000) && strip.exitStatus() == QProcess::NormalExit && strip.exitCode() == 0,
+          "Create an ARM executable without DWARF");
+    auto* model = get<QTableView>(ide, "ideAssemblyTable")->model();
+    const int instructionCount = model->rowCount();
+    check(debugger.loadFile(stripped), "Open the stripped executable");
+    waitFor([&] { return model->rowCount() == instructionCount && model->index(0, 3).data().toString().isEmpty(); },
+            "The full assembly is available even without DWARF line mappings");
+    bool pcMarked = false;
+    for (int row = 0; row < model->rowCount(); ++row)
+        pcMarked |= model->index(row, 0).data().toString() == "▶";
+    check(pcMarked, "The PC is marked in an ELF without source lines");
 }
 }
 
@@ -483,7 +828,7 @@ int main(int argc, char** argv) {
         check(ide && ide->isVisible() && ide->isWindow(), "Debugger shows independent IDE window");
         check(get<QLabel>(debugger, "ideLinkStatus")->text() == "IDE relié", "Debugger displays IDE connection");
         debugger.close();
-        check(ide->isVisible() && !ide->parentWidget(), "IDE stays open when the debugger window closes");
+        check(ide->isVisible() && ide->isMaximized() && !ide->parentWidget(), "IDE opens maximized and stays open when the debugger closes");
         check(get<QLabel>(*ide, "ideDebuggerLink")->text() == "Débogueur fermé", "IDE observes debugger closure");
         get<QAction>(*ide, "ideShowDebugger")->trigger();
         check(debugger.isVisible(), "IDE can reopen the same debugger");
@@ -571,10 +916,16 @@ int main(int argc, char** argv) {
             check(log->toPlainText().contains("ELF chargé à l'arrêt") && get<QAction>(debugger, "stepAction")->isEnabled(),
                   "A native ARM build opens in the existing debugger");
             const auto build = picoide::projectBuildDirectory(project.path(), picodbg::Board::Pico, picoide::Tools::detect());
-            const auto elf = picodbg::ElfImage::read(QDir(build).filePath("clignotement.elf").toStdString());
+            const auto elfPath = QDir(build).filePath("clignotement.elf");
+            const auto elf = picodbg::ElfImage::read(elfPath.toStdString());
             check(elf.hasVectors && elf.vectorAddress == 0x20000000 && elf.symbols.count("counter"),
                   "The generated executable has RAM vectors and a shared counter symbol");
-            verifySourceMapping(*ide, debugger, project);
+            verifySourceMapping(*ide, debugger, project, elf);
+            verifyRegisterLocationLists(picoide::Tools::detect().gcc, QDir(temp.path()));
+            verifyStackVariables(debugger, picoide::Tools::detect().gcc, QDir(temp.path()));
+            check(debugger.loadFile(elfPath), "Restore the project after the stack inspection fixture");
+            waitFor([&] { return get<QTableView>(*ide, "ideAssemblyTable")->model()->rowCount() > 0; }, "Restore IDE assembly listing");
+            verifyAssemblyWithoutDwarf(*ide, debugger, elfPath, temp.filePath("sans-dwarf.elf"));
             auto* board = get<QComboBox>(*ide, "ideBoard");
             board->setCurrentIndex(board->findData(static_cast<int>(picodbg::Board::Pico2)));
             auto* launch = get<QAction>(*ide, "ideDebug");
@@ -583,28 +934,22 @@ int main(int argc, char** argv) {
             waitFor([&] { return log->toPlainText().contains("ELF chargé à l'arrêt"); }, "Default launch compiles and loads paused");
             check(debugger.selectedBoard() == picodbg::Board::Pico2, "The debugger adopts the project's build board");
             auto* pause = get<QAction>(*ide, "idePause");
-            auto* ideAssembly = get<QTableWidget>(*ide, "ideAssemblyTable");
+            auto* ideAssembly = get<QTableView>(*ide, "ideAssemblyTable");
             check(!pause->isEnabled() && ideAssembly->isVisible(), "Default launch leaves execution stopped with both languages visible");
             get<QAction>(debugger, "runAction")->trigger();
             check(pause->isEnabled() && get<QLabel>(*ide, "ideTargetStatus")->text().contains("Simulation en cours"),
                   "IDE reports and can pause simulation");
             check(!ideAssembly->isVisible(), "Running uses the full-width editor");
-            auto* preview = get<QLabel>(debugger, "debugSourceStatus");
-            try {
-                waitFor([&] {
-                    auto* current = dynamic_cast<picoide::CodeEditor*>(tabs->currentWidget());
-                    return preview->text().contains("main.c:") && current &&
-                           current->toPlainText().contains("++counter") &&
-                           hasDebugLine(*current, picosource::executionColor());
-                }, "IDE follows the actual C line while the compiler's ELF runs");
-            } catch (const std::exception& error) {
-                throw std::runtime_error(std::string(error.what()) + " · " + preview->text().toStdString());
-            }
+            waitFor([&] {
+                auto* current = dynamic_cast<picoide::CodeEditor*>(tabs->currentWidget());
+                return current && current->toPlainText().contains("++counter") &&
+                       hasDebugLine(*current, picosource::executionColor());
+            }, "IDE follows the actual C line while the compiler's ELF runs");
             pause->trigger();
             check(!pause->isEnabled() && get<QLabel>(*ide, "ideTargetStatus")->text().contains("Simulation arrêtée"),
                   "Pause in IDE stops the shared emulator");
             check(ideAssembly->isVisible(), "Paused session restores the split layout");
-            waitFor([&] { return ideAssembly->rowCount() > 0; }, "Paused session shows the ELF instructions");
+            waitFor([&] { return ideAssembly->model()->rowCount() > 0; }, "Paused session shows the ELF instructions");
             auto* focusedSource = dynamic_cast<picoide::CodeEditor*>(tabs->currentWidget());
             check(focusedSource && focusedSource->toPlainText().contains("++counter") &&
                   hasDebugLine(*focusedSource, picosource::executionColor()), "IDE follows and marks the actual C line of the PC");
@@ -614,6 +959,34 @@ int main(int argc, char** argv) {
             const auto output = get<QPlainTextEdit>(debugger, "consoleView")->toPlainText();
             check(output.contains("read32(counter) = 0x") && !output.contains("read32(counter) = 0x00000000"),
                   "The compiled counter really advanced in the emulator");
+            auto* leaveDebugging = get<QAction>(*ide, "ideStopDebugging");
+            const auto checkDevelopment = [&] {
+                debugger.refreshIdeSource();
+                check(ide->isVisible() && !debugger.isVisible() && !ideAssembly->isVisible() &&
+                    !leaveDebugging->isEnabled() && !get<QAction>(*ide, "ideStepInstruction")->isEnabled(),
+                    "Leaving the debugger returns the IDE to the full-width development layout");
+                check(tabs->currentWidget() == focusedSource &&
+                    !hasDebugLine(*focusedSource, picosource::executionColor()) &&
+                    !hasDebugLine(*focusedSource, picosource::selectionColor()),
+                    "The IDE keeps the open source and clears both debug line colors");
+            };
+            focusedSource->setTextCursor(focusedSource->document()->find("++counter"));
+            get<QAction>(*ide, "ideGoToAssembly")->trigger();
+            check(leaveDebugging->isEnabled() && hasDebugLine(*focusedSource, picosource::selectionColor()),
+                "The IDE can leave debug mode while a source line is selected");
+            leaveDebugging->trigger();
+            checkDevelopment();
+            get<QAction>(*ide, "ideShowDebugger")->trigger();
+            check(ideAssembly->isVisible() && leaveDebugging->isEnabled() &&
+                hasDebugLine(*focusedSource, picosource::executionColor()),
+                "Reopening the debugger restores the live PC and assembly");
+            auto* run = get<QAction>(debugger, "runAction");
+            run->trigger();
+            check(pause->isEnabled(), "The simulation is running before closing the debugger window");
+            check(debugger.close(), "The debugger window closes while the simulation runs");
+            checkDevelopment();
+            check(run->isEnabled() && get<QLabel>(*ide, "ideTargetStatus")->text().contains("Simulation arrêtée"),
+                "Closing the debugger stops the simulation");
         }
         if (!qgetenv("PICODBG_IDE_SCREENSHOT").isEmpty())
             check(ide->grab().save(QString::fromLocal8Bit(qgetenv("PICODBG_IDE_SCREENSHOT"))), "Capture IDE");

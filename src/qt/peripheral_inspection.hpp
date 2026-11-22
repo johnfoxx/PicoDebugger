@@ -12,7 +12,9 @@ class PeripheralPanel;
 class PeripheralInspection : public QWidget {
 public:
     PeripheralInspection(const QString& name, unsigned core, QWidget* parent = nullptr);
-    void updateTarget(const picodbg::DebugTarget& debugger);
+    void updateTarget(const picodbg::DebugTarget& debugger, bool running);
+    PeripheralPanel& panel() const { return *panel_; }
+    void selectRegister(uint32_t address);
     void setDetached(bool detached);
     unsigned core() const;
     std::function<void()> refreshRequested;

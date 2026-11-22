@@ -7,6 +7,8 @@
 
 #include <QAction>
 #include <QAbstractButton>
+#include <QAbstractTableModel>
+#include <QBrush>
 #include <QColor>
 #include <QMenu>
 #include <QTabBar>
@@ -47,7 +49,7 @@
 #include <QStatusBar>
 #include <QStyle>
 #include <QTabWidget>
-#include <QTableWidget>
+#include <QTableView>
 #include <QTextBlock>
 #include <QToolBar>
 #include <QToolButton>
@@ -55,7 +57,6 @@
 #include <QTreeWidget>
 #include <QVBoxLayout>
 #include <algorithm>
-#include <set>
 
 namespace picoide {
 namespace {
@@ -76,6 +77,83 @@ QString projectSettingsKey(const QString& root) {
 }
 }
 
+class AssemblyModel final : public QAbstractTableModel {
+public:
+    explicit AssemblyModel(QObject* parent) : QAbstractTableModel(parent) {}
+
+    int rowCount(const QModelIndex& parent = {}) const override {
+        return !parent.isValid() && listing_ ? static_cast<int>(listing_->size()) : 0;
+    }
+
+    int columnCount(const QModelIndex& parent = {}) const override { return parent.isValid() ? 0 : 4; }
+
+    QVariant headerData(int section, Qt::Orientation orientation, int role) const override {
+        if (orientation != Qt::Horizontal || role != Qt::DisplayRole) return {};
+        static const QStringList labels{QString(), "Adresse", "Instruction", "Source C"};
+        return labels.value(section);
+    }
+
+    QVariant data(const QModelIndex& cell, int role) const override {
+        if (!cell.isValid() || cell.row() >= rowCount()) return {};
+        const auto& instruction = (*listing_)[static_cast<size_t>(cell.row())];
+        if (role == Qt::BackgroundRole) {
+            if (cell.row() == pcRow_ || (instruction.source.valid() && instruction.source == executing_))
+                return QBrush(QColor(picosource::executionColor()));
+            if (instruction.source.valid() && instruction.source == selected_)
+                return QBrush(QColor(picosource::selectionColor()));
+            return {};
+        }
+        if (role != Qt::DisplayRole && role != Qt::ToolTipRole) return {};
+        switch (cell.column()) {
+        case 0: return cell.row() == pcRow_ ? QString("▶") : QString();
+        case 1: return QString::fromStdString(picodbg::hex(instruction.address));
+        case 2: return instruction.text;
+        case 3:
+            if (!instruction.source.valid()) return {};
+            return (role == Qt::ToolTipRole ? instruction.source.path : QFileInfo(instruction.source.path).fileName()) +
+                   ":" + QString::number(instruction.source.line);
+        }
+        return {};
+    }
+
+    bool setListing(std::shared_ptr<const picosource::AssemblyListing> listing) {
+        if (listing_ == listing) return false;
+        beginResetModel();
+        listing_ = std::move(listing);
+        pcRow_ = -1;
+        endResetModel();
+        return true;
+    }
+
+    int rowFor(uint32_t address) const {
+        if (!listing_) return -1;
+        const auto row = std::lower_bound(listing_->begin(), listing_->end(), address,
+            [](const picosource::AssemblyInstruction& instruction, uint32_t at) { return instruction.address < at; });
+        return row != listing_->end() && row->address == address ? static_cast<int>(row - listing_->begin()) : -1;
+    }
+
+    int pcRow() const { return pcRow_; }
+
+    void highlight(const picosource::Location& executing, const picosource::Location& selected, bool hasPc, uint32_t pc) {
+        const bool changedLines = executing_ != executing || selected_ != selected;
+        const int previousPc = pcRow_;
+        executing_ = executing;
+        selected_ = selected;
+        pcRow_ = hasPc ? rowFor(pc) : -1;
+        if (changedLines && rowCount())
+            emit dataChanged(index(0, 0), index(rowCount() - 1, 3), {Qt::BackgroundRole});
+        if (previousPc != pcRow_) {
+            for (const int row : {previousPc, pcRow_})
+                if (row >= 0) emit dataChanged(index(row, 0), index(row, 3), {Qt::DisplayRole, Qt::BackgroundRole});
+        }
+    }
+
+private:
+    std::shared_ptr<const picosource::AssemblyListing> listing_;
+    picosource::Location executing_, selected_;
+    int pcRow_ = -1;
+};
+
 IdeWindow::IdeWindow(MainWindow* debugger, picodbg::Board board)
     : debugger_(debugger), tools_(Tools::detect()), language_(this), build_(this) {
     setObjectName("picoIdeWindow");
@@ -86,6 +164,7 @@ IdeWindow::IdeWindow(MainWindow* debugger, picodbg::Board board)
     setProjectBoard(board);
     auto geometry = QSettings().value("ide/geometry").toByteArray();
     if (!geometry.isEmpty()) restoreGeometry(geometry);
+    setWindowState((windowState() & ~Qt::WindowMinimized) | Qt::WindowMaximized);
     build_.output = [this](const QString& text) { appendBuildOutput(text); };
     build_.finished = [this](bool success, const QString& message, const std::vector<Artifact>& artifacts) {
         buildFinished(success, message, artifacts);
@@ -134,7 +213,10 @@ void IdeWindow::setupUi() {
     auto* buildMenu = menuBar()->addMenu("Compilation");
     auto* debugMenu = menuBar()->addMenu("Débogage");
     auto* views = menuBar()->addMenu("Vues");
-    addPicoThemeMenu(*views, *this, [this] { refreshProblems(); });
+    addPicoThemeMenu(*views, *this, [this] {
+        refreshProblems();
+        assembly_->viewport()->update();
+    });
     auto* documentation = menuBar()->addMenu("Documentation");
     auto* help = menuBar()->addMenu("Aide");
     auto* toolbar = addToolBar("Projet et lancement");
@@ -219,6 +301,14 @@ void IdeWindow::setupUi() {
         if (debugger_) debugger_->stepFromIde();
     });
     step_->setEnabled(false);
+    stopDebugging_ = action(debugMenu, "Quitter le débogage", "ideStopDebugging", {}, [this] {
+        if (debugger_) debugger_->close();
+    });
+    stopDebugging_->setEnabled(false);
+    stopDebugging_->setVisible(false);
+    stopDebugging_->setIcon(style()->standardIcon(QStyle::SP_MediaStop));
+    stopDebugging_->setIconText("Quitter");
+    stopDebugging_->setToolTip("Fermer le débogueur et revenir à l’éditeur de développement");
     followSource_ = action(debugMenu, "Suivre le PC dans le C", "ideFollowSource", {}, [this] {
         if (followSource_->isChecked()) revealDebugLocation(executingSource_);
     });
@@ -271,7 +361,8 @@ void IdeWindow::setupUi() {
     target_->addItem("Toutes les cibles", QString());
     toolbar->addWidget(board_); toolbar->addWidget(target_);
     toolbar->addSeparator(); toolbar->addAction(compile_); toolbar->addAction(debug_);
-    toolbar->addAction(boardRun_); toolbar->addAction(step_); toolbar->addAction(pause_); toolbar->addAction(cancel_);
+    toolbar->addAction(boardRun_); toolbar->addAction(step_); toolbar->addAction(pause_);
+    toolbar->addAction(stopDebugging_); toolbar->addAction(cancel_);
     toolbar->addSeparator(); toolbar->addAction(debugger);
     connect(board_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this] {
         if (root_.isEmpty()) return;
@@ -347,18 +438,22 @@ void IdeWindow::setupUi() {
     auto* assemblyTitle = new QLabel("Assembleur de l’ELF");
     assemblyTitle->setObjectName("sectionTitle");
     assemblyLayout->addWidget(assemblyTitle);
-    assembly_ = new QTableWidget(0, 4);
+    assembly_ = new QTableView;
+    assemblyModel_ = new AssemblyModel(assembly_);
+    assembly_->setModel(assemblyModel_);
     assembly_->setObjectName("ideAssemblyTable");
-    assembly_->setHorizontalHeaderLabels({QString(), "Adresse", "Instruction", "Source C"});
     assembly_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
     assembly_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     assembly_->setSelectionMode(QAbstractItemView::NoSelection);
     assembly_->setAlternatingRowColors(true);
     assembly_->setShowGrid(false);
     assembly_->verticalHeader()->hide();
+    assembly_->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
     assembly_->verticalHeader()->setDefaultSectionSize(24);
-    assembly_->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
-    assembly_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Interactive);
+    assembly_->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
+    assembly_->setColumnWidth(0, 28);
+    assembly_->setColumnWidth(1, assembly_->fontMetrics().horizontalAdvance("0x00000000") + 16);
+    assembly_->setColumnWidth(2, assembly_->fontMetrics().horizontalAdvance("movs r0, #0xffffffff") + 16);
     assembly_->setColumnWidth(3, 102);
     assemblyLayout->addWidget(assembly_, 1);
     assemblyStatus_ = new QLabel;
@@ -1110,7 +1205,7 @@ void IdeWindow::refreshActions() {
     board_->setEnabled(ready); target_->setEnabled(ready);
     save_->setEnabled(hasProject && sourceForWidget(editors_->currentWidget()));
     saveAll_->setEnabled(hasProject && !sources_.empty());
-    goToAssembly_->setEnabled(debugger_ && sourceForWidget(editors_->currentWidget()));
+    goToAssembly_->setEnabled(debugger_ && debugger_->isVisible() && sourceForWidget(editors_->currentWidget()));
 }
 
 void IdeWindow::showEvent(QShowEvent* event) {
@@ -1128,6 +1223,11 @@ void IdeWindow::debuggerState(bool ready, bool canPause, bool canStep, bool debu
                               picodbg::Board card, const QString& description) {
     pause_->setEnabled(canPause);
     step_->setEnabled(canStep);
+    if (!debuggerVisible && stopDebugging_->isEnabled() && build_.busy() &&
+        (task_ == Task::Debug || task_ == Task::Board)) task_ = Task::Build;
+    stopDebugging_->setVisible(debuggerVisible);
+    stopDebugging_->setEnabled(debuggerVisible);
+    goToAssembly_->setEnabled(debuggerVisible && sourceForWidget(editors_->currentWidget()));
     if (inspectAssembly_ != inspectAssembly) {
         inspectAssembly_ = inspectAssembly;
         updateAssemblyVisibility();
@@ -1165,7 +1265,7 @@ void IdeWindow::debuggerSourceState(const picosource::Location& current, const p
     else if (lineChanged && followSource_->isChecked()) revealDebugLocation(executingSource_);
     if (!assemblyPane_->isHidden() &&
         (force || lineChanged || selectionChanged || assemblyDirty_ || hasPc != hasAssemblyPc_ || pc != assemblyPc_))
-        refreshAssembly(map, hasPc, pc);
+        refreshAssembly(map, hasPc, pc, selectionChanged || showSelection);
 }
 
 void IdeWindow::updateAssemblyVisibility() {
@@ -1184,51 +1284,31 @@ void IdeWindow::updateAssemblyVisibility() {
     assemblyDirty_ = true;
 }
 
-void IdeWindow::refreshAssembly(const picosource::SourceMap& map, bool hasPc, uint32_t pc) {
+void IdeWindow::refreshAssembly(const picosource::SourceMap& map, bool hasPc, uint32_t pc, bool revealSelection) {
+    const bool pcChanged = hasPc != hasAssemblyPc_ || pc != assemblyPc_;
+    const bool newListing = assemblyModel_->setListing(map.assembly());
+    const bool recenter = assemblyDirty_ || newListing;
     hasAssemblyPc_ = hasPc;
     assemblyPc_ = pc;
     assemblyDirty_ = false;
-    std::set<uint32_t> rows;
-    constexpr size_t maxInstructionsPerLine = 1024;
-    bool truncated = false;
-    for (const auto& location : {executingSource_, selectedSource_}) {
-        const auto& addresses = map.assemblyAddresses(location);
-        const auto count = std::min(addresses.size(), maxInstructionsPerLine);
-        rows.insert(addresses.begin(), addresses.begin() + count);
-        truncated |= addresses.size() > count;
+    assemblyModel_->highlight(executingSource_, selectedSource_, hasPc, pc);
+    const auto& addresses = map.assemblyAddresses(selectedSource_);
+    const int selectionRow = addresses.empty() ? -1 : assemblyModel_->rowFor(addresses.front());
+    const int row = (revealSelection || recenter) && selectionRow >= 0 ? selectionRow
+                   : (pcChanged || recenter) ? assemblyModel_->pcRow() : -1;
+    if (row >= 0) {
+        if (recenter) assembly_->doItemsLayout();
+        assembly_->scrollTo(assemblyModel_->index(row, 1), QAbstractItemView::PositionAtCenter);
     }
-    if (hasPc && !map.instruction(pc).isEmpty()) rows.insert(pc);
-    assembly_->setRowCount(static_cast<int>(rows.size()));
-    int row = 0, pcRow = -1, selectionRow = -1;
-    for (const auto address : rows) {
-        const auto location = map.location(address);
-        const bool atPc = hasPc && pc == address;
-        const bool executing = atPc || (location.valid() && location == executingSource_);
-        const bool selected = location.valid() && location == selectedSource_;
-        const QColor color(executing ? picosource::executionColor() : picosource::selectionColor());
-        const QStringList columns{atPc ? "▶" : QString(), QString::fromStdString(picodbg::hex(address)),
-            map.instruction(address), location.valid() ? QFileInfo(location.path).fileName() + ":" + QString::number(location.line) : QString()};
-        for (int column = 0; column < columns.size(); ++column) {
-            auto* cell = new QTableWidgetItem(columns.at(column));
-            cell->setToolTip(columns.at(column));
-            if (executing || selected) cell->setBackground(color);
-            assembly_->setItem(row, column, cell);
-        }
-        if (atPc) pcRow = row;
-        if (selected && selectionRow < 0) selectionRow = row;
-        ++row;
-    }
-    if (selectionRow >= 0) assembly_->scrollToItem(assembly_->item(selectionRow, 1));
-    else if (pcRow >= 0) assembly_->scrollToItem(assembly_->item(pcRow, 1));
     QString status = map.assemblyStatus();
     if (status.isEmpty()) {
-        if (!map.hasLocations()) status = map.status();
-        else if (truncated) status = "Affichage limité aux 1 024 premières instructions par ligne.";
-        else if (selectedSource_.valid() && selectionRow < 0) status = "Aucune instruction associée à la ligne sélectionnée.";
-        else if (rows.empty()) status = "Sélectionner une ligne C pour voir ses instructions.";
-        else status = "▶ PC · turquoise  |  Sélection · violet";
+        const int count = assemblyModel_->rowCount();
+        status = QString("%L1 instructions · ▶ PC turquoise · Sélection violette").arg(count);
+        if (selectedSource_.valid() && selectionRow < 0)
+            status += "\nAucune instruction associée à la ligne C sélectionnée.";
     }
     assemblyStatus_->setText(status);
+    assemblyStatus_->setToolTip(map.hasLocations() ? QString() : map.status());
 }
 
 bool IdeWindow::sourceMatchesElf(const Source& source) const {
@@ -1262,7 +1342,7 @@ void IdeWindow::revealDebugLocation(const picosource::Location& location) {
 }
 
 void IdeWindow::selectSource(bool navigate) {
-    if (!debugger_ || syncingSource_) return;
+    if (!debugger_ || !debugger_->isVisible() || syncingSource_) return;
     auto* source = sourceForWidget(editors_->currentWidget());
     picosource::Location location;
     if (source && !languageForFile(source->path).id.isEmpty() && sourceMatchesElf(*source)) {

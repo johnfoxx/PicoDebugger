@@ -4,11 +4,13 @@
 #include <QComboBox>
 #include <QElapsedTimer>
 #include <QLabel>
+#include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QThread>
+#include <QToolButton>
 #include <cstdlib>
 #include <iostream>
 #include <stdexcept>
@@ -33,7 +35,7 @@ bool waitFor(Condition ready, int timeout = 2500) {
 }
 
 struct PseudoTerminal {
-    int master = ::posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC);
+    int master = ::posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC | O_NONBLOCK);
     ~PseudoTerminal() { unplug(); }
     void unplug() {
         if (master >= 0) ::close(master);
@@ -57,19 +59,18 @@ void testMonitor() {
     auto* action = debugger.findChild<QAction*>("openProbeSerialAction");
     require(action && action->isEnabled(), "serial action unavailable before SWD");
     action->trigger();
-    QWidget* monitor = nullptr;
-    for (auto* window : QApplication::topLevelWidgets()) {
-        if (window->objectName() == "probeSerialMonitor") monitor = window;
-    }
-    require(monitor && monitor->isVisible() && !monitor->parentWidget(), "missing independent serial monitor");
+    auto* monitor = debugger.findChild<QWidget*>("probeSerialMonitor");
+    require(monitor && monitor->isVisible(), "serial monitor visible in the tools");
     auto* port = monitor->findChild<QComboBox*>("probeSerialPort");
     auto* baud = monitor->findChild<QComboBox*>("probeSerialBaud");
     auto* connection = monitor->findChild<QPushButton*>("probeSerialConnect");
+    auto* input = monitor->findChild<QLineEdit*>("probeSerialInput");
+    auto* send = monitor->findChild<QPushButton*>("probeSerialSend");
     auto* status = monitor->findChild<QLabel*>("probeSerialStatus");
     auto* log = monitor->findChild<QPlainTextEdit*>("probeSerialLog");
     auto* save = monitor->findChild<QPushButton*>("probeSerialSave");
     auto* clear = monitor->findChild<QPushButton*>("probeSerialClear");
-    require(port && baud && connection && status && log && save && clear, "missing monitor controls");
+    require(port && baud && connection && input && send && status && log && save && clear, "missing monitor controls");
     require(log->isReadOnly() && !save->isEnabled() && !clear->isEnabled(), "incorrect empty log state");
     require(baud->currentData().toInt() == 115200, "unexpected default baud rate");
     port->setEditText("/dev/null");
@@ -89,12 +90,27 @@ void testMonitor() {
     require(waitFor([&] { return log->toPlainText() == expected; }), "split CRLF or last partial line failed");
     require(save->isEnabled() && clear->isEnabled(), "log actions disabled after receiving data");
 
-    monitor->close();
+    input->setText("commande");
+    send->click();
+    QByteArray transmitted;
+    require(waitFor([&] {
+        char buffer[64];
+        const auto size = ::read(uart.master, buffer, sizeof(buffer));
+        if (size > 0) transmitted.append(buffer, static_cast<int>(size));
+        return transmitted.size() >= 8;
+    }) && transmitted == "commande", "TX preserves the UART bytes without adding a newline");
+    auto* fold = debugger.findChild<QToolButton*>("toolsToggleButton");
+    require(fold, "Small tools toggle is accessible");
+    fold->click();
+    require(!monitor->isVisible(), "Tools toggle folds the serial tab");
+    fold->click();
+    require(monitor->isVisible() && !port->isEnabled(), "Tools toggle preserves the tab and connection");
+    auto* toggle = debugger.findChild<QAction*>("consoleToggleAction");
+    toggle->trigger();
+    require(!monitor->isVisible(), "Console button switches the tools away from the serial tab");
     action->trigger();
-    require(monitor->isVisible() && port->isEnabled() && log->toPlainText() == expected,
-            "reopening the monitor did not preserve the log");
-    connection->click();
-    require(status->text().startsWith("Connecté"), "serial port was not released on close");
+    require(monitor->isVisible() && !port->isEnabled() && log->toPlainText() == expected,
+            "Switching tools preserves the UART connection and log");
     uart.unplug();
     require(waitFor([&] { return status->text().startsWith("Connexion interrompue"); }),
             "serial disconnect did not appear");

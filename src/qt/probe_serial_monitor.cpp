@@ -1,6 +1,5 @@
 #include "probe_serial_monitor.hpp"
 #include "choice_box.hpp"
-#include "window_theme.hpp"
 
 #include <algorithm>
 #include <QCheckBox>
@@ -47,12 +46,9 @@ struct ProbeSerialMonitor::Decoder {
 ProbeSerialMonitor::ProbeSerialMonitor()
     : serial_(this), decoder_(new Decoder) {
     setObjectName("probeSerialMonitor");
-    setWindowTitle("Moniteur série · Raspberry Pi Debug Probe");
-    resize(790, 440);
-    applyPicoTheme(*this);
-
-    auto* pane = new QWidget;
-    auto* layout = new QVBoxLayout(pane);
+    auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(6, 4, 6, 4);
+    layout->setSpacing(4);
     auto* ports = new QHBoxLayout;
     auto* portLabel = new QLabel("&Port");
     ports->addWidget(portLabel);
@@ -99,6 +95,33 @@ ProbeSerialMonitor::ProbeSerialMonitor()
     log_->setFont(font);
     layout->addWidget(log_, 1);
 
+    auto* transmit = new QHBoxLayout;
+    tx_ = new QLineEdit;
+    tx_->setObjectName("probeSerialInput");
+    tx_->setMaxLength(256);
+    tx_->setPlaceholderText("Texte à envoyer en TX");
+    tx_->setToolTip("Envoyer en UTF-8, sans fin de ligne automatique.");
+    transmit->addWidget(tx_, 1);
+    send_ = new QPushButton("Envoyer");
+    send_->setObjectName("probeSerialSend");
+    send_->setToolTip(tx_->toolTip());
+    transmit->addWidget(send_);
+    layout->addLayout(transmit);
+    connect(tx_, &QLineEdit::returnPressed, send_, &QPushButton::click);
+    connect(send_, &QPushButton::clicked, this, [this] {
+        const auto bytes = tx_->text().toUtf8();
+        if (bytes.isEmpty()) return;
+        QString error;
+        const auto sent = serial_.write(bytes, error);
+        if (sent < 0) status_->setText("Émission impossible · " + error);
+        else {
+            // UTF-8 may have been split by a partial non-blocking write.
+            // Report the byte count and clear the input to avoid accidental duplication.
+            status_->setText(QString("TX · %1/%2 octets acceptés · %3 bauds").arg(sent).arg(bytes.size()).arg(baud_->currentData().toInt()));
+            tx_->clear();
+        }
+    });
+
     auto* history = new QHBoxLayout;
     follow_ = new QCheckBox("Défilement automatique");
     follow_->setObjectName("probeSerialFollow");
@@ -117,15 +140,12 @@ ProbeSerialMonitor::ProbeSerialMonitor()
     status_->setTextFormat(Qt::PlainText);
     status_->setWordWrap(true);
     layout->addWidget(status_);
-    setCentralWidget(pane);
 
     QSettings settings;
     const auto savedBaud = settings.value("probeSerial/baud", 115200).toInt();
     const int baudIndex = baud_->findData(savedBaud);
     baud_->setCurrentIndex(baudIndex >= 0 ? baudIndex : baud_->findData(115200));
     follow_->setChecked(settings.value("probeSerial/follow", true).toBool());
-    const auto geometry = settings.value("probeSerial/geometry").toByteArray();
-    if (!geometry.isEmpty()) restoreGeometry(geometry);
     port_->setEditText(settings.value("probeSerial/port").toString());
 
     connect(refresh_, &QPushButton::clicked, this, &ProbeSerialMonitor::refreshPorts);
@@ -173,7 +193,7 @@ ProbeSerialMonitor::ProbeSerialMonitor()
 }
 
 ProbeSerialMonitor::~ProbeSerialMonitor() {
-    serial_.close();
+    disconnectPort();
 }
 
 QString ProbeSerialMonitor::selectedPort() const {
@@ -211,9 +231,7 @@ void ProbeSerialMonitor::refreshPorts() {
 
 void ProbeSerialMonitor::toggleConnection() {
     if (serial_.isOpen()) {
-        serial_.close();
-        flushLog();
-        updateConnection("Port série déconnecté.");
+        disconnectPort();
         return;
     }
     const auto path = selectedPort();
@@ -239,6 +257,8 @@ void ProbeSerialMonitor::updateConnection(const QString& status) {
     port_->setEnabled(!open && ProbeSerial::supported());
     baud_->setEnabled(!open && ProbeSerial::supported());
     refresh_->setEnabled(!open && ProbeSerial::supported());
+    tx_->setEnabled(open);
+    send_->setEnabled(open);
 }
 
 void ProbeSerialMonitor::flushLog() {
@@ -289,16 +309,19 @@ void ProbeSerialMonitor::saveLog() {
 void ProbeSerialMonitor::showWiring() {
     QMessageBox::information(this, "Câbler l'UART de la Debug Probe",
         "Utiliser le port U (UART) de la sonde. Relier d'abord les masses GND, puis le TX de la carte "
-        "au RX de la sonde. Alimenter la carte séparément.\n\n"
+        "au RX de la sonde, et le TX de la sonde au RX de la carte pour émettre. Alimenter la carte séparément.\n\n"
         "Choisir le même débit que dans le firmware. Pour printf avec le Pico SDK, activer stdio UART et appeler stdio_init_all().");
 }
 
-void ProbeSerialMonitor::closeEvent(QCloseEvent* event) {
+void ProbeSerialMonitor::disconnectPort() {
     serial_.close();
     flushLog();
     updateConnection("Port série déconnecté.");
     QSettings settings;
-    settings.setValue("probeSerial/geometry", saveGeometry());
     settings.setValue("probeSerial/follow", follow_->isChecked());
-    QMainWindow::closeEvent(event);
+}
+
+void ProbeSerialMonitor::closeEvent(QCloseEvent* event) {
+    disconnectPort();
+    QWidget::closeEvent(event);
 }
