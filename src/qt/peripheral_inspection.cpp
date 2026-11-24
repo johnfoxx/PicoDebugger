@@ -12,7 +12,8 @@
 #include <QTabWidget>
 #include <QVBoxLayout>
 
-PeripheralInspection::PeripheralInspection(const QString& name, unsigned core, QWidget* parent) : QWidget(parent) {
+PeripheralInspection::PeripheralInspection(const QString& name, unsigned core, QWidget* parent)
+    : QWidget(parent), device_(name) {
     setAttribute(Qt::WA_StyledBackground);
     setObjectName("deviceInspection_" + name);
     auto* outer = new QVBoxLayout(this);
@@ -59,6 +60,17 @@ void PeripheralInspection::setDetached(bool detached) {
                                 : "Déplacer cet inspecteur dans une fenêtre indépendante");
 }
 unsigned PeripheralInspection::core() const { return static_cast<unsigned>(core_->currentIndex()); }
+QVariantMap PeripheralInspection::saveSelection() const {
+    auto selection = panel_->saveSelection();
+    selection.insert("device", device_);
+    selection.insert("core", core());
+    if (auto* tabs = findChild<QTabWidget*>("uartTabs")) selection.insert("uartTab", tabs->currentIndex());
+    return selection;
+}
+void PeripheralInspection::restoreSelection(const QVariantMap& selection) {
+    panel_->restoreSelection(selection);
+    if (auto* tabs = findChild<QTabWidget*>("uartTabs")) tabs->setCurrentIndex(selection.value("uartTab").toInt() == 1 ? 1 : 0);
+}
 void PeripheralInspection::selectRegister(uint32_t address) {
     if (auto* tabs = findChild<QTabWidget*>("uartTabs")) tabs->setCurrentIndex(0);
     panel_->selectRegister(address);

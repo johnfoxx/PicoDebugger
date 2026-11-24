@@ -1,5 +1,29 @@
 # Versions
 
+<a id="v0-11-0"></a>
+
+## v0.11.0 — 2026-11-24
+
+Changements depuis **v0.10.0** (`7470641`).
+
+### Émulation et périphériques
+
+- Démarrage ELF avec lignes `RESETS.RESET` actives et `RESET_DONE` à zéro. Le firmware libère les blocs utilisés. Les exemples UART/PWM/timer et de clignotement ont été adaptés au nouvel état initial.
+- Émulation numérique des GPIO du banc 0 sur RP2040 et RP2350. Les registres de contrôle, de statut, de pads et d’interruptions incluent les alias applicables. Le voyant intégré suit GP25 sur Pico et Pico 2. Les cartes W affichent l’état indisponible de la LED pilotée par le CYW43.
+- Catalogue enrichi et import SVD local ou depuis le Pico SDK. La vue **Bits** indique la position, la valeur et la signification des champs dans l’ordre croissant des bits. Elle permet de modifier les champs accessibles ou d’acquitter un champ W1C. Le journal des éditions indique le registre ou le champ, son adresse et la valeur écrite.
+- Catalogue partagé entre les inspecteurs, filtres mis en cache et rafraîchissements des cellules regroupés. Les onglets masqués chargent et actualisent leurs registres lorsqu’ils deviennent actifs.
+
+### IDE et espace de débogage
+
+- Réouverture du dernier projet actif à la fermeture. Disposition du débogueur mémorisée dans chaque projet, avec l’ordre des onglets périphériques, le registre choisi, les filtres, les contextes cœur et les fenêtres détachées. Le raccourci **Ctrl+Maj+O** rétablit la disposition initiale sur **Cœur 0**.
+- Onglets de fichiers détachables et rattachables, affichage de deux sources côte à côte et barre de recherche compacte sous l’éditeur. **Ctrl+clic** suit les définitions via clangd avec retour visuel. **Ctrl+/** et **Ctrl+Maj+C** basculent les commentaires de ligne.
+- Inspecteur de pile élargi, avec colonne **Hex / bin** à côté de **Décodé**. Le clic bascule le format, le double-clic édite les valeurs modifiables et le binaire s’affiche sans zéros de tête.
+
+### Validation
+
+- 21 tests CTest avec Qt 5.15.15 et 13 pour le moteur seul. Les firmwares de clignotement ont été vérifiés dans l’émulateur sur RP2040 et RP2350.
+- Dans un test local de préparation de tableau hors rendu, le passage à un bloc synthétique de 2 500 registres est passé d’environ 84 ms à 27 ms.
+
 <a id="v0-10-0"></a>
 
 ## v0.10.0 — 2026-11-22

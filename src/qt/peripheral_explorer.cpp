@@ -2,6 +2,7 @@
 #include "board_panel.hpp"
 #include "choice_box.hpp"
 #include "peripheral_panel.hpp"
+#include "svd_catalog.hpp"
 #include "uart_terminal.hpp"
 #include <QComboBox>
 #include <QLabel>
@@ -16,7 +17,7 @@ PeripheralExplorer::PeripheralExplorer(const picodbg::DebugTarget& debugger, uns
     auto* header = new QHBoxLayout;
     view_ = new ChoiceBox; view_->setObjectName("peripheralExplorerView");
     view_->addItem("Vue générale", QString());
-    for (const auto& device : picodbg::peripheralCatalog(debugger.description().chip))
+    for (const auto& device : picosvd::catalog(debugger.description().chip))
         view_->addItem(QString::fromStdString(device.name), QString::fromStdString(device.name));
     if (debugger.board().wireless) view_->addItem(debugger.hardware() ? "CYW43 · externe, hors accès SWD direct" : "CYW43 · radio (non émulée)", "@CYW43");
     core_ = new ChoiceBox; core_->setObjectName("peripheralExplorerCore");

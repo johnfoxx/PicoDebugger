@@ -40,6 +40,9 @@ def make_elf(chip):
     uart = 0x40070000 if pico2 else 0x40034000
     timer = 0x400B0000 if pico2 else 0x40054000
     pwm = 0x400A8000 if pico2 else 0x40050000
+    reset_clr = 0x40023000 if pico2 else 0x4000F000
+    reset_bits = (6, 9, 16, 23, 26) if pico2 else (5, 8, 14, 21, 22)
+    store(reset_clr, sum(1 << bit for bit in reset_bits))  # IO_BANK0, PADS_BANK0, PWM, TIMER, UART0.
     store(uart + 0x2C, 0x70)   # UARTLCR_H : mots de 8 bits, FIFO active.
     store(uart + 0x30, 0x301)  # UARTCR : activer UART, TX et RX.
     store(uart, ord("O"))      # UARTDR : envoyer O puis K dans la FIFO TX.
@@ -47,7 +50,10 @@ def make_elf(chip):
     store(pwm + 0x10, 3)      # CH0_TOP : compter de 0 à 3 avant le retour à zéro.
     store(pwm, 1)             # CH0_CSR : démarrer le compteur PWM 0.
 
-    # Les écritures SIO activent la sortie GPIO25 et placent son verrou à 1.
+    # Relier le pad de la LED à SIO, puis activer la sortie et placer le verrou à 1.
+    store(0x400280CC if pico2 else 0x400140CC, 5)  # FUNCSEL = SIO.
+    if pico2:
+        store(0x4003B068, 1 << 8)  # Retirer l'isolation du pad GPIO25.
     store(0xD0000030 if pico2 else 0xD0000020, 1 << 25)  # GPIO_OE bas.
     store(0xD0000018 if pico2 else 0xD0000014, 1 << 25)  # GPIO_OUT_SET bas.
 

@@ -11,7 +11,6 @@ class QLabel;
 class QLineEdit;
 class QPlainTextEdit;
 class QPushButton;
-class QSplitter;
 class QStackedWidget;
 class QTabBar;
 class QTreeWidget;
@@ -23,7 +22,7 @@ class CodeEditor;
 
 class TextTools : public QWidget {
 public:
-    explicit TextTools(QWidget* workspace, QWidget* parent = nullptr);
+    explicit TextTools(QWidget* parent = nullptr);
     void setEditor(CodeEditor* editor);
     void setProject(const QString& root);
     void projectChanged();
@@ -43,7 +42,6 @@ private:
     };
     enum Page { Search, Todo };
     enum class Scan { Search, Todo, Documentation, Preview };
-    QSplitter* splitter_;
     QTabBar* rail_;
     QStackedWidget* pages_;
     QLineEdit* query_;
@@ -52,6 +50,7 @@ private:
     QCheckBox* matchCase_;
     QComboBox* operation_;
     QPlainTextEdit* replacement_;
+    QWidget* replaceRow_;
     QPushButton* previous_;
     QPushButton* next_;
     QPushButton* replaceOne_;
@@ -71,7 +70,6 @@ private:
     QMetaObject::Connection editorContents_;
     std::vector<TextRange> local_;
     int localIndex_ = -1;
-    int panelWidth_ = 330;
     Scan scan_ = Scan::Search;
     QRegularExpression expression_;
     bool useRegex_ = false;

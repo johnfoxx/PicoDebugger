@@ -31,6 +31,7 @@ public:
     bool hasScheduledPeripheralEvent() const;
     bool receiveUart(unsigned index, uint8_t byte);
     const std::string& uartOutput(unsigned index) const { return peripherals_.uartOutput(index); }
+    bool gpio25High() const { return peripherals_.gpio25High(); }
     void updateInterrupts();
     SystemRegisters& system(unsigned core) { return system_.at(core); }
     const SystemRegisters& system(unsigned core) const { return system_.at(core); }

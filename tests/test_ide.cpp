@@ -14,6 +14,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QDockWidget>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
@@ -107,7 +108,7 @@ void verifyTextTools(const QDir& project) {
     query->setText("a.*");
     count(1);
     check(get<QWidget>(ide, "ideTextToolsPanel")->isVisible() &&
-          get<QWidget>(ide, "ideTextToolsRail")->isVisible(), "Find opens the right pane");
+          get<QWidget>(ide, "ideTextToolsRail")->isVisible(), "Find opens the search bar below the editor");
     auto highlights = editor->extraSelections();
     check(std::any_of(highlights.begin(), highlights.end(), [](const QTextEdit::ExtraSelection& entry) {
         return entry.cursor.selectedText() == "a.*";
@@ -126,6 +127,7 @@ void verifyTextTools(const QDir& project) {
     check(editor->textCursor().selectedText() == "old_2", "Find next advances to the second match");
     get<QAction>(ide, "ideFindPrevious")->trigger();
     check(editor->textCursor().selectedText() == "old_1", "Find previous returns to the first match");
+    get<QAction>(ide, "ideReplace")->trigger();
     replacement->setPlainText("new_$1");
     get<QPushButton>(ide, "ideSearchReplace")->click();
     check(editor->sourceText().contains("int new_1;\nint old_2;"), "Replace expands the selected regex capture");
@@ -159,6 +161,8 @@ void verifyTextTools(const QDir& project) {
         waitFor([&] { return accepted || !watcher.isActive(); }, "Project preview opens");
         check(accepted, "Project preview contains the expected changes");
     };
+    get<QAction>(ide, "ideReplaceProject")->trigger();
+    count(3);
     preview([&](QTreeWidget& files) {
         write(other, secondary + "// Changed outside the IDE\r\n");
         return files.topLevelItemCount() == 2;
@@ -402,6 +406,119 @@ void verifyIdeFirst(const QString& path) {
     ide.close();
 }
 
+void verifyProjectSessions(const QString& first, const QString& second) {
+    check(QDir().mkpath(second), "Second project directory");
+    write(QDir(second).filePath("CMakeLists.txt"), "cmake_minimum_required(VERSION 3.16)\nproject(second C)\n");
+    {
+        picoide::IdeWindow ide;
+        ide.restoreSessionProject();
+        check(ide.projectDirectory() == first && !debuggerWindow(), "Restore the previous IDE project without starting the debugger");
+        ide.show();
+        auto* show = get<QAction>(ide, "ideShowDebugger");
+        show->trigger();
+        auto* debugger = debuggerWindow();
+        check(debugger, "Open the project debugger");
+        auto* core = get<QComboBox>(*debugger, "coreSelector");
+        auto* memory = get<QDockWidget>(*debugger, "memoryDock");
+        auto* peripherals = get<QDockWidget>(*debugger, "peripheralDock");
+        auto* tools = get<QTabWidget>(*debugger, "inspectionTabs");
+        auto* monitor = get<QTabWidget>(*debugger, "monitorTabs");
+        auto* workspace = get<QTabWidget>(*debugger, "inspectionWorkspace");
+        auto* cataloguePage = get<QWidget>(*debugger, "peripheralCatalogPage");
+        auto* catalogue = get<QTreeWidget>(*cataloguePage, "peripheralCatalog");
+        const auto openPeripheral = [&](const QString& device) {
+            const auto items = catalogue->findItems(device, Qt::MatchExactly, 0);
+            check(!items.empty(), "Device is present in the catalogue");
+            catalogue->setCurrentItem(items.front());
+            get<QPushButton>(*cataloguePage, "openDeviceWindowButton")->click();
+            return get<QWidget>(*debugger, ("deviceInspection_" + device).toUtf8().constData());
+        };
+        check(core->currentIndex() == 0 && !memory->isHidden(), "A new layout uses the Core 0 overview");
+        core->setCurrentIndex(1);
+        memory->hide();
+        peripherals->setFloating(true);
+        tools->setCurrentIndex(2);
+        monitor->setCurrentIndex(1);
+        auto* uart = openPeripheral("UART0");
+        get<QLineEdit>(*uart, "registerFilter")->setText("UARTFR");
+        get<QTabWidget>(*uart, "uartTabs")->setCurrentIndex(1);
+        get<QPushButton>(*uart, "detachInspectionButton")->click();
+        workspace->setCurrentWidget(cataloguePage);
+        openPeripheral("SIO");
+        workspace->setCurrentWidget(cataloguePage);
+        auto* gpio = openPeripheral("IO_BANK0");
+        get<QLineEdit>(*gpio, "registerFilter")->setText("GPIO25");
+        auto* gpioRegisters = get<QTableWidget>(*gpio, "peripheralsTable");
+        const auto gpioControl = gpioRegisters->findItems("GPIO25_CTRL", Qt::MatchExactly);
+        check(!gpioControl.isEmpty(), "GPIO25 control is listed");
+        gpioRegisters->setCurrentItem(gpioControl.front());
+        get<QPushButton>(*gpio, "registerDetailsButton")->click();
+        QApplication::processEvents();
+
+        check(ide.openProject(second), "Switch to a project without a saved layout");
+        check(core->currentIndex() == 0 && !memory->isHidden() && !peripherals->isFloating(),
+              "A new project gets the initial arrangement instead of the first project's layout");
+        check(workspace->count() == 1 && !debugger->findChild<QDialog*>("deviceWindow_UART0"),
+              "Peripheral tabs and detached windows stay with their own project");
+        check(QFileInfo(QDir(first).filePath(".picodbg/debugger-layout.ini")).isFile(), "Switching projects saves the outgoing layout");
+        core->setCurrentIndex(2);
+        auto* timer = openPeripheral("TIMER");
+        get<QLineEdit>(*timer, "registerFilter")->setText("ALARM1");
+        peripherals->hide();
+        check(debugger->close(), "Closing the debugger saves the second project");
+
+        check(ide.openProject(first), "Return to the first project while the debugger is closed");
+        show->trigger();
+        check(core->currentIndex() == 1 && memory->isHidden() && peripherals->isFloating() &&
+              tools->currentIndex() == 2 && monitor->currentIndex() == 1, "Restore floating and hidden panels, selected tabs and core");
+        auto* restoredGpio = get<QWidget>(*debugger, "deviceInspection_IO_BANK0");
+        auto* restoredSio = get<QWidget>(*debugger, "deviceInspection_SIO");
+        auto* restoredUartWindow = get<QDialog>(*debugger, "deviceWindow_UART0");
+        auto* restoredUart = get<QWidget>(*restoredUartWindow, "deviceInspection_UART0");
+        auto* restoredRegisters = get<QTableWidget>(*restoredGpio, "peripheralsTable");
+        check(workspace->currentWidget() == restoredGpio && workspace->indexOf(restoredSio) < workspace->indexOf(restoredGpio) &&
+              get<QLineEdit>(*restoredGpio, "registerFilter")->text() == "GPIO25" &&
+              restoredRegisters->currentItem() && restoredRegisters->currentItem()->text() == "GPIO25_CTRL" &&
+              get<QPushButton>(*restoredGpio, "registerDetailsButton")->isChecked(), "Restore tab order, active peripheral and register filter");
+        check(get<QComboBox>(*restoredUart, "inspectionCore")->currentIndex() == 1, "Restore the detached UART core");
+        check(get<QTabWidget>(*restoredUart, "uartTabs")->currentIndex() == 1, "Restore the detached UART terminal tab");
+        check(get<QLineEdit>(*restoredUart, "registerFilter")->text() == "UARTFR", "Restore the detached UART register filter");
+        auto* backgroundRows = get<QTableWidget>(*restoredSio, "peripheralsTable");
+        check(backgroundRows->rowCount() == 0, "Background peripheral tabs build their register list lazily");
+        workspace->setCurrentWidget(restoredSio);
+        check(backgroundRows->rowCount() > 0, "The background tab loads its registers when selected");
+        auto* overview = get<QAction>(*debugger, "overviewAction");
+        check(overview->shortcuts().contains(QKeySequence("Ctrl+Shift+O")), "The overview has the Ctrl+Shift+O shortcut");
+        overview->trigger();
+        check(core->currentIndex() == 0 && !memory->isHidden() && !peripherals->isFloating() && tools->currentIndex() == 0,
+              "The overview restores the original panels and Core 0");
+
+        check(ide.openProject(second), "Return to the second project");
+        check(core->currentIndex() == 2 && peripherals->isHidden(), "Each project restores its own layout");
+        core->setCurrentIndex(1);
+        check(ide.close() && debugger->isVisible(), "Closing the IDE saves the open project while leaving the debugger visible");
+    }
+    {
+        picoide::IdeWindow ide;
+        ide.restoreSessionProject();
+        check(ide.projectDirectory() == second, "A new IDE instance reopens the last project");
+        ide.show();
+        get<QAction>(ide, "ideShowDebugger")->trigger();
+        auto* debugger = debuggerWindow();
+        check(debugger && get<QComboBox>(*debugger, "coreSelector")->currentIndex() == 1 &&
+              get<QDockWidget>(*debugger, "peripheralDock")->isHidden(), "Restore the last layout across IDE instances");
+        auto* timer = get<QWidget>(*debugger, "deviceInspection_TIMER");
+        check(get<QTabWidget>(*debugger, "inspectionWorkspace")->currentWidget() == timer &&
+              get<QLineEdit>(*timer, "registerFilter")->text() == "ALARM1", "Restore the active peripheral across IDE instances");
+        get<QAction>(ide, "ideCloseProject")->trigger();
+        check(ide.projectDirectory().isEmpty() && ide.close(), "Close the IDE without an open project");
+    }
+    picoide::IdeWindow empty;
+    empty.restoreSessionProject();
+    check(empty.projectDirectory().isEmpty(), "An IDE closed without a project next starts on the welcome page");
+    check(QSettings().value("ide/lastProject").toString() == second, "The manual recent-project action retains its own history");
+}
+
 bool hasDebugLine(picoide::CodeEditor& editor, const QString& color) {
     for (const auto& selection : editor.extraSelections())
         if (selection.format.background().color() == QColor(color)) return true;
@@ -535,38 +652,38 @@ void verifyStackVariables(MainWindow& debugger, const QString& compiler, const Q
     const auto oldFp = registers->item(7, 1)->text();
     check(registers->item(0, 1)->text() == "0x00000016" && registers->item(1, 1)->text() == "0x00000003",
         "At function entry GCC passes the two arguments in r0 and r1");
-    check(findField("amount") && findField("amount")->text(4) != "0",
+    check(findField("amount") && findField("amount")->text(5) != "0",
         "A fixed DWARF slot below SP is not shown as an argument with value zero");
     check(stack->header()->sectionResizeMode(1) == QHeaderView::Fixed && memory->header()->sectionResizeMode(1) == QHeaderView::Fixed &&
           memory->header()->sectionResizeMode(3) == QHeaderView::Stretch, "The marker column keeps its width while ASCII gets the remaining space");
     step->trigger();
     auto* saved = findField("r7 sauvegardé");
-    check(saved && saved->text(0) == "S7" && saved->text(4).compare(oldFp, Qt::CaseInsensitive) == 0,
+    check(saved && saved->text(0) == "S7" && saved->text(5).compare(oldFp, Qt::CaseInsensitive) == 0,
         "Immediately after PUSH, the saved r7 value is the caller's register, not the current CFA register");
     bool sawUnwritten = false;
     bool sawFp = false;
     for (int i = 0; i < 35; ++i) {
         const auto* amount = findField("amount");
-        if (amount && amount->text(4).contains("Copie en pile non observée")) sawUnwritten = true;
+        if (amount && amount->text(5).contains("Copie en pile non observée")) sawUnwritten = true;
         const auto* fp = findField("Ancien pointeur de trame (r7)");
-        if (fp && fp->text(0) == "FP" && fp->text(4).compare(oldFp, Qt::CaseInsensitive) == 0) sawFp = true;
+        if (fp && fp->text(0) == "FP" && fp->text(5).compare(oldFp, Qt::CaseInsensitive) == 0) sawFp = true;
         const auto* bytes = findField("bytes");
-        if (amount && amount->text(4) == "22" && bytes && bytes->childCount() == 15 &&
-            bytes->child(0)->text(4) == "1" && bytes->child(14)->text(4) == "90") break;
+        if (amount && amount->text(5) == "22" && bytes && bytes->childCount() == 15 &&
+            bytes->child(0)->text(5) == "1" && bytes->child(14)->text(5) == "90") break;
         step->trigger();
     }
     auto* amount = findField("amount");
     auto* array = findField("bytes");
-    check(amount && amount->text(0) == "a1" && amount->text(3).contains("2 o") && amount->text(4) == "22",
+    check(amount && amount->text(0) == "a1" && amount->text(3).contains("2 o") && amount->text(5) == "22",
         "Decoded argument has its label, type, width and value");
     check(array && array->text(0).startsWith('l') && array->text(3).contains("15 o") && array->childCount() == 15,
         "The decoded table exposes a 15-byte local with its elements");
     check(sawUnwritten && sawFp, "A reserved spill slot stays unavailable until written and the CFI identifies FP once established");
     const uint32_t sp = registers->item(13, 1)->text().toUInt(nullptr, 16);
     const uint32_t first = sp + array->text(1).mid(3).toUInt(nullptr, 16);
-    check(array->checkState(5) == Qt::Unchecked && array->background(0).style() == Qt::NoBrush,
+    check(array->checkState(6) == Qt::Unchecked && array->background(0).style() == Qt::NoBrush,
         "Detailed field colors are opt-in");
-    array->setCheckState(5, Qt::Checked);
+    array->setCheckState(6, Qt::Checked);
     check(findField("bytes")->background(0).style() != Qt::NoBrush, "Checking a field gives it a color");
     array = findField("bytes");
     fields->setCurrentItem(array, 2);
@@ -668,8 +785,16 @@ void verifyStackVariables(MainWindow& debugger, const QString& compiler, const Q
         open();
         check(written, "The paused stack editor accepts this value");
     };
+    auto* element = findField("bytes")->child(14);
+    check(element->text(4) == "0x5a", "The raw stack column always shows the hexadecimal byte initially");
+    QMetaObject::invokeMethod(fields, "itemClicked", Q_ARG(QTreeWidgetItem*, element), Q_ARG(int, 4));
+    waitFor([&] { return findField("bytes")->child(14)->text(4) == "0b1011010"; }, "A raw stack click shows binary without leading zeros");
+    edit("0b01011000", [&] {
+        QMetaObject::invokeMethod(fields, "itemDoubleClicked", Q_ARG(QTreeWidgetItem*, findField("bytes")->child(14)), Q_ARG(int, 4));
+    });
+    check(findField("bytes")->child(14)->text(5) == "88", "Editing binary refreshes the decoded value");
     edit("Y", [&] { mouse(memory, raw, 3, 4 + int((first + 14) & 3u) * digit, QEvent::MouseButtonDblClick); });
-    check(findField("bytes")->child(14)->text(4) == "89" && raw->text(3).at(int((first + 14) & 3u)) == 'Y',
+    check(findField("bytes")->child(14)->text(5) == "89" && raw->text(3).at(int((first + 14) & 3u)) == 'Y',
         "An ASCII edit updates the hex and decoded representations");
     auto* compact = memoryRow(stack, stack->topLevelItem(0), first);
     check(compact, "Summary contains the beginning of the array");
@@ -689,31 +814,31 @@ void verifyStackVariables(MainWindow& debugger, const QString& compiler, const Q
         check(!color.value<QColor>().isValid(), "Checked zone colors never bleed into the summary");
     const auto summaryByte = (stack->columnWidth(2) - 6) / 4;
     edit("09", [&] { mouse(stack, compact, 2, 4 + int(first & 3u) * summaryByte, QEvent::MouseButtonDblClick); });
-    check(findField("bytes")->child(0)->text(4) == "9" && findField("bytes")->child(1)->text(4) == "2",
+    check(findField("bytes")->child(0)->text(5) == "9" && findField("bytes")->child(1)->text(5) == "2",
         "A hex edit in the summary updates the inspector and preserves adjacent bytes");
     const auto byteIndex = int(first & 3u);
     const auto changedHex = compact->data(2, Qt::UserRole + 8).toList()[byteIndex].toLongLong();
     const auto changedAscii = compact->data(3, Qt::UserRole + 8).toList()[byteIndex].toLongLong();
     check(changedHex > QDateTime::currentMSecsSinceEpoch() && changedHex == changedAscii &&
-          findField("bytes")->child(0)->data(4, Qt::UserRole + 8).toLongLong() == changedHex,
+          findField("bytes")->child(0)->data(5, Qt::UserRole + 8).toLongLong() == changedHex,
           "A recent edit underlines the same byte in hex, ASCII and the decoded table");
     const auto* inspected = memoryRow(memory, nullptr, first);
     check(inspected && inspected->data(2, Qt::UserRole + 8).toList()[byteIndex].toLongLong() == changedHex &&
         inspected->data(3, Qt::UserRole + 8).toList()[byteIndex].toLongLong() == changedHex,
         "The detailed hex and ASCII highlight uses the same deadline as the decoded field");
     auto* currentArray = findField("bytes");
-    currentArray->setCheckState(5, Qt::Unchecked);
+    currentArray->setCheckState(6, Qt::Unchecked);
     check(!memoryRow(memory, nullptr, first)->data(2, Qt::UserRole + 2).toList()[byteIndex].value<QColor>().isValid(),
         "Unchecking removes the pinned color while the manual selection stays");
-    currentArray->setCheckState(5, Qt::Checked);
+    currentArray->setCheckState(6, Qt::Checked);
     check(memoryRow(memory, nullptr, first)->data(2, Qt::UserRole + 2).toList()[byteIndex].value<QColor>() == custom,
         "Rechecking restores the same manually chosen color");
-    edit("-7", [&] { QMetaObject::invokeMethod(fields, "itemDoubleClicked", Q_ARG(QTreeWidgetItem*, findField("amount")), Q_ARG(int, 4)); });
-    check(findField("amount")->text(4) == "-7", "A typed edit updates the signed short");
+    edit("-7", [&] { QMetaObject::invokeMethod(fields, "itemDoubleClicked", Q_ARG(QTreeWidgetItem*, findField("amount")), Q_ARG(int, 5)); });
+    check(findField("amount")->text(5) == "-7", "A typed edit updates the signed short");
     for (int i = 0; i < 45 && !findField("Valeur de retour"); ++i) step->trigger();
     auto* result = findField("Valeur de retour");
-    check(result && result->text(4) == "5", "Inspector follows the live activation and identifies its result");
-    edit("-12", [&] { QMetaObject::invokeMethod(fields, "itemDoubleClicked", Q_ARG(QTreeWidgetItem*, result), Q_ARG(int, 4)); });
+    check(result && result->text(5) == "5", "Inspector follows the live activation and identifies its result");
+    edit("-12", [&] { QMetaObject::invokeMethod(fields, "itemDoubleClicked", Q_ARG(QTreeWidgetItem*, result), Q_ARG(int, 5)); });
     step->trigger();
     check(registers->item(0, 1)->text() == "0xfffffff4", "The new result is delivered to the caller");
     check(!memory->isEnabled(), "A completed frame cannot write stale memory");
@@ -816,6 +941,7 @@ int main(int argc, char** argv) {
               "cmake_minimum_required(VERSION 3.16)\nproject(standalone C)\nadd_executable(standalone main.c)\n");
         write(QDir(standaloneRoot).filePath("main.c"), "int main(void) { return 0; }\n");
         verifyIdeFirst(standaloneRoot);
+        verifyProjectSessions(standaloneRoot, temp.filePath("second-project"));
         verifyTextTools(QDir(temp.filePath("text-tools")));
         verifyDoxygenTools(QDir(temp.filePath("documentation")));
 
@@ -869,6 +995,55 @@ int main(int argc, char** argv) {
         auto* editor = dynamic_cast<picoide::CodeEditor*>(tabs->currentWidget());
         check(editor, "New project opens its C source in the editor");
         const QString original = editor->toPlainText();
+        waitFor([&] { return get<QLabel>(*ide, "ideAnalysisStatus")->text().endsWith(" prêt"); },
+                "Language server is ready for Ctrl+click");
+        editor->setPlainText("int PICO_IDE_DEFINITION;\nvoid probe(void) { PICO_IDE_DEFINITION = 1; }\n");
+        editor->goTo(1, 24);
+        const auto point = editor->cursorRect().center();
+        QMouseEvent definitionHover(QEvent::MouseMove, QPointF(point), Qt::NoButton, Qt::NoButton, Qt::ControlModifier);
+        QApplication::sendEvent(editor->viewport(), &definitionHover);
+        const auto hover = editor->extraSelections().back();
+        check(editor->viewport()->cursor().shape() == Qt::PointingHandCursor &&
+              hover.cursor.selectedText() == "PICO_IDE_DEFINITION" &&
+              hover.format.underlineStyle() == QTextCharFormat::SingleUnderline, "Ctrl hover underlines the identifier");
+        QMouseEvent definitionClick(QEvent::MouseButtonPress, QPointF(point), Qt::LeftButton, Qt::LeftButton, Qt::ControlModifier);
+        QApplication::sendEvent(editor->viewport(), &definitionClick);
+        const auto clicked = editor->extraSelections().back();
+        check(clicked.cursor.selectedText() == "PICO_IDE_DEFINITION" && clicked.format.foreground() != hover.format.foreground(),
+              "Ctrl click gives immediate feedback with a different link color");
+        QKeyEvent controlRelease(QEvent::KeyRelease, Qt::Key_Control, Qt::NoModifier);
+        QApplication::sendEvent(editor, &controlRelease);
+        check(editor->viewport()->cursor().shape() == Qt::IBeamCursor, "Releasing Ctrl restores the editor cursor");
+        waitFor([&] { return editor->textCursor().blockNumber() == 0 && editor->textCursor().positionInBlock() == 4; },
+                "Ctrl+click requests and reveals the LSP definition");
+        editor->selectAll();
+        QKeyEvent comment(QEvent::KeyPress, Qt::Key_Slash, Qt::ControlModifier);
+        QApplication::sendEvent(editor, &comment);
+        check(editor->toPlainText().startsWith("// int") && editor->toPlainText().contains("\n// void"),
+              "The comment shortcut operates on the selected lines");
+        editor->selectAll();
+        QApplication::sendEvent(editor, &comment);
+        check(editor->toPlainText().startsWith("int") && editor->toPlainText().contains("\nvoid"), "The same shortcut removes the comments");
+        const auto testFile = project.filePath("editor-split-test.h");
+        write(testFile, "#define EDITOR_SPLIT_TEST 1\n");
+        check(ide->openSource(testFile), "Open a second file in the IDE");
+        auto* secondEditor = dynamic_cast<picoide::CodeEditor*>(tabs->currentWidget());
+        check(secondEditor && secondEditor != editor, "The second editor has its own document");
+        secondEditor->appendPlainText("// unsaved");
+        get<QAction>(*ide, "ideSplitEditor")->trigger();
+        auto* right = get<QTabWidget>(*ide, "ideSecondaryEditors");
+        check(right->isVisible() && right->currentWidget() == secondEditor && tabs->currentWidget() == editor,
+              "Both files are visible in side-by-side tabs");
+        get<QAction>(*ide, "ideDetachEditor")->trigger();
+        auto* detached = get<QDialog>(*ide, "ideDetachedEditor");
+        check(detached->isWindow() && detached->isVisible() && detached->isAncestorOf(secondEditor),
+              "The second editor detaches into a new window");
+        get<QPushButton>(*detached, "ideReattachEditor")->click();
+        check(right->currentWidget() == secondEditor && secondEditor->document()->isModified() &&
+              secondEditor->toPlainText().contains("// unsaved"), "Reattachment preserves the editor and unsaved text");
+        secondEditor->undo();
+        check(ide->openSource(project.filePath("src/main.c")), "Focus the main source again");
+        editor->setPlainText(original);
         editor->appendPlainText("PICO_IDE_BAD");
         auto* problems = get<QTreeWidget>(*ide, "ideProblems");
         waitFor([&] { return problems->topLevelItemCount() == 1; }, "LSP diagnostics appear in the project");

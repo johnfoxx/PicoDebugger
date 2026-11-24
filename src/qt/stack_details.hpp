@@ -37,6 +37,7 @@ struct FrameDetails {
 
 FrameType frameType(QString name);
 QString frameValue(const picodbg::DebugTarget& target, unsigned core, const FrameField& field);
+QString frameRawValue(const picodbg::DebugTarget& target, unsigned core, const FrameField& field, bool binary);
 uint64_t parseFrameValue(const QString& text, const FrameType& type);
 bool stackMemory(const picodbg::DebugTarget& target, uint32_t address, unsigned size);
 

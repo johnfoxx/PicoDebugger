@@ -1,5 +1,6 @@
 #pragma once
 #include "picodbg/debugger.hpp"
+#include <QVariantMap>
 #include <QWidget>
 #include <functional>
 
@@ -14,6 +15,9 @@ public:
     PeripheralInspection(const QString& name, unsigned core, QWidget* parent = nullptr);
     void updateTarget(const picodbg::DebugTarget& debugger, bool running);
     PeripheralPanel& panel() const { return *panel_; }
+    const QString& device() const { return device_; }
+    QVariantMap saveSelection() const;
+    void restoreSelection(const QVariantMap& selection);
     void selectRegister(uint32_t address);
     void setDetached(bool detached);
     unsigned core() const;
@@ -22,6 +26,7 @@ public:
     std::function<void()> duplicateRequested;
     std::function<size_t(unsigned, const std::string&)> injectUart;
 private:
+    QString device_;
     QComboBox* core_;
     PeripheralPanel* panel_;
     QPushButton* detach_;

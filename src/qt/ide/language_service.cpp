@@ -159,6 +159,17 @@ void LanguageService::complete(const QString& path, const QString& text, int lin
 void LanguageService::notify(const QString& method, const QJsonObject& params) {
     send({{"method", method}, {"params", params}});
 }
+void LanguageService::definition(const QString& path, const QString& text, int line, int column,
+                                 std::function<void(const QJsonArray&)> receive) {
+    if (!documents_.value(path).opened || pending_.size() >= 32) { receive({}); return; }
+    change(path, text);
+    request("textDocument/definition", {{"textDocument", textDocument(path)},
+                {"position", QJsonObject{{"line", line}, {"character", column}}}},
+        [receive](const QJsonObject& response) {
+            const auto result = response.value("result");
+            receive(result.isArray() ? result.toArray() : result.isObject() ? QJsonArray{result} : QJsonArray{});
+        });
+}
 
 void LanguageService::request(const QString& method, const QJsonObject& params, Reply receive) {
     const int id = ++nextId_;

@@ -26,6 +26,7 @@ class ValueWatches final : public QWidget {
 public:
     explicit ValueWatches(QWidget* parent = nullptr);
     void updateTarget(const picodbg::DebugTarget& target);
+    void reloadCatalog() { initialized_ = false; }
     bool contains(const ValueWatch& watch) const;
     void add(const ValueWatch& watch);
     void remove(const ValueWatch& watch);

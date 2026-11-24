@@ -13,6 +13,10 @@ La barre d'exécution propose **Pico**, **Pico W**, **Pico 2** et **Pico 2 W**. 
 
 Dans **Vues → Carte et câblage** (`Ctrl+7`), un tableau décrit LED, alimentation, VBUS, VSYS et connexions UART/I2C/SPI par défaut du SDK. La fenêtre indépendante des périphériques propose aussi cet onglet et, pour les cartes W, une entrée **CYW43 · radio (non émulée)**.
 
+En émulation, le voyant **LED intégrée** apparaît dans la barre d’état. Sur Pico et Pico 2, pour allumer la LED, sélectionner SIO avec `GPIO25_CTRL.FUNCSEL = 5`, activer la sortie et placer le bit 25 de `SIO.GPIO_OUT` à 1. Le pad doit autoriser la sortie. Sur Pico 2, libérer aussi l’isolation avec `PADS_BANK0.GPIO25.ISO = 0`. Le voyant affiche l’état de la sortie à chaque rafraîchissement. Pour essayer le clignotement, charger [l’exemple boot_blink](../tests/firmware/boot_blink/README.md) et lancer l’exécution avec **F5**.
+
+Pour utiliser `IO_BANK0` et `PADS_BANK0`, effacer leurs bits dans `RESETS.RESET`, puis attendre ces mêmes bits à 1 dans `RESETS.RESET_DONE`. Les registres d’un bloc maintenu en reset conservent leurs valeurs de reset, dont `ISO = 1` sur RP2350. Le modèle couvre les GPIO utilisateur du banc 0, avec contrôle, pads, niveaux numériques SIO et interruptions par cœur.
+
 ## Ce qui diffère sur W
 
 Les cartes W utilisent GPIO23 pour activer le CYW43, GPIO24 pour les données/IRQ, GPIO25 pour la sélection et GPIO29 pour l'horloge. La mesure VSYS partage GPIO29. La LED, le mode SMPS et la détection VBUS passent respectivement par WL_GPIO0, WL_GPIO1 et WL_GPIO2 du composant radio. Écrire dans le latch GPIO25 ne commande donc pas la LED intégrée d'une carte W.

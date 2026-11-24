@@ -43,7 +43,7 @@ Les quatre cartes du sélecteur utilisent deux modèles de puces partiels : celu
 | Ajouter un breakpoint | **Débogage → Ajouter un point d'arrêt…**, `F9`, ou **+ Arrêt** |
 | Ajouter un watchpoint mémoire | **Débogage → Ajouter un watchpoint mémoire…**, ou **+ Accès** |
 | Afficher/masquer un panneau | Entrée correspondante du menu **Vues** |
-| Restaurer la disposition initiale | **Vues → Rétablir la disposition initiale**, `Ctrl+Maj+0` |
+| Restaurer la disposition initiale | **Vues → Rétablir la disposition initiale**, `Ctrl+Maj+O` |
 | Ouvrir le catalogue périphériques | **Vues → Catalogue des périphériques**, `Ctrl+P` ou `Ctrl+2` |
 | Ouvrir la fenêtre autonome des périphériques | **Vues → Fenêtre des périphériques…**, `Ctrl+Maj+I` |
 | Avancer le temps virtuel | **Vues → Temps virtuel**, `Ctrl+6` |
@@ -54,9 +54,9 @@ Les quatre cartes du sélecteur utilisent deux modèles de puces partiels : celu
 | Lire la couverture actuelle | **Aide → Couverture et limites** |
 | Fermer l'application | **Fichier → Quitter** ou fermeture de la fenêtre principale |
 
-**Mémoire** et **Périphériques** occupent le centre. Les deux cœurs et leurs piles sont à gauche. **Surveillance** se trouve à droite. Les inspecteurs s’ouvrent dans **Périphériques**, et l’assembleur s’ajoute au centre quand l’IDE est fermé. Le panneau repliable **Outils** rassemble la console, la carte mémoire, le temps virtuel, le câblage et le port série de la sonde. La console permet par exemple de saisir `bt 0` ou `bt all` pour voir les piles.
+**Mémoire** et **Périphériques** occupent le centre. Les registres et la pile du **Cœur 0** sont visibles à gauche par défaut. **Surveillance** se trouve à droite. Les inspecteurs s’ouvrent dans **Périphériques**, et l’assembleur s’ajoute au centre quand l’IDE est fermé. Le panneau repliable **Outils** rassemble la console, la carte mémoire, le temps virtuel, le câblage et le port série de la sonde. La console permet de saisir `bt 0` ou `bt all` pour voir les piles.
 
-Les barres de titre permettent de réorganiser les panneaux et les séparateurs règlent leurs tailles. **Vues → Panneaux** permet de les afficher ou de les masquer. **Vues → Fenêtres flottantes** permet de les détacher. La disposition est mémorisée à la fermeture. **Ctrl+Maj+0** rétablit l’agencement initial. [Manuel utilisateur](../UserManual.md)
+Les barres de titre permettent de réorganiser les panneaux et les séparateurs règlent leurs tailles. **Vues → Panneaux** permet de les afficher ou de les masquer. **Vues → Fenêtres flottantes** permet de les détacher. La disposition du débogueur est mémorisée pour chaque projet. **Ctrl+Maj+O** rétablit l’agencement initial. [Manuel utilisateur](../UserManual.md)
 
 ## 2. Pas, registres et assembleur
 
@@ -185,7 +185,7 @@ Une infobulle sur un champ donne sa description et les valeurs symboliques connu
 
 Exemple de documentation sans simulation : dans le profil Pico 2, sélectionner **ADC**, filtrer `AINSEL`, puis sélectionner `CS`. Les bits du sélecteur analogique sont décrits, mais l'état reste **Non émulé** après chargement. Aucune tension, conversion ou valeur de reset n'est inventée.
 
-**Rattacher**, ou fermer une fenêtre détachée, ramène le même inspecteur dans son onglet. **Rassembler** / `Ctrl+Maj+P` rattache toutes les fenêtres ; filtres, sélection, contexte et texte RX non envoyé sont conservés. La croix d'un onglet ferme cet inspecteur. `Ctrl+Maj+0` restaure la disposition principale sans fermer les inspecteurs. Changer de puce les ferme tous ; reset et nouveau fichier dans le même profil les actualisent.
+**Rattacher**, ou fermer une fenêtre détachée, ramène le même inspecteur dans son onglet. **Rassembler** / `Ctrl+Maj+P` rattache toutes les fenêtres et conserve les filtres, la sélection, le contexte et le texte RX en cours de saisie. La croix d’un onglet ferme cet inspecteur. `Ctrl+Maj+O` rétablit la disposition principale et rassemble les fenêtres. Chaque projet retrouve les onglets associés à la puce sélectionnée. Réinitialiser ou charger un ELF dans le même profil actualise leurs valeurs.
 
 ## 8. Exemple Pico 2 : UART, timer, PWM et GPIO
 

@@ -43,6 +43,7 @@
 #include <QSaveFile>
 #include <QScopedValueRollback>
 #include <QSettings>
+#include <QShortcut>
 #include <QShowEvent>
 #include <QSignalBlocker>
 #include <QSplitter>
@@ -56,6 +57,7 @@
 #include <QTreeView>
 #include <QTreeWidget>
 #include <QVBoxLayout>
+#include <QUrl>
 #include <algorithm>
 
 namespace picoide {
@@ -240,7 +242,9 @@ void IdeWindow::setupUi() {
         else openProject(path);
     });
     closeProject_ = action(file, "Fermer le projet", "ideCloseProject", {}, [this] {
-        if (!build_.busy() && allowCloseSources()) resetProject();
+        if (build_.busy() || !allowCloseSources()) return;
+        if (debugger_) debugger_->setLayoutProject({});
+        resetProject();
     });
     action(file, "Git…", "ideGit", {}, [this] {
         if (root_.isEmpty()) { statusBar()->showMessage("Ouvrir un projet pour utiliser Git.", 4000); return; }
@@ -255,14 +259,24 @@ void IdeWindow::setupUi() {
     rename_ = action(file, "Renommer le fichier…", "ideRenameFile", QKeySequence(Qt::Key_F2), [this] { renameSource(); });
     trash_ = action(file, "Mettre le fichier à la corbeille…", "ideTrashFile", {}, [this] { trashSource(); });
     save_ = action(file, "Enregistrer", "ideSave", QKeySequence::Save, [this] {
-        if (auto* source = sourceForWidget(editors_->currentWidget())) save(*source);
+        if (auto* source = sourceForWidget(activeEditor_)) save(*source);
     });
     saveAll_ = action(file, "Tout enregistrer", "ideSaveAll", QKeySequence("Ctrl+Shift+S"), [this] { saveAll(); });
     const auto current = [this](void (QPlainTextEdit::*operation)()) {
-        if (auto* source = sourceForWidget(editors_->currentWidget())) (source->editor->*operation)();
+        if (auto* source = sourceForWidget(activeEditor_)) (source->editor->*operation)();
     };
     action(edit, "Annuler", "ideUndo", QKeySequence::Undo, [=] { current(&QPlainTextEdit::undo); });
     action(edit, "Rétablir", "ideRedo", QKeySequence::Redo, [=] { current(&QPlainTextEdit::redo); });
+    action(edit, "Commenter / décommenter", "ideToggleComment", {}, [this] {
+        if (activeEditor_) activeEditor_->toggleLineComment();
+    })->setToolTip("Ctrl+/ ou Ctrl+Maj+C");
+    action(views, "Détacher l’onglet actif", "ideDetachEditor", {}, [this] {
+        if (auto* source = sourceForWidget(activeEditor_)) detachEditor(*source);
+    });
+    action(views, "Déplacer l’onglet vers l’autre volet", "ideSplitEditor", {}, [this] {
+        if (auto* source = sourceForWidget(activeEditor_))
+            moveEditor(*source, *(source->group == editors_ ? secondaryEditors_ : editors_));
+    });
     edit->addSeparator();
     action(edit, "Rechercher dans le fichier…", "ideFind", QKeySequence::Find,
            [this] { textTools_->showSearch(false, false); });
@@ -285,7 +299,7 @@ void IdeWindow::setupUi() {
     });
     edit->addSeparator();
     action(edit, "Autocomplétion", "ideCompletion", {}, [this] {
-        if (auto* source = sourceForWidget(editors_->currentWidget())) requestCompletion(*source);
+        if (auto* source = sourceForWidget(activeEditor_)) requestCompletion(*source);
     })->setToolTip("Ctrl+Espace dans l'éditeur");
     configure_ = action(buildMenu, "Configurer CMake", "ideConfigure", {}, [this] { build(Task::Configure); });
     compile_ = action(buildMenu, "Compiler", "ideBuild", QKeySequence("Ctrl+B"), [this] { build(Task::Build); });
@@ -412,7 +426,9 @@ void IdeWindow::setupUi() {
 
     editors_ = new QTabWidget;
     editors_->setObjectName("ideEditors");
-    editors_->setMovable(true);
+    secondaryEditors_ = new QTabWidget;
+    secondaryEditors_->setObjectName("ideSecondaryEditors");
+    activeGroup_ = editors_;
     auto* welcome = new QWidget;
     auto* welcomeLayout = new QVBoxLayout(welcome);
     welcomeLayout->setContentsMargins(32, 38, 32, 30);
@@ -429,8 +445,14 @@ void IdeWindow::setupUi() {
     welcomeLayout->addWidget(heading); welcomeLayout->addWidget(intro);
     welcomeLayout->addLayout(buttons); welcomeLayout->addStretch();
     editors_->addTab(welcome, "Accueil");
+    editorSplit_ = new QSplitter(Qt::Horizontal);
+    editorSplit_->setObjectName("ideEditorSplit");
+    editorSplit_->addWidget(editors_);
+    editorSplit_->addWidget(secondaryEditors_);
+    editorSplit_->setChildrenCollapsible(false);
+    secondaryEditors_->hide();
     codeSplit_ = new QSplitter;
-    codeSplit_->addWidget(editors_);
+    codeSplit_->addWidget(editorSplit_);
     assemblyPane_ = new QWidget;
     assemblyPane_->setObjectName("ideAssemblyPane");
     auto* assemblyLayout = new QVBoxLayout(assemblyPane_);
@@ -464,24 +486,27 @@ void IdeWindow::setupUi() {
     codeSplit_->addWidget(assemblyPane_);
     codeSplit_->setChildrenCollapsible(false);
     assemblyPane_->hide();
-    workspace->addWidget(codeSplit_);
+    auto* codeArea = new QWidget;
+    auto* codeLayout = new QVBoxLayout(codeArea);
+    codeLayout->setContentsMargins(0, 0, 0, 0);
+    codeLayout->setSpacing(3);
+    codeLayout->addWidget(codeSplit_, 1);
+    workspace->addWidget(codeArea);
     workspace->setStretchFactor(1, 1);
     workspace->setSizes({245, 900});
-    textTools_ = new TextTools(workspace);
-    rootPane->addWidget(textTools_);
+    textTools_ = new TextTools;
+    codeLayout->addWidget(textTools_);
+    rootPane->addWidget(workspace);
     textTools_->readFile = [this](const QString& path, QString& text) { return readSearchSource(path, text); };
     textTools_->openFile = [this](const QString& path) -> CodeEditor* {
         if (!openSource(path)) return nullptr;
-        return dynamic_cast<CodeEditor*>(editors_->currentWidget());
+        return activeEditor_;
     };
     textTools_->applyEdits = [this](const std::vector<TextEdit>& edits, QString& error) {
         return applyProjectTextEdits(edits, error);
     };
-    connect(editors_, &QTabWidget::currentChanged, this, [this] {
-        textTools_->setEditor(dynamic_cast<CodeEditor*>(editors_->currentWidget()));
-        refreshActions();
-        selectSource(false);
-    });
+    configureEditorGroup(*editors_);
+    configureEditorGroup(*secondaryEditors_);
 
     bottom_ = new QTabWidget;
     output_ = new QPlainTextEdit;
@@ -624,6 +649,7 @@ bool IdeWindow::openProject(const QString& directory) {
     restartLanguage();
     statusBar()->showMessage("Projet ouvert · compiler ou choisir Configurer CMake");
     refreshActions();
+    if (debugger_) debugger_->setLayoutProject(root_);
     for (const auto& entry : {"src/main.c", "main.c", "CMakeLists.txt"}) {
         const auto file = QDir(root_).filePath(entry);
         if (QFileInfo(file).isFile() && openSource(file)) break;
@@ -632,16 +658,28 @@ bool IdeWindow::openProject(const QString& directory) {
     return true;
 }
 
+void IdeWindow::restoreSessionProject() {
+    if (!root_.isEmpty()) return;
+    QSettings settings;
+    const auto path = settings.value("ide/sessionProject").toString();
+    if (path.isEmpty()) return;
+    if (QFileInfo(QDir(path).filePath("CMakeLists.txt")).isFile()) openProject(path);
+    else settings.remove("ide/sessionProject");
+}
+
 void IdeWindow::resetProject() {
     const QSignalBlocker blockedEditors(editors_);
+    const QSignalBlocker blockedSecondary(secondaryEditors_);
+    activeEditor_.clear();
     textTools_->setEditor(nullptr);
     textTools_->setProject({});
     for (const auto& source : sources_) {
         language_.close(source->path);
-        editors_->removeTab(editors_->indexOf(source->editor));
+        removeEditorView(*source);
         delete source->editor;
     }
     sources_.clear();
+    syncEditorGroups();
     language_.start({}, {});
     analysisStatus_->clear();
     languageContext_.clear();
@@ -721,7 +759,7 @@ void IdeWindow::renameSource() {
     const auto next = QDir(old.absolutePath()).filePath(name);
     if (!QFile::rename(oldPath, next)) { warn("Le fichier n'a pas pu être renommé."); return; }
     if (source) {
-        closeSource(editors_->indexOf(source->editor));
+        closeSource(*source);
         openSource(next);
     }
     textTools_->projectChanged();
@@ -738,13 +776,14 @@ void IdeWindow::trashSource() {
     auto* source = findSource(path);
     if (source && !save(*source)) return;
     if (!QFile::moveToTrash(path)) { warn("Impossible de mettre ce fichier à la corbeille."); return; }
-    if (source) closeSource(editors_->indexOf(source->editor));
+    if (source) closeSource(*source);
     textTools_->projectChanged();
     statusBar()->showMessage("Fichier placé dans la corbeille · vérifier ses références dans le projet", 6000);
 }
 
-bool IdeWindow::openSource(const QString& path, bool focus, bool activate) {
-    if (!belongsToProject(path)) return false;
+bool IdeWindow::openSource(const QString& path, bool focus, bool activate, bool externalDefinition) {
+    const bool external = !belongsToProject(path);
+    if (external && (!externalDefinition || !QFileInfo(path).isFile())) return false;
     const auto canonical = QFileInfo(path).canonicalFilePath();
     const auto selectFile = [this, &canonical] {
         const auto index = files_->index(canonical);
@@ -755,16 +794,16 @@ bool IdeWindow::openSource(const QString& path, bool focus, bool activate) {
     };
     if (auto* existing = findSource(canonical)) {
         if (activate) {
-            editors_->setCurrentWidget(existing->editor);
-            selectFile();
-            if (focus) existing->editor->setFocus();
+            activateEditor(existing->editor, focus);
+            if (!external) selectFile();
         }
         return true;
     }
     QByteArray contents;
     if (!readProjectText(canonical, contents)) { warn("Impossible d'ouvrir ce fichier. L'éditeur accepte les fichiers texte UTF-8 jusqu'à 2 Mio."); return false; }
     const auto language = languageForFile(canonical);
-    auto* editor = new CodeEditor(language, editors_);
+    auto* editor = new CodeEditor(language, activeGroup_);
+    editor->setReadOnly(external);
     auto source = std::unique_ptr<Source>(new Source);
     source->path = canonical;
     source->diskText = contents;
@@ -788,34 +827,161 @@ bool IdeWindow::openSource(const QString& path, bool focus, bool activate) {
         }
     });
     connect(editor->document(), &QTextDocument::modificationChanged, editor, [this, handle](bool modified) {
-        const int index = editors_->indexOf(handle->editor);
-        if (index >= 0) editors_->setTabText(index, QFileInfo(handle->path).fileName() + (modified ? " •" : ""));
+        const auto title = QFileInfo(handle->path).fileName() + (modified ? " •" : "");
+        if (handle->detached) handle->detached->setWindowTitle(title + " — PicoDebugger");
+        else handle->group->setTabText(handle->group->indexOf(handle->editor), title);
         highlightDebugLines(*handle);
-        if (editors_->currentWidget() == handle->editor) selectSource(false);
+        if (activeEditor_ == handle->editor) selectSource(false);
     });
     connect(editor, &QPlainTextEdit::cursorPositionChanged, editor, [this, editor] {
-        if (editors_->currentWidget() == editor) selectSource(false);
+        if (activeEditor_ == editor) selectSource(false);
     });
-    if (!language.id.isEmpty()) editor->completionRequested = [this, handle] { requestCompletion(*handle); };
+    editor->focused = [this, editor] { activateEditor(editor); };
+    if (!language.id.isEmpty()) {
+        editor->completionRequested = [this, handle] { requestCompletion(*handle); };
+        editor->definitionRequested = [this, handle](int line, int column) { requestDefinition(*handle, line, column); };
+    }
     language_.open(canonical, language, editor->toPlainText());
     sources_.push_back(std::move(source));
-    const auto index = editors_->addTab(editor, QFileInfo(canonical).fileName());
-    editors_->setTabToolTip(index, canonical);
-    auto* close = new QToolButton(editors_->tabBar());
-    close->setObjectName("ideCloseTab");
-    close->setText("×");
-    close->setAccessibleName("Fermer " + QFileInfo(canonical).fileName());
-    close->setToolTip(close->accessibleName());
-    close->setFocusPolicy(Qt::NoFocus);
-    connect(close, &QToolButton::clicked, this, [this, editor] { closeSource(editors_->indexOf(editor)); });
-    editors_->tabBar()->setTabButton(index, QTabBar::RightSide, close);
+    addEditorTab(*handle, *activeGroup_);
     highlightDebugLines(*handle);
     if (activate) {
-        editors_->setCurrentIndex(index);
-        selectFile();
-        if (focus) editor->setFocus();
+        activateEditor(editor, focus);
+        if (!external) selectFile();
     }
     return true;
+}
+
+void IdeWindow::configureEditorGroup(QTabWidget& group) {
+    group.setMovable(true);
+    connect(&group, &QTabWidget::currentChanged, this, [this, &group] {
+        activeGroup_ = &group;
+        activateEditor(dynamic_cast<CodeEditor*>(group.currentWidget()));
+    });
+    auto* bar = group.tabBar();
+    connect(bar, &QTabBar::tabBarClicked, this, [this, &group](int index) {
+        if (index < 0) return;
+        activeGroup_ = &group;
+        activateEditor(dynamic_cast<CodeEditor*>(group.widget(index)));
+    });
+    bar->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(bar, &QWidget::customContextMenuRequested, this, [this, &group, bar](const QPoint& at) {
+        auto* source = sourceForWidget(group.widget(bar->tabAt(at)));
+        if (!source) return;
+        QMenu menu(this);
+        auto* detach = menu.addAction("Détacher dans une fenêtre");
+        auto* move = menu.addAction(&group == editors_ ? "Déplacer dans le volet droit" : "Déplacer dans le volet gauche");
+        const auto* selected = menu.exec(bar->mapToGlobal(at));
+        if (selected == detach) detachEditor(*source);
+        if (selected == move) moveEditor(*source, *(&group == editors_ ? secondaryEditors_ : editors_));
+    });
+}
+
+void IdeWindow::addEditorTab(Source& source, QTabWidget& group) {
+    const QSignalBlocker blocker(&group);
+    source.group = &group;
+    const auto name = QFileInfo(source.path).fileName();
+    const auto index = group.addTab(source.editor, name + (source.editor->document()->isModified() ? " •" : ""));
+    group.setTabToolTip(index, source.path);
+    auto* close = new QToolButton(group.tabBar());
+    close->setObjectName("ideCloseTab");
+    close->setText("×");
+    close->setAccessibleName("Fermer " + name);
+    close->setToolTip(close->accessibleName());
+    close->setFocusPolicy(Qt::NoFocus);
+    connect(close, &QToolButton::clicked, this, [this, &source] { closeSource(source); });
+    group.tabBar()->setTabButton(index, QTabBar::RightSide, close);
+    syncEditorGroups();
+}
+
+void IdeWindow::activateEditor(CodeEditor* editor, bool focus) {
+    if (auto* source = sourceForWidget(editor)) {
+        activeGroup_ = source->group;
+        if (source->detached) {
+            if (focus) showInspectionWindow(source->detached);
+        } else {
+            const QSignalBlocker blocker(source->group);
+            source->group->setCurrentWidget(editor);
+        }
+    }
+    if (activeEditor_ != editor) {
+        activeEditor_ = editor;
+        textTools_->setEditor(editor);
+        refreshActions();
+        selectSource(false);
+    }
+    if (focus && editor) editor->setFocus();
+}
+
+void IdeWindow::moveEditor(Source& source, QTabWidget& group) {
+    if (source.detached) source.detached->close();
+    if (source.group == &group) return;
+    const QSignalBlocker blocker(source.group);
+    source.group->removeTab(source.group->indexOf(source.editor));
+    addEditorTab(source, group);
+    activateEditor(source.editor, true);
+}
+
+void IdeWindow::detachEditor(Source& source) {
+    if (source.detached) { showInspectionWindow(source.detached); return; }
+    const QSignalBlocker blocker(source.group);
+    source.group->removeTab(source.group->indexOf(source.editor));
+    auto* window = new QDialog(this, Qt::Window);
+    source.detached = window;
+    window->setObjectName("ideDetachedEditor");
+    window->setWindowTitle(QFileInfo(source.path).fileName() +
+                            (source.editor->document()->isModified() ? " • — PicoDebugger" : " — PicoDebugger"));
+    window->setAttribute(Qt::WA_DeleteOnClose);
+    window->resize(860, 650);
+    auto* layout = new QVBoxLayout(window);
+    auto* attach = new QPushButton("Rattacher l’onglet");
+    attach->setObjectName("ideReattachEditor");
+    layout->addWidget(attach, 0, Qt::AlignRight);
+    layout->addWidget(source.editor, 1);
+    connect(attach, &QPushButton::clicked, window, &QWidget::close);
+    connect(window, &QDialog::finished, this, [this, &source] {
+        source.detached.clear();
+        addEditorTab(source, *source.group);
+        showInspectionWindow(this);
+        activateEditor(source.editor, true);
+    });
+    auto* saveShortcut = new QShortcut(QKeySequence::Save, window);
+    connect(saveShortcut, &QShortcut::activated, window, [this, &source] { save(source); });
+    auto* searchShortcut = new QShortcut(QKeySequence::Find, window);
+    connect(searchShortcut, &QShortcut::activated, window, [this, &source] {
+        activateEditor(source.editor);
+        showInspectionWindow(this);
+        textTools_->showSearch(false, false);
+    });
+    applyPicoTheme(*window);
+    prepareInspectionWindow(window);
+    syncEditorGroups();
+    showInspectionWindow(window);
+    activateEditor(source.editor, true);
+}
+
+void IdeWindow::removeEditorView(Source& source) {
+    if (source.editor == activeEditor_) {
+        activeEditor_.clear();
+        textTools_->setEditor(nullptr);
+    }
+    if (auto* window = source.detached.data()) {
+        disconnect(window, nullptr, this, nullptr);
+        source.detached.clear();
+        source.editor->setParent(this);
+        window->close();
+        return;
+    }
+    const QSignalBlocker blocker(source.group);
+    source.group->removeTab(source.group->indexOf(source.editor));
+}
+
+void IdeWindow::syncEditorGroups() {
+    const bool split = secondaryEditors_->count() > 0;
+    const bool opening = split && secondaryEditors_->isHidden();
+    secondaryEditors_->setVisible(split);
+    if (opening) editorSplit_->setSizes({editorSplit_->width() / 2, editorSplit_->width() / 2});
+    if (!split && activeGroup_ == secondaryEditors_ && !activeEditor_) activeGroup_ = editors_;
 }
 
 IdeWindow::Source* IdeWindow::findSource(const QString& path) {
@@ -871,20 +1037,20 @@ bool IdeWindow::applyProjectTextEdits(const std::vector<TextEdit>& edits, QStrin
     return true;
 }
 
-void IdeWindow::closeSource(int index) {
-    auto* source = sourceForWidget(editors_->widget(index));
-    if (!source) return;
-    if (source->editor->document()->isModified()) {
-        const auto response = QMessageBox::question(this, "Modifications en attente", "Enregistrer " + QFileInfo(source->path).fileName() + " ?",
+void IdeWindow::closeSource(Source& source) {
+    if (source.editor->document()->isModified()) {
+        const auto response = QMessageBox::question(this, "Modifications en attente", "Enregistrer " + QFileInfo(source.path).fileName() + " ?",
             QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
-        if (response == QMessageBox::Cancel || (response == QMessageBox::Save && !save(*source))) return;
+        if (response == QMessageBox::Cancel || (response == QMessageBox::Save && !save(source))) return;
     }
-    language_.close(source->path);
-    auto* editor = source->editor;
-    editors_->removeTab(index);
+    language_.close(source.path);
+    auto* editor = source.editor;
+    removeEditorView(source);
     sources_.erase(std::remove_if(sources_.begin(), sources_.end(),
-        [source](const std::unique_ptr<Source>& item) { return item.get() == source; }), sources_.end());
+        [&source](const std::unique_ptr<Source>& item) { return item.get() == &source; }), sources_.end());
     delete editor;
+    syncEditorGroups();
+    if (!activeEditor_) activateEditor(dynamic_cast<CodeEditor*>(activeGroup_->currentWidget()));
     refreshProblems();
     refreshActions();
 }
@@ -934,7 +1100,11 @@ void IdeWindow::closeEvent(QCloseEvent* event) {
         return;
     }
     if (!allowCloseSources()) { event->ignore(); return; }
-    QSettings().setValue("ide/geometry", saveGeometry());
+    QSettings settings;
+    settings.setValue("ide/geometry", saveGeometry());
+    if (root_.isEmpty()) settings.remove("ide/sessionProject");
+    else settings.setValue("ide/sessionProject", root_);
+    if (debugger_) debugger_->saveLayout();
     resetProject();
     QMainWindow::closeEvent(event);
 }
@@ -1030,9 +1200,37 @@ void IdeWindow::requestCompletion(Source& source) {
     language_.complete(path, source.editor->toPlainText(), cursor.blockNumber(), cursor.positionInBlock(),
         [this, editor, path, sequence, revision, position](const QJsonArray& items) {
             const auto* source = findSource(path);
-            if (editor && source && source->completionSequence == sequence && editors_->currentWidget() == editor &&
+            if (editor && source && source->completionSequence == sequence && activeEditor_ == editor &&
                 editor->document()->revision() == revision && editor->textCursor().position() == position)
                 editor->showCompletions(items);
+        });
+}
+
+void IdeWindow::requestDefinition(Source& source, int line, int column) {
+    if (!language_.ready()) {
+        statusBar()->showMessage("La navigation vers les définitions utilise clangd.", 4500);
+        return;
+    }
+    const auto path = source.path;
+    const auto revision = source.editor->document()->revision();
+    const auto sequence = ++source.definitionSequence;
+    const QPointer<CodeEditor> editor(source.editor);
+    language_.definition(path, editor->toPlainText(), line, column,
+        [this, path, editor, revision, sequence](const QJsonArray& definitions) {
+            const auto* origin = findSource(path);
+            if (!editor || !origin || activeEditor_ != editor || origin->definitionSequence != sequence ||
+                editor->document()->revision() != revision) return;
+            for (const auto& item : definitions) {
+                const auto result = item.toObject();
+                const bool link = result.contains("targetUri");
+                const auto destination = QUrl(result.value(link ? "targetUri" : "uri").toString()).toLocalFile();
+                const auto range = result.value(link ? "targetSelectionRange" : "range").toObject();
+                const auto start = range.value("start").toObject();
+                if (destination.isEmpty() || start.isEmpty() || !openSource(destination, true, true, true)) continue;
+                if (activeEditor_) activeEditor_->goTo(start.value("line").toInt(), start.value("character").toInt());
+                return;
+            }
+            statusBar()->showMessage("Aucune définition trouvée pour ce symbole.", 4500);
         });
 }
 
@@ -1203,9 +1401,9 @@ void IdeWindow::refreshActions() {
     cancel_->setEnabled(busy);
     cancel_->setVisible(busy);
     board_->setEnabled(ready); target_->setEnabled(ready);
-    save_->setEnabled(hasProject && sourceForWidget(editors_->currentWidget()));
+    save_->setEnabled(hasProject && activeEditor_ && !activeEditor_->isReadOnly());
     saveAll_->setEnabled(hasProject && !sources_.empty());
-    goToAssembly_->setEnabled(debugger_ && debugger_->isVisible() && sourceForWidget(editors_->currentWidget()));
+    goToAssembly_->setEnabled(debugger_ && debugger_->isVisible() && sourceForWidget(activeEditor_));
 }
 
 void IdeWindow::showEvent(QShowEvent* event) {
@@ -1227,7 +1425,7 @@ void IdeWindow::debuggerState(bool ready, bool canPause, bool canStep, bool debu
         (task_ == Task::Debug || task_ == Task::Board)) task_ = Task::Build;
     stopDebugging_->setVisible(debuggerVisible);
     stopDebugging_->setEnabled(debuggerVisible);
-    goToAssembly_->setEnabled(debuggerVisible && sourceForWidget(editors_->currentWidget()));
+    goToAssembly_->setEnabled(debuggerVisible && sourceForWidget(activeEditor_));
     if (inspectAssembly_ != inspectAssembly) {
         inspectAssembly_ = inspectAssembly;
         updateAssemblyVisibility();
@@ -1327,7 +1525,7 @@ void IdeWindow::highlightDebugLines(Source& source) {
 void IdeWindow::revealDebugLocation(const picosource::Location& location) {
     if (!isVisible() || !location.valid() || !belongsToProject(location.path) ||
         QFileInfo(location.path).lastModified() > debugElfTimestamp_) return;
-    const auto* current = sourceForWidget(editors_->currentWidget());
+    const auto* current = sourceForWidget(activeEditor_);
     if (current && current->editor->document()->isModified() && current->path != location.path) return;
     if (const auto* source = findSource(location.path)) {
         if (!sourceMatchesElf(*source)) return;
@@ -1343,7 +1541,7 @@ void IdeWindow::revealDebugLocation(const picosource::Location& location) {
 
 void IdeWindow::selectSource(bool navigate) {
     if (!debugger_ || !debugger_->isVisible() || syncingSource_) return;
-    auto* source = sourceForWidget(editors_->currentWidget());
+    auto* source = sourceForWidget(activeEditor_);
     picosource::Location location;
     if (source && !languageForFile(source->path).id.isEmpty() && sourceMatchesElf(*source)) {
         location.path = source->path;

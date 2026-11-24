@@ -36,7 +36,12 @@ bool InspectionWorkspace::revealInspection(const QString& key) {
     else setCurrentWidget(found->second.page);
     return true;
 }
-void InspectionWorkspace::toggleDetached(const QString& key) {
+QByteArray InspectionWorkspace::detachedGeometry(const QWidget* page) const {
+    for (const auto& entry : entries_)
+        if (entry.second.page == page && entry.second.window) return entry.second.window->saveGeometry();
+    return {};
+}
+void InspectionWorkspace::toggleDetached(const QString& key, const QByteArray& geometry) {
     const auto found = entries_.find(key);
     if (found == entries_.end()) return;
     auto& entry = found->second;
@@ -47,6 +52,7 @@ void InspectionWorkspace::toggleDetached(const QString& key) {
     window->setAttribute(Qt::WA_DeleteOnClose);
     window->setWindowTitle(entry.title + " — inspecteur PicoDebugger");
     window->resize(880, key.startsWith("UART") ? 790 : 650);
+    if (!geometry.isEmpty()) window->restoreGeometry(geometry);
     prepareInspectionWindow(window);
     removeTab(indexOf(entry.page));
     auto* layout = new QVBoxLayout(window); layout->setContentsMargins(4, 4, 4, 4);
@@ -77,8 +83,16 @@ void InspectionWorkspace::closeInspection(const QString& key) {
     const auto page = found->second.page;
     const auto window = found->second.window;
     entries_.erase(found);
-    if (page) { removeTab(indexOf(page)); page->hide(); page->deleteLater(); }
-    if (window) window->close();
+    if (page) {
+        removeTab(indexOf(page));
+        page->setObjectName({});
+        page->hide();
+        page->deleteLater();
+    }
+    if (window) {
+        window->setObjectName({});
+        window->close();
+    }
 }
 void InspectionWorkspace::clearInspections() {
     while (!entries_.empty()) closeInspection(entries_.begin()->first);

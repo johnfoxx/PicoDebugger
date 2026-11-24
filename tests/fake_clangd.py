@@ -28,7 +28,7 @@ while True:
     params = message.get("params", {})
     if method == "initialize":
         send({"id": message["id"], "result": {"capabilities": {
-            "textDocumentSync": 2, "completionProvider": {}}}})
+            "textDocumentSync": 2, "completionProvider": {}, "definitionProvider": True}}})
     elif method in ("textDocument/didOpen", "textDocument/didChange"):
         document = params["textDocument"]
         text = document["text"] if "text" in document else params["contentChanges"][0]["text"]
@@ -49,3 +49,9 @@ while True:
         send({"id": message["id"], "result": {"isIncomplete": False, "items": [
             {"label": "PICO_IDE_AUTOCOMPLETE", "insertText": "PICO_IDE_AUTOCOMPLETE"}
         ]}})
+    elif method == "textDocument/definition":
+        send({"id": message["id"], "result": [{
+            "uri": params["textDocument"]["uri"],
+            "range": {"start": {"line": 0, "character": 4},
+                      "end": {"line": 0, "character": 23}},
+        }]})

@@ -1,5 +1,6 @@
 #include "main_window.hpp"
 #include "memory_table.hpp"
+#include "svd_catalog.hpp"
 #include <QAction>
 #include <QApplication>
 #include <QComboBox>
@@ -21,6 +22,7 @@
 #include <QThread>
 #include <QTimer>
 #include <QTreeWidget>
+#include <algorithm>
 #include <functional>
 #include <iostream>
 #include <stdexcept>
@@ -39,7 +41,7 @@ void waitUntil(const std::function<bool()>& done) {
 void choose(QComboBox* choice, const QString& data) {
     const int index = choice->findData(data); check(index >= 0, "Missing peripheral choice"); choice->setCurrentIndex(index);
 }
-void submitDialog(QAction* opener, const std::function<void(QDialog&, QPushButton*)>& fill) {
+void submitDialog(const std::function<void()>& open, const std::function<void(QDialog&, QPushButton*)>& fill) {
     std::exception_ptr error;
     bool opened = false;
     QTimer submit;
@@ -61,22 +63,70 @@ void submitDialog(QAction* opener, const std::function<void(QDialog&, QPushButto
         }
     });
     submit.start(0);
-    opener->trigger();
+    open();
     submit.stop();
     if (error) std::rethrow_exception(error);
     check(opened, "Click did not open a dialog");
+}
+void submitDialog(QAction* opener, const std::function<void(QDialog&, QPushButton*)>& fill) {
+    submitDialog([opener] { opener->trigger(); }, fill);
+}
+void checkSvdCatalog() {
+    const QByteArray xml = R"svd(<device><name>RP2350</name><access>read-write</access><peripherals>
+      <peripheral><name>IO_BANK0</name><baseAddress>0x40028000</baseAddress><registers>
+        <register><name>GPIO14_CTRL</name><addressOffset>0x74</addressOffset><fields><field>
+          <name>FUNCSEL</name><bitRange>[4:0]</bitRange><access>read-write</access>
+          <enumeratedValues><enumeratedValue><name>SIO</name><value>5</value></enumeratedValue></enumeratedValues>
+        </field></fields></register>
+      </registers></peripheral>
+      <peripheral><name>EXTRA</name><baseAddress>0x41000000</baseAddress><registers>
+        <cluster><name>CHANNEL%s</name><dim>2</dim><dimIncrement>0x10</dimIncrement><dimIndex>0-1</dimIndex><addressOffset>0</addressOffset>
+          <register><name>STATUS</name><addressOffset>4</addressOffset><fields><field>
+            <name>IRQ</name><bitOffset>3</bitOffset><bitWidth>1</bitWidth><modifiedWriteValues>oneToClear</modifiedWriteValues>
+          </field></fields></register>
+        </cluster>
+      </registers></peripheral>
+      <peripheral derivedFrom="EXTRA"><name>EXTRA_COPY</name><baseAddress>0x41000100</baseAddress></peripheral>
+    </peripherals></device>)svd";
+    const auto devices = picosvd::parse(picodbg::Chip::RP2350, xml);
+    const auto block = [&](const std::string& name) -> const picodbg::PeripheralDescription& {
+        for (const auto& device : devices) if (device.name == name) return device;
+        throw std::runtime_error("SVD peripheral missing");
+    };
+    const auto& gpio = block("IO_BANK0").registers;
+    const auto& copy = block("EXTRA_COPY").registers;
+    const auto ctrl = std::find_if(gpio.begin(), gpio.end(), [](const picodbg::RegisterDescription& reg) { return reg.name == "GPIO14_CTRL"; });
+    check(ctrl != gpio.end() && !ctrl->documentedOnly && ctrl->fields.front().meanings.front().text == "SIO", "SVD enriches the modeled GPIO control");
+    check(copy.size() == 2 && copy[1].address == 0x41000114 && copy[1].fields.front().access == "W1C", "SVD resolves arrays, inherited blocks and write semantics");
 }
 }
 int main(int argc, char** argv) {
     QApplication app(argc, argv); QApplication::setStyle(QStyleFactory::create("Fusion"));
     QApplication::setOrganizationName("PicoDebuggerTests"); QApplication::setApplicationName("PicoDebuggerSessionTests");
     try {
+        checkSvdCatalog();
         QTemporaryDir settings;
         check(settings.isValid(), "Temporary settings");
         QSettings::setDefaultFormat(QSettings::IniFormat);
         QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settings.path());
         MainWindow window; window.resize(1280, 800); window.show(); window.loadDemo(); QApplication::processEvents();
         auto* workspace = find<QTabWidget>(window, "inspectionWorkspace");
+        auto* compact = find<QWidget>(window, "peripheralCatalogPage");
+        auto* compactFilter = find<QLineEdit>(*compact, "registerFilter");
+        auto* compactToggle = find<QPushButton>(*compact, "registerDetailsButton");
+        auto* compactFields = find<QTableWidget>(*compact, "registerFieldsTable");
+        compactFilter->setText("SIO.GPIO_OUT");
+        compactToggle->click();
+        QApplication::processEvents();
+        check(compactFields->isVisible() && compactFields->rowCount() >= 26 &&
+              compactFields->viewport()->visibleRegion().boundingRect().height() >= compactFields->rowHeight(0),
+              "Compact Bits view must display a whole row without clipping");
+        check(compactFields->item(25, 0)->text() == "25" && compactFields->item(25, 1)->text() == "GPIO25" &&
+              compactFields->item(25, 2)->text() == "0" && compactFields->item(25, 3)->text().contains("Bas"),
+              "GPIO25 shows its bit position, value and meaning");
+        compactToggle->click();
+        check(find<QTableWidget>(*compact, "peripheralsTable")->isVisible(), "Registres returns to the hex table");
+        compactFilter->clear();
         auto* assembly = find<QTableWidget>(window, "assemblyTable");
         auto* registers = find<QTableWidget>(window, "registersTable");
         auto* open = find<QAction>(window, "peripheralExplorerAction"); open->trigger(); QApplication::processEvents();
@@ -84,18 +134,29 @@ int main(int argc, char** argv) {
         auto* view = find<QComboBox>(*explorer, "peripheralExplorerView");
         auto* values = find<QTableWidget>(*explorer, "peripheralsTable");
         auto* bits = find<QTableWidget>(*explorer, "registerFieldsTable");
+        auto* editField = find<QPushButton>(*explorer, "editRegisterFieldButton");
+        const auto release = [&](const QString& block) {
+            choose(view, "RESETS");
+            const auto fields = bits->findItems(block, Qt::MatchExactly);
+            const auto field = std::find_if(fields.begin(), fields.end(), [](const QTableWidgetItem* item) { return item->column() == 1; });
+            check(field != fields.end() && bits->item((*field)->row(), 2)->text() == "1", "The selected block starts held in reset");
+            bits->setCurrentCell((*field)->row(), 2);
+            submitDialog([editField] { editField->click(); }, [](QDialog& dialog, QPushButton*) {
+                find<QLineEdit>(dialog, "registerFieldWriteValue")->setText("0");
+            });
+        };
         check(explorer->isVisible() && assembly->isVisible() && workspace->currentIndex() == 0, "Independent window must keep assembly visible");
         open->trigger(); check(window.findChildren<QDialog*>("peripheralExplorer").size() == 1, "Repeated open must reuse the independent window");
         choose(view, "SIO"); find<QComboBox>(*explorer, "peripheralExplorerCore")->setCurrentIndex(1);
         check(values->item(0, 1)->text() == "0x00000001", "Explorer core context");
-        check(find<QComboBox>(window, "coreSelector")->currentIndex() == 2, "Explorer must preserve main CPU selection");
+        check(find<QComboBox>(window, "coreSelector")->currentIndex() == 0, "Explorer must preserve main CPU selection");
         check(!find<QTreeWidget>(*explorer, "peripheralCatalog")->isVisible(), "Focused view must dedicate space to registers");
         auto* dark = find<QAction>(window, "picoThemeDark");
         auto* light = find<QAction>(window, "picoThemeLight");
         const bool wasLight = light->isChecked();
         dark->trigger();
         auto* readOnly = values->item(0, 3);
-        auto* writable = values->item(1, 3);
+        auto* writable = values->item(2, 3); // GPIO_OUT follows GPIO_IN.
         const auto darkReadOnly = readOnly->foreground().color();
         const auto darkWritable = writable->foreground().color();
         check(readOnly->text() == "RO" && writable->text() == "RW" && darkReadOnly != darkWritable &&
@@ -132,6 +193,7 @@ int main(int argc, char** argv) {
               memory->item(0, 0)->foreground().color() == writable->foreground().color(),
               "Access colours update consistently in the light theme");
         if (!wasLight) dark->trigger();
+        release("TIMER");
         choose(view, "TIMER");
         find<QLineEdit>(*explorer, "registerFilter")->setText("TIMERAWL");
         find<QAction>(window, "stepAction")->trigger();
@@ -153,7 +215,7 @@ int main(int argc, char** argv) {
         check(find<QLineEdit>(*explorerTabs->widget(1), "uartInput")->text() == "preserved", "Switching peripheral must preserve unsent UART text");
         if (argc > 1) check(explorer->grab().save(QString::fromLocal8Bit(argv[1]) + ".uart-registers.png"), "Save UART detail view");
         // Manual time and exact-duration execution share the same live views.
-        find<QAction>(window, "resetAction")->trigger(); choose(view, "TIMER");
+        find<QAction>(window, "resetAction")->trigger(); release("TIMER"); choose(view, "TIMER");
         find<QAction>(window, "virtualTimeViewAction")->trigger();
         auto* duration = find<QSpinBox>(window, "virtualTimeDuration");
         auto* unit = find<QComboBox>(window, "virtualTimeUnit");
@@ -178,6 +240,7 @@ int main(int argc, char** argv) {
         const auto pausedClock = clock->text(); QApplication::processEvents();
         check(advance->isEnabled() && clock->text() == pausedClock, "Pause must cancel remaining duration");
         find<QAction>(window, "resetAction")->trigger(); check(clock->text().startsWith("t = 0 µs"), "Reset clears elapsed time");
+        release("TIMER"); choose(view, "TIMER");
         if (argc > 1) check(window.grab().save(QString::fromLocal8Bit(argv[1]) + ".time.png"), "Save time controls");
         auto* watchTree = find<QTreeWidget>(window, "valueWatchesTree");
         find<QPushButton>(*explorer, "watchPeripheralButton")->click();
@@ -203,6 +266,28 @@ int main(int argc, char** argv) {
         });
         check(gpioWatch->text(1) == "0x00001234" && values->item(values->currentRow(), 1)->text() == "0x00001234",
               "Register edit refreshes the table and watch");
+        check(bits->item(2, 2)->text() == "1" && bits->item(2, 3)->text().contains("Haut"),
+              "Register edit refreshes the decoded bit value and its meaning");
+        bits->setCurrentCell(25, 2);
+        check(editField->isEnabled(), "A writable GPIO bit can be modified in the Bits table");
+        submitDialog([editField] { editField->click(); }, [](QDialog& dialog, QPushButton*) {
+            find<QLineEdit>(dialog, "registerFieldWriteValue")->setText("1");
+        });
+        check(bits->item(25, 2)->text() == "1" && gpioWatch->text(1) == "0x02001234",
+              "Editing GPIO25 updates its bit and preserves other GPIO values");
+        release("IO_BANK0"); choose(view, "IO_BANK0");
+        find<QLineEdit>(*explorer, "registerFilter")->setText("GPIO14_CTRL");
+        bits->setCurrentCell(0, 2);
+        check(values->item(values->currentRow(), 1)->text() == "0x0000001f" && bits->rowCount() >= 5 && editField->isEnabled(),
+              "Other GPIO controls are editable with their simulated value");
+        submitDialog([editField] { editField->click(); }, [](QDialog& dialog, QPushButton*) {
+            find<QLineEdit>(dialog, "registerFieldWriteValue")->setText("5");
+        });
+        check(values->item(values->currentRow(), 1)->text() == "0x00000005", "A different GPIO accepts a field write");
+        choose(view, "PWM");
+        find<QLineEdit>(*explorer, "registerFilter")->setText("0x400500a4");
+        check(bits->rowCount() == 32 && bits->item(0, 2)->text() == "0" &&
+              bits->item(0, 3)->text().contains("non documentée"), "Registers without field metadata show their raw bits");
         choose(view, "UART0");
         find<QPushButton>(*explorer, "watchPeripheralButton")->click();
         check(watchTree->topLevelItemCount() == 3 && watchTree->topLevelItem(2)->text(0) == "UART0", "Multiple peripherals and registers coexist");
@@ -285,6 +370,9 @@ int main(int argc, char** argv) {
             check(watchTree->topLevelItemCount() == (pico2 ? 0 : 3), "Watch addresses stay associated with the chip");
             auto* wiring = find<QTableWidget>(window, "boardWiringTable");
             check(wiring->item(0, 1)->text() == (wifi ? "CYW43 · WL_GPIO0" : "GPIO25"), "Selected board must show its LED wiring");
+            auto* led = find<QLabel>(window, "boardLedState");
+            check(led->isVisible() && led->text() == (wifi ? "LED intégrée · état indisponible" : "LED intégrée · éteinte"),
+                  "Changing boards refreshes the status-bar LED");
             window.loadDemo(); open->trigger(); explorer = find<QDialog>(window, "peripheralExplorer");
             if (wifi) {
                 choose(find<QComboBox>(*explorer, "peripheralExplorerView"), "@CYW43");
@@ -298,11 +386,22 @@ int main(int argc, char** argv) {
         find<QAction>(window, "overviewAction")->trigger(); window.resize(1280, 800); QApplication::processEvents();
         check(window.width() <= 1280 && window.height() <= 800, "New views must not enlarge the main window minimum");
         if (argc > 2) {
-            window.selectBoard(picodbg::Board::Pico2W); window.loadFile(QString::fromLocal8Bit(argv[2]));
+            const auto firmware = QString::fromLocal8Bit(argv[2]);
+            auto* run = find<QAction>(window, "runAction");
+            auto* led = find<QLabel>(window, "boardLedState");
+            window.selectBoard(picodbg::Board::Pico2);
+            check(window.loadFile(firmware), "Load the RP2350 peripheral demo");
+            run->trigger(); waitUntil([&] { return run->isEnabled(); });
+            check(led->text() == "LED intégrée · allumée", "Running firmware lights the simulated Pico 2 LED");
+            find<QAction>(window, "resetAction")->trigger();
+            check(led->text() == "LED intégrée · éteinte", "Reset switches off the status-bar LED");
+            window.selectBoard(picodbg::Board::Pico2W);
+            check(window.loadFile(firmware), "Load the RP2350 peripheral demo on a W board");
             open->trigger(); explorer = find<QDialog>(window, "peripheralExplorer");
             choose(find<QComboBox>(*explorer, "peripheralExplorerView"), "UART0");
             auto* tabs = find<QTabWidget>(*explorer, "peripheralExplorerTabs"); tabs->setCurrentIndex(1);
-            auto* run = find<QAction>(window, "runAction"); run->trigger(); waitUntil([&] { return run->isEnabled(); });
+            run->trigger(); waitUntil([&] { return run->isEnabled(); });
+            check(led->text() == "LED intégrée · état indisponible", "GP25 writes leave the W LED unavailable");
             check(find<QPlainTextEdit>(*tabs->widget(1), "uartOutput")->toPlainText() == "OK", "Independent terminal must receive firmware TX");
             find<QLineEdit>(*tabs->widget(1), "uartInput")->setText("RX");
             find<QPushButton>(*tabs->widget(1), "uartSend")->click();

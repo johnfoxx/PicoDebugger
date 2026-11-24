@@ -21,7 +21,7 @@ Le profil Pico 2 réutilise actuellement le moteur Thumb du RP2040 avec quelques
 | SysTick | Temps virtuel, horloge CPU uniquement | Compteur/état virtuel ; entrée d'exception refusée |
 | SIO CPUID/FIFO/spinlocks | Oui ; IRQ FIFO modélisées | Oui ; IRQ FIFO en attente, pas d'entrée M33 |
 | SIO GPIO OUT/OE et SET/CLR/XOR | Latches de sortie uniquement | Latches bas/hauts aux adresses RP2350 |
-| Broches externes / pinmux | Non | Non |
+| GPIO du banc 0 | Contrôle, pads, niveaux SIO et IRQ | Idem, avec isolation des pads |
 | Timer | Compteur 64 bits, quatre alarmes/IRQ ; temps virtuel | TIMER0/1 indépendants, LOCKED/SOURCE, alarmes/IRQ ; temps virtuel |
 | UART0/1 | FIFO, loopback, TX/RX, IRQ et timeout virtuel | Idem, IRQ33/34 |
 | SPI0/1 | Maître loopback, FIFO et IRQ | Idem, IRQ31/32 |
@@ -55,7 +55,7 @@ La GUI lit l'état entre deux tranches synchrones. Les lectures d'inspection ne 
 
 Les watchpoints s'arrêtent **après** l'instruction, y compris sur les plages qui se chevauchent et les empilements d'exception. Ils ne déclenchent pas sur le fetch des instructions. Les breakpoints s'arrêtent avant instruction. BKPT est un arrêt du débogueur, PC avancé à l'instruction suivante.
 
-La pile affichée est brute, sans reconstruction des appels C++. Les symboles proches ne prouvent pas qu'un mot de pile soit une adresse de retour.
+Dans l’inspecteur de pile, **Hex / bin** affiche les bits de la valeur quand ils sont disponibles. Un clic alterne entre hexadécimal et binaire sans zéros de tête. Le double-clic édite une valeur modifiable dans ce format. La colonne **Décodé** conserve la représentation du type.
 
 ## Timers et inspection des périphériques
 
@@ -65,7 +65,7 @@ Les quatre lignes IRQ alimentent les deux contextes NVIC. Un niveau maintenu ne 
 
 La source watchdog/horloges n'est **pas** émulée : le timer avance sans initialisation du tick matériel. DBGPAUSE accepte les bits documentés et le module peut recevoir un masque de cœurs arrêtés, mais l'ordonnanceur n'émule pas les signaux de debug matériel. La pause hôte fige tout le temps virtuel. La commande explicite d’avance avec CPU figés continue les périphériques et SysTick sans simuler un arrêt de debug matériel : les bits DBGPAUSE ne sont donc pas invoqués par ce mode. Voir [VIRTUAL_TIME.md](VIRTUAL_TIME.md). Les accès MMIO étroits, alias W1C, délais APB et comportements réservés restent hors couverture. Les tests sont fonctionnels ; pas de comparaison sur silicium effectuée.
 
-Le panneau **Périphériques** recense les blocs RP2040 et RP2350, y compris ceux sans modèle. Filtrage par nom, registre, champ ou adresse ; catalogue intégré avec `Ctrl+P`, fenêtre indépendante avec `Ctrl+Maj+I`. Double-cliquer sur un bloc dans le catalogue intégré ouvre un inspecteur en onglet, détachable avec son propre contexte cœur. La fenêtre indépendante montre registres et champs simultanément. Les tableaux montrent adresses, valeurs, accès et champs connus. Un inspecteur dédié décode les valeurs et leur signification. ADC, I2C, DMA et PIO sont maintenant décrits sans être émulés ; les modèles TIMER0/1, UART/SPI/PWM, RESETS, SIO/PPB et scratch WATCHDOG exposent leur état disponible. Le catalogue contient 587/783 registres et 1 653/2 373 champs (RP2040/RP2350, alias compris), sans prétendre être exhaustif. USB, horloges et plusieurs autres blocs ont encore une description de registre absente ou incomplète ; aucun import SVD n'est livré.
+Le panneau **Périphériques** recense les blocs RP2040 et RP2350. Les modèles TIMER0/1, UART/SPI/PWM, RESETS, SIO/PPB et scratch WATCHDOG exposent leur état disponible. Le catalogue SVD du Pico SDK ajoute les descriptions des registres et champs en consultation. Les instructions de chargement et d’édition des champs figurent dans [BOOT_AND_PERIPHERALS.md](BOOT_AND_PERIPHERALS.md#inspection-détaillée-des-registres).
 
 Les particularités RP2350, la couverture exacte de chaque nouveau modèle, le démarrage ELF direct, les fenêtres UART et la correction Wayland sont détaillés dans [BOOT_AND_PERIPHERALS.md](BOOT_AND_PERIPHERALS.md). Le CPU M33 reste incomplet : rendre une IRQ visible dans NVIC ne rend pas son handler exécutable.
 

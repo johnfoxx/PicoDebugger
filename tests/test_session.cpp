@@ -28,6 +28,9 @@ void boards() {
         for (size_t i = 0; i < baseMap.regions.size(); ++i)
             check(baseMap.regions[i].begin == d.memory.description().regions[i].begin, "Wi-Fi must not shift MCU addresses");
         const uint32_t timer = pico2 ? 0x400b0000 : 0x40054000;
+        d.advanceTime(3);
+        check(d.memory.peek(timer + 0x28, 4) == 0, "Timer remains stopped until released");
+        d.memory.write(pico2 ? 0x40023000 : 0x4000f000, 1u << (pico2 ? 23 : 21), 4);
         d.advanceTime(9); check(d.memory.peek(timer + 0x28, 4) == 9, "Board uses correct timer model");
         const auto revision = d.revision();
         unsigned cpuAccesses = 0;
@@ -74,6 +77,7 @@ void time() {
     Debugger d;
     rejected([&] { d.advanceTime(1); }); rejected([&] { d.runFor(1); });
     d.loadImage(demoImage());
+    d.memory.write(0x4000f000, 1u << 21, 4);
     const auto pc = d.cpus[0].r[15]; const auto revision = d.revision();
     d.memory.write(0x40054010, 5, 4); d.memory.write(0x40054038, 1, 4);
     d.memory.write(0xe000e014, 3, 4); d.memory.write(0xe000e010, 7, 4);

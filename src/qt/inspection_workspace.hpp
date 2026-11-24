@@ -16,7 +16,8 @@ public:
     void addInspection(const QString& key, const QString& title, QWidget* page,
                        std::function<void(bool)> presentationChanged);
     bool revealInspection(const QString& key);
-    void toggleDetached(const QString& key);
+    void toggleDetached(const QString& key, const QByteArray& geometry = {});
+    QByteArray detachedGeometry(const QWidget* page) const;
     void gatherInspections();
     void clearInspections();
 private:

@@ -6,6 +6,7 @@
 #include <utility>
 
 namespace picodbg {
+enum class LedState { Unavailable, Off, On };
 enum class StopKind { Ready, Step, Breakpoint, Watchpoint, Fault, Unsupported, Idle, User, Budget };
 struct Stop {
     StopKind kind = StopKind::Ready;
@@ -43,6 +44,7 @@ public:
     virtual void advanceTime(uint64_t microseconds) = 0;
     virtual uint64_t virtualTime() const = 0;
     virtual const BoardDescription& board() const = 0;
+    virtual LedState onboardLed() const { return LedState::Unavailable; }
     virtual const ChipDescription& description() const = 0;
     virtual uint32_t peek(uint32_t address, unsigned size, unsigned core = 0) const = 0;
     void writeMemory(uint32_t address, uint32_t value, unsigned size, unsigned core = 0);

@@ -4,6 +4,7 @@
 #include <QDialog>
 #include <QTreeWidget>
 #include <QTimer>
+#include <QSet>
 #include <functional>
 
 class QLabel;
@@ -53,7 +54,7 @@ FrameField stackArrayElement(const FrameField& field, unsigned index);
 class StackMemoryView : public QTreeWidget {
 public:
     enum Column { Address, Marker, Hex, Ascii };
-    enum EditMode { HexByte, AsciiByte, Word, Typed };
+    enum EditMode { HexByte, AsciiByte, Word, Typed, RawHex, RawBinary };
     explicit StackMemoryView(bool overview, QWidget* parent = nullptr);
     void showOverview(const picodbg::DebugTarget& target, unsigned core, bool active, const QVector<StackViewFrame>& frames,
                       const QString& status, bool writable, const QVector<StackSpan>& selections, StackValueChanges& changes);
@@ -100,7 +101,7 @@ public:
     std::function<void()> refreshRequested;
     std::function<void(StackSpan, bool)> rangeSelected;
     std::function<void(StackMemoryView::EditMode, uint32_t, int)> editMemory;
-    std::function<void(const FrameField&, const QString&)> editTyped;
+    std::function<void(const FrameField&, const QString&, StackMemoryView::EditMode)> editTyped;
 private:
     void showFields(const picodbg::DebugTarget& target, const StackValueChanges& changes);
     QString zoneKey(const StackFieldView& field) const;
@@ -128,6 +129,9 @@ private:
     struct DecodedSample { QString value; qint64 until; };
     QHash<QString, ZoneOption> zoneOptions_;
     QHash<QString, DecodedSample> decodedSamples_;
+    QSet<QString> binaryFields_;
+    QString pendingRawClick_;
+    QTimer rawClick_;
     QTimer changeRepaint_;
     qint64 latestChange_ = 0;
 };

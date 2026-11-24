@@ -1,4 +1,5 @@
 #include "value_watches.hpp"
+#include "svd_catalog.hpp"
 #include "debug_access.hpp"
 #include "debug_value.hpp"
 #include "window_theme.hpp"
@@ -151,7 +152,7 @@ void ValueWatches::updateTarget(const picodbg::DebugTarget& target) {
         chip_ = target.description().chip;
         const QSignalBlocker blocker(tree_);
         tree_->clear();
-        devices_ = picodbg::peripheralCatalog(chip_);
+        devices_ = picosvd::catalog(chip_);
         for (const auto& watch : watches_[chip_]) tree_->addTopLevelItem(makeItem(watch));
         refreshActions();
     }

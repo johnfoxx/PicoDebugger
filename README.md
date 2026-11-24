@@ -6,14 +6,14 @@ Le moteur est écrit en **C++11**, indépendant de Qt, et l'interface utilise **
 
 **L'émulation reste partielle sur les quatre cartes.** Elle ne reproduit pas tout le silicium et ne garantit pas l'exécution d'un firmware Pico SDK arbitraire. **En mode réel, le firmware s'exécute sur le matériel**, avec ses véritables CPU et périphériques ; les limites portent alors sur les accès de débogage et les vues disponibles. Le catalogue de registres reste incomplet, certains accès sont protégés et les composants externes ne sont pas tous accessibles par SWD. L'intégration matérielle est testée avec des doubles de protocole ; sa validation avec une sonde et une carte physique reste à réaliser.
 
-## Nouveautés de la v0.10.0
+## Nouveautés de la v0.11.0
 
-- **Espace de débogage modulable.** Juxtaposez Mémoire et Périphériques ou donnez la place à l’un des deux. Détachez les panneaux et retrouvez votre disposition au prochain lancement. La console et le moniteur UART restent accessibles dans Outils.
-- **Mémoire et périphériques éditables.** Lisez les adresses, les octets hexadécimaux et l’ASCII. Suivez plusieurs plages ou registres avec une couleur commune à la grille et à Surveillance. Les couleurs d’accès distinguent notamment lecture seule et écriture.
-- **Registres et piles par cœur.** Affichez les deux cœurs ou ouvrez le détail d’un seul. Un inspecteur détaché associe les octets de la trame aux variables, arguments et registres sauvegardés identifiés, avec édition et indication des changements récents.
-- **Aller-retour entre édition et débogage.** L’IDE s’ouvre maximisé et montre à l’arrêt le désassemblage complet. **Débogage → Quitter le débogage** ferme le débogueur et rend toute la largeur à l’éditeur C.
+- **Démarrage et GPIO.** Le firmware libère explicitement les périphériques maintenus en reset. Le modèle couvre le banc GPIO numérique et le voyant intégré des Pico et Pico 2 sans Wi-Fi.
+- **Inspection des périphériques.** Consultez et modifiez les champs depuis la vue **Bits**, enrichissez le catalogue avec un SVD et naviguez plus rapidement dans les grandes listes de registres.
+- **Sessions par projet.** L’IDE rouvre le projet actif à sa fermeture. Chaque projet retrouve sa disposition de débogage, ses onglets de périphériques et les registres sélectionnés. **Ctrl+Maj+O** rétablit la disposition **Cœur 0**.
+- **IDE et pile.** Détachez les onglets de fichiers ou placez deux fichiers côte à côte. **Ctrl+clic** ouvre les définitions via clangd. L’inspecteur de pile affiche les données brutes en hexadécimal ou en binaire, à côté de la valeur décodée.
 
-[Manuel utilisateur](UserManual.md) · [Changelog détaillé de la v0.10.0](docs/RELEASES.md#v0-10-0)
+[Manuel utilisateur](UserManual.md) · [Changelog détaillé de la v0.11.0](docs/RELEASES.md#v0-11-0)
 
 ## Commencer
 
@@ -36,7 +36,7 @@ Le moteur est écrit en **C++11**, indépendant de Qt, et l'interface utilise **
 
 ## Installation et lancement
 
-Prérequis : CMake ≥ 3.16, un compilateur C++11 et les fichiers de développement Qt Widgets 5.15 ou 6. Python 3 permet de générer les ELF d'exemple et d'exécuter le test d'intégration ELF. Avec Qt6, seule la couche graphique requiert C++17 ; le moteur reste en C++11.
+La compilation requiert CMake ≥ 3.16, un compilateur C++11 et les modules Qt Widgets, Xml et Network en version 5.15 ou 6. Python 3 permet de générer les ELF d’exemple et d’exécuter le test d’intégration ELF. La couche graphique Qt6 requiert C++17.
 
 Depuis la racine du dépôt, avec Qt déjà installé :
 
@@ -56,7 +56,7 @@ cmake -S . -B build-qt6 -DPICODBG_GUI=ON -DPICODBG_QT_MAJOR=6
 cmake --build build-qt6 -j2
 ```
 
-La v0.10.0 a été testée sous Linux avec **Qt 5.15.15**. Les 21 tests de la configuration Qt et les 13 tests du moteur seul passent. Les échanges avec clangd, les outils SWD et Doxygen sont vérifiés avec des processus simulés. Le moniteur UART est vérifié via un pseudo-terminal. La validation sur carte physique, avec Qt6, Qt Serial Port, clangd et Doxygen réels ainsi que le Pico SDK reste à faire. `-DPICODBG_GUI=OFF` permet de compiler le moteur et ses tests sans Qt.
+La v0.11.0 a été testée sous Linux avec **Qt 5.15.15**. Les 21 tests de la configuration Qt et les 13 tests du moteur seul passent. Les échanges avec clangd, les outils SWD et Doxygen sont vérifiés par la suite de tests avec des processus simulés. Le moniteur UART est vérifié via un pseudo-terminal. La validation complète avec Qt6, le Pico SDK et une carte physique reste à faire. `-DPICODBG_GUI=OFF` permet de compiler le moteur et ses tests sans Qt.
 
 Ouvrir directement un projet ou le débogueur :
 
@@ -72,13 +72,13 @@ Le choix de carte est explicite : `--board pico|pico_w|pico2|pico2_w`. L'ancienn
 
 ## Programmer en C dans l'IDE
 
-Sans argument, PicoDebugger ouvre l'IDE. On peut créer, ouvrir et compiler un projet avant d'ouvrir le débogueur. Le bouton **Débogueur**, **Ctrl+F5** et **F5** l'ouvrent à la demande. Dans l'autre sens, **Fichier → Ouvrir l'IDE C** réaffiche la fenêtre de projet. Les deux fenêtres partagent la session. Dans **Projet → Nouveau projet…**, choisir **Bare metal · sans Pico SDK** pour un démarrage C autonome en RAM, ou **Avec Pico SDK** pour utiliser le SDK installé. Les projets bare metal Pico 2 et Pico 2 W reçoivent `include/rp2350_regs.h`. [Guide bare metal et en-tête RP2350](docs/Guide_Pico_2_W_Bare_Metal_RP2350.md#utiliser-len-tête-rp2350-sans-sdk)
+Sans argument, PicoDebugger ouvre l’IDE et reprend le projet actif lors de sa dernière fermeture. **Fermer le projet** avant de quitter ramène à l’accueil au lancement suivant. Le bouton **Débogueur**, **Ctrl+F5** et **F5** ouvrent le débogueur à la demande. **Fichier → Ouvrir l’IDE C** réaffiche la fenêtre de projet. Dans **Projet → Nouveau projet…**, choisir **Bare metal · sans Pico SDK** pour un démarrage C autonome en RAM, ou **Avec Pico SDK** pour utiliser le SDK installé. Les projets bare metal Pico 2 et Pico 2 W reçoivent `include/rp2350_regs.h`. [Guide bare metal et en-tête RP2350](docs/Guide_Pico_2_W_Bare_Metal_RP2350.md#utiliser-len-tête-rp2350-sans-sdk)
 
 Les deux modèles expliquent la compilation et le firmware dans leurs sources. Le modèle autonome commente aussi la toolchain, le script de lien SRAM, les vecteurs, la copie de `.data` et l'effacement de `.bss`. Les démos sans compilateur ARM documentent les instructions Thumb au niveau des opcodes. [Lire les exemples générés](docs/IDE.md#premier-projet)
 
 L'IDE réunit les fichiers du projet, les onglets d'édition, la coloration C et les diagnostics cliquables. **Ctrl+Espace** ouvre l'autocomplétion lorsque clangd est disponible. Le panneau **Projet → Git…** gère l'index, les diffs, les commits et le dépôt distant avec le Git installé.
 
-Les languettes **Recherche** et **TODO** se replient à droite de l'éditeur. La recherche accepte le texte simple et les regex, surligne les occurrences et permet de remplacer ou d'insérer du texte dans tout le projet avec aperçu. Le panneau TODO filtre les tâches du projet et ouvre leur ligne de code. [Recherche, opérations globales et TODO](docs/IDE.md#rechercher-et-modifier-du-texte)
+La barre **Recherche** se trouve entre l’éditeur et la console. Elle accepte le texte simple et les regex, surligne les occurrences et permet de remplacer ou d’insérer du texte dans tout le projet avec aperçu. Le panneau **TODO** filtre les tâches du projet et ouvre leur ligne de code. [Recherche, opérations globales et TODO](docs/IDE.md#rechercher-et-modifier-du-texte)
 
 Le menu **Documentation** retrouve les balises Doxygen dans les sources et lance la génération avec Doxygen. Les tags de suivi remontent dans le panneau TODO quelle que soit leur casse. **Vues → Thème** bascule entre **Clair** et **Sombre** dans l'IDE et le débogueur. [Documenter le code avec Doxygen](docs/IDE.md#documenter-le-code-avec-doxygen)
 
@@ -127,7 +127,7 @@ Le tableau suivant décrit le **mode émulation**. Les différences du mode rée
 | Démarrage | Chargement direct de l'image, SP/PC issus des vecteurs reconnus ; sinon `e_entry` et sommet de SRAM, avec diagnostic explicite. Boot ROM et lancement ROM du cœur 1 absents. |
 | Exécution | Pas instruction du cœur sélectionné, exécution alternée des cœurs démarrés, pause, reset/restart et démarrage manuel d'un cœur. Temps virtuel reproductible, sans précision cycle par cycle. |
 | Temps virtuel | Horloge depuis reset, avance choisie en µs/ms avec firmware ou CPU figés, pause interruptible depuis la GUI. |
-| Cartes | Quatre profils, câblage décrit et LED GPIO25/CYW43 distinguée ; radio et LED Wi-Fi non émulées. |
+| Cartes | Quatre profils, câblage décrit et voyant de LED intégrée dans la barre d’état. Sur les profils W, l’état du CYW43 est indisponible. |
 | CPU | Registres des deux cœurs côte à côte, SP/LR/PC, xPSR, MSP/PSP, CONTROL, PRIMASK, flags NZCV/T/IPSR et états retenu/sommeil/lockup. |
 | Assembleur | Désassemblage Thumb, opcodes, adresses, symbole ELF proche, suivi de PC et navigation par expression. PC désigne la prochaine instruction à exécuter. |
 | Mémoire et pile | Vue hexadécimale/ASCII, cartographie des régions et piles par cœur avec le nom de fonction, les mots SRAM et les appels observés. |
@@ -139,7 +139,7 @@ Le tableau suivant décrit le **mode émulation**. Les différences du mode rée
 | Exemples | ELF d'exemple générables sans compilateur ARM et tests d'intégration utilisant directement le moteur. |
 | Source C | Correspondance ligne C ↔ adresses via DWARF, aperçu et surlignage partagé avec l'IDE. F10 avance d'une instruction. |
 
-Les tableaux d'état sont en lecture seule. Les modifications de la cible viennent des instructions exécutées, du chargement/reset, du démarrage explicite d'un cœur, de l'injection UART ou d'une avance explicite du temps. Le rafraîchissement lit un instantané cohérent entre les tranches d'exécution ; il ne constitue pas une trace de chaque instruction ou de chaque transition entre deux rafraîchissements.
+Les écritures depuis le débogueur se font sur cible arrêtée, par les commandes d'édition de la mémoire, des registres ou de leurs champs. Le rafraîchissement présente un instantané entre les tranches d'exécution.
 
 ### Cartes prises en charge
 
@@ -147,9 +147,9 @@ Les quatre cibles sont sélectionnables dans le GUI ou avec `--board`. **Toutes 
 
 | Carte | Valeur de `--board` | CPU ciblé par le modèle | SRAM / Flash | LED intégrée et limite du modèle |
 |---|---|---|---|---|
-| Raspberry Pi Pico | `pico` | RP2040 / Cortex-M0+ | 264 Kio / 2 Mio | GPIO25 : registre de sortie observable, sans simulation électrique de la LED. |
+| Raspberry Pi Pico | `pico` | RP2040 / Cortex-M0+ | 264 Kio / 2 Mio | Le voyant suit la sortie GPIO25. |
 | Raspberry Pi Pico W | `pico_w` | RP2040 / Cortex-M0+ | 264 Kio / 2 Mio | CYW43, WL_GPIO0 : LED non émulée. GPIO25 sert à la sélection radio. |
-| Raspberry Pi Pico 2 | `pico2` | RP2350 / Cortex-M33 | 520 Kio / 4 Mio | GPIO25 : registre de sortie observable, sans simulation électrique de la LED. |
+| Raspberry Pi Pico 2 | `pico2` | RP2350 / Cortex-M33 | 520 Kio / 4 Mio | Le voyant suit la sortie GPIO25. |
 | Raspberry Pi Pico 2 W | `pico2_w` | RP2350 / Cortex-M33 | 520 Kio / 4 Mio | CYW43, WL_GPIO0 : LED non émulée. GPIO25 sert à la sélection radio. |
 
 Pico W utilise le même modèle RP2040 que Pico ; Pico 2 W utilise le même modèle RP2350 que Pico 2. Leurs informations de câblage diffèrent, mais ces profils W n'ajoutent aucune émulation du CYW43, du Wi-Fi ou du Bluetooth. Le RP2350 est pris en charge uniquement en ARM/Thumb ; son mode RISC-V/Hazard3 n'est pas émulé.
@@ -192,19 +192,19 @@ Le détail des instructions, fautes, exceptions, alias mémoire et hypothèses t
 | SPI0/1 | Partielle | Partielle | Partielle | Partielle | Maître Motorola 4–16 bits, FIFO et IRQ, uniquement en loopback interne. Pas d'esclave externe, de mode esclave ni de DMA. |
 | PWM | Partielle | Partielle | Partielle | Partielle | 8 slices sur RP2040, 12 sur RP2350 ; compteurs, diviseur, CC/TOP bufferisés, wrap et IRQ. Pas de forme d'onde sur broche, d'entrée B ni de DREQ/DMA. |
 | SIO : CPUID, FIFO inter-cœurs, spinlocks, GPIO | Partielle | Partielle | Partielle | Partielle | Identifiant de cœur, échanges FIFO, verrous et registres GPIO OUT/OE avec SET/CLR/XOR ; registres bas/hauts aux adresses RP2350. Pas de pinmux, d'entrées électriques, d'interpolateurs ni de doorbells RP2350. |
-| Commande de la LED intégrée | Partielle | Aucune | Partielle | Aucune | Pico/Pico 2 : seul le latch GPIO25 est observable. Sur W, la LED dépend de WL_GPIO0 du CYW43 non émulé ; écrire GPIO25 ne la commande pas. |
-| RESETS | Partielle | Partielle | Partielle | Partielle | Reset et maintien en reset des modèles TIMER/UART/SPI/PWM ; complétion immédiate, lignes initialement relâchées. Pas de reset global matériel ni de domaines d'alimentation. |
+| Commande de la LED intégrée | GPIO25/SIO | Aucune | GPIO25/SIO | Aucune | Le voyant suit la configuration du pad et la sortie SIO. Sur W, il affiche un état indisponible pour WL_GPIO0. |
+| RESETS | Partielle | Partielle | Partielle | Partielle | Lignes actives au démarrage. Libération immédiate des blocs sélectionnés. Maintien en reset des modèles TIMER/UART/SPI/PWM et des banques GPIO. |
 | WATCHDOG | Partielle | Partielle | Partielle | Partielle | Registres SCRATCH0..7 uniquement ; compteur, expiration et reset watchdog absents. |
 | NVIC / SysTick / SCB | Partielle | Partielle | Partielle | Partielle | Enable/pending, compteur virtuel, VTOR et état propre à chaque cœur ; priorités configurables absentes. RP2350 : deux banques pour IRQ0..51, sans exécution des exceptions M33. |
 | ADC / I2C0/1 / DMA / PIO | Aucune | Aucune | Aucune | Aucune | Registres et champs décrits, sans conversions ADC, transferts I2C/DMA ni exécution PIO. PIO0/1 sur RP2040 ; PIO0/1/2 sur RP2350. Valeurs courantes indisponibles. |
 | USB, horloges / PLL, gestion de l'alimentation | Aucune | Aucune | Aucune | Aucune | Blocs inventoriés, descriptions incomplètes ou absentes. Pas de trafic USB, de fréquences physiques ni de simulation de l'alimentation. |
-| Broches, pinmux et composants externes | Aucune | Aucune | Aucune | Aucune | Connexions de carte décrites, sans signaux électriques ni capteurs/actionneurs externes simulés. |
+| GPIO du banc 0 | Partiel | Partiel | Partiel | Partiel | Configuration des pads, contrôle numérique SIO et interruptions. Les connexions électriques externes restent documentaires. |
 | CYW43, Wi-Fi et Bluetooth | Sans objet | Aucune | Sans objet | Aucune | Composant radio externe des cartes W ; câblage documenté, sans modèle de puce ni de réseau. |
 | Autres blocs propres au RP2350 : HSTX, OTP, TRNG, SHA256 | Sans objet | Sans objet | Aucune | Aucune | Présence dans la cartographie uniquement ; aucun comportement émulé. |
 
 **Une description de registre n'est pas une émulation.** Le catalogue peut afficher le nom, l'adresse et les champs d'un bloc sans fournir de valeur courante ni permettre au firmware de l'utiliser. Les autres blocs inventoriés, notamment RTC sur RP2040 et CoreSight, restent sans modèle d'exécution. Un accès ou un mode hors couverture peut arrêter l'exécution avec un diagnostic « non émulé ».
 
-Le catalogue contient **38 blocs / 587 registres / 1 653 champs pour RP2040**, et **65 blocs / 783 registres / 2 373 champs pour RP2350**, alias DMA compris. Ces nombres comptent les descriptions, pas les fonctionnalités émulées. Les états inconnus ne sont pas remplacés par zéro ou par une valeur de reset. Le Wi-Fi, le Bluetooth et les composants externes ne sont pas simulés.
+Le catalogue fourni décrit notamment les GPIO des deux puces. **Vues → Périphériques → Télécharger le catalogue SVD de la puce** charge les descriptions du SDK officiel. Le débogueur détecte aussi le SVD du Pico SDK configuré et peut importer un fichier SVD local. Les registres ajoutés par ce catalogue restent documentaires en émulation.
 
 Voir [Démarrage ELF, périphériques et Qt](docs/BOOT_AND_PERIPHERALS.md) pour les limites de chaque modèle.
 

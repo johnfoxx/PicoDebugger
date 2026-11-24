@@ -15,8 +15,8 @@
 #include <QPushButton>
 #include <QShortcut>
 #include <QSignalBlocker>
-#include <QSplitter>
 #include <QStackedWidget>
+#include <QSplitter>
 #include <QTabBar>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -24,6 +24,11 @@
 
 namespace picoide {
 namespace {
+class ToolPages : public QStackedWidget {
+public:
+    QSize sizeHint() const override { return currentWidget() ? currentWidget()->sizeHint() : QSize(); }
+    QSize minimumSizeHint() const override { return currentWidget() ? currentWidget()->minimumSizeHint() : QSize(); }
+};
 constexpr int resultLimit = 2000;
 
 QLabel* statusLabel(const char* name) {
@@ -73,30 +78,32 @@ void replaceRange(CodeEditor& editor, TextRange range, const QString& value) {
 }
 }
 
-TextTools::TextTools(QWidget* workspace, QWidget* parent)
-    : QWidget(parent), scanner_(this) {
-    auto* layout = new QHBoxLayout(this);
+TextTools::TextTools(QWidget* parent) : QWidget(parent), scanner_(this) {
+    setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    setStyleSheet("QPushButton { padding:3px 6px; } QTabBar::tab { padding:4px 10px; }");
+    auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(3);
-    splitter_ = new QSplitter;
-    splitter_->addWidget(workspace);
-    pages_ = new QStackedWidget;
-    pages_->setObjectName("ideTextToolsPanel");
-    pages_->setMinimumWidth(285);
-    pages_->addWidget(buildSearch());
-    pages_->addWidget(buildTodo());
-    splitter_->addWidget(pages_);
-    splitter_->setStretchFactor(0, 1);
-    splitter_->setChildrenCollapsible(false);
-    layout->addWidget(splitter_, 1);
+    layout->setSpacing(2);
     rail_ = new QTabBar;
     rail_->setObjectName("ideTextToolsRail");
-    rail_->setShape(QTabBar::RoundedEast);
+    rail_->setShape(QTabBar::RoundedNorth);
+    rail_->setExpanding(false);
     rail_->addTab("Recherche");
     rail_->addTab("TODO");
     rail_->setTabToolTip(Search, "Recherche et remplacement");
     rail_->setTabToolTip(Todo, "Tâches signalées dans le projet");
-    layout->addWidget(rail_, 0, Qt::AlignTop);
+    auto* railRow = new QHBoxLayout;
+    railRow->addWidget(rail_);
+    searchStatus_ = statusLabel("ideSearchStatus");
+    railRow->addWidget(searchStatus_, 1);
+    searchStatus_->hide();
+    layout->addLayout(railRow);
+    pages_ = new ToolPages;
+    pages_->setObjectName("ideTextToolsPanel");
+    pages_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    pages_->addWidget(buildSearch());
+    pages_->addWidget(buildTodo());
+    layout->addWidget(pages_);
     pages_->hide();
     auto* escape = new QShortcut(QKeySequence(Qt::Key_Escape), pages_);
     escape->setContext(Qt::WidgetWithChildrenShortcut);
@@ -121,40 +128,47 @@ QWidget* TextTools::buildSearch() {
     scope_ = new ChoiceBox;
     scope_->setObjectName("ideSearchScope");
     scope_->addItems({"Fichier actif", "Tout le projet"});
-    top->addWidget(scope_, 1);
-    auto* close = new QPushButton("Fermer");
-    top->addWidget(close);
-    layout->addLayout(top);
-
+    top->addWidget(scope_);
     query_ = new QLineEdit;
     query_->setObjectName("ideSearchQuery");
-    query_->setPlaceholderText("Motif à rechercher");
+    query_->setPlaceholderText("Rechercher…");
     query_->setAccessibleName("Motif à rechercher");
     query_->setClearButtonEnabled(true);
-    layout->addWidget(query_);
-    auto* options = new QHBoxLayout;
+    top->addWidget(query_, 1);
     regex_ = new QCheckBox("Regex");
     regex_->setObjectName("ideSearchRegex");
-    regex_->setToolTip("Expression régulière avec ^ et $ par ligne. Utiliser \\n pour un saut de ligne.");
+    regex_->setToolTip("Utiliser une expression régulière");
     matchCase_ = new QCheckBox("Casse");
     matchCase_->setObjectName("ideSearchCase");
     matchCase_->setToolTip("Respecter les majuscules et minuscules");
-    options->addWidget(regex_);
-    options->addWidget(matchCase_);
-    options->addStretch();
-    layout->addLayout(options);
-    auto* navigation = new QHBoxLayout;
-    previous_ = new QPushButton("Précédent");
+    top->addWidget(regex_);
+    top->addWidget(matchCase_);
+    previous_ = new QPushButton("↑");
     previous_->setObjectName("ideSearchPrevious");
     previous_->setToolTip("Résultat précédent (Maj+F3)");
-    next_ = new QPushButton("Suivant");
+    previous_->setAccessibleName("Résultat précédent");
+    next_ = new QPushButton("↓");
     next_->setObjectName("ideSearchNext");
     next_->setToolTip("Résultat suivant (F3)");
-    auto* refresh = new QPushButton("Actualiser");
+    next_->setAccessibleName("Résultat suivant");
+    auto* refresh = new QPushButton("↻");
     refresh->setObjectName("ideSearchRefresh");
-    navigation->addWidget(previous_); navigation->addWidget(next_); navigation->addWidget(refresh);
-    layout->addLayout(navigation);
+    refresh->setToolTip("Actualiser les résultats");
+    refresh->setAccessibleName(refresh->toolTip());
+    auto* showReplace = new QPushButton("Remplacer…");
+    auto* close = new QPushButton("×");
+    close->setToolTip("Fermer la recherche");
+    close->setAccessibleName(close->toolTip());
+    top->addWidget(previous_);
+    top->addWidget(next_);
+    top->addWidget(refresh);
+    top->addWidget(showReplace);
+    top->addWidget(close);
+    layout->addLayout(top);
 
+    replaceRow_ = new QWidget;
+    auto* replace = new QHBoxLayout(replaceRow_);
+    replace->setContentsMargins(0, 0, 0, 0);
     operation_ = new ChoiceBox;
     operation_->setObjectName("ideSearchOperation");
     operation_->addItem("Remplacer le motif", static_cast<int>(TextOperation::Replace));
@@ -162,26 +176,30 @@ QWidget* TextTools::buildSearch() {
     operation_->addItem("Insérer après le motif", static_cast<int>(TextOperation::AfterMatch));
     operation_->addItem("Ajouter en tête de fichier", static_cast<int>(TextOperation::AtStart));
     operation_->addItem("Ajouter en fin de fichier", static_cast<int>(TextOperation::AtEnd));
-    layout->addWidget(operation_);
+    replace->addWidget(operation_);
     replacement_ = new QPlainTextEdit;
     replacement_->setObjectName("ideSearchReplacement");
     replacement_->setAccessibleName("Texte à écrire");
     replacement_->setPlaceholderText("Texte à écrire");
-    replacement_->setMaximumHeight(62);
-    replacement_->setToolTip("Regex avec motif : $1, \\1, ${nom}, $$, \\n, \\t. Frappe multiligne possible.");
-    layout->addWidget(replacement_);
-    auto* buttons = new QHBoxLayout;
+    replacement_->setFixedHeight(replacement_->fontMetrics().lineSpacing() * 2 + 10);
+    replacement_->setToolTip("Le remplacement accepte plusieurs lignes, ainsi que les groupes capturés en mode regex.");
+    replace->addWidget(replacement_, 1);
     replaceOne_ = new QPushButton("Remplacer");
     replaceOne_->setObjectName("ideSearchReplace");
     replaceAll_ = new QPushButton("Tout remplacer");
     replaceAll_->setObjectName("ideSearchReplaceAll");
-    buttons->addWidget(replaceOne_); buttons->addWidget(replaceAll_);
-    layout->addLayout(buttons);
-    searchStatus_ = statusLabel("ideSearchStatus");
-    layout->addWidget(searchStatus_);
+    replace->addWidget(replaceOne_);
+    replace->addWidget(replaceAll_);
+    layout->addWidget(replaceRow_);
+    replaceRow_->hide();
+    connect(showReplace, &QPushButton::clicked, this, [this] {
+        replaceRow_->setVisible(replaceRow_->isHidden());
+        pages_->updateGeometry();
+        if (!replaceRow_->isHidden()) replacement_->setFocus();
+    });
     searchResults_ = resultTree("ideSearchResults", {"Fichier", "Occurrence"});
-    layout->addWidget(searchResults_, 1);
-    layout->addStretch();
+    searchResults_->setMaximumHeight(122);
+    layout->addWidget(searchResults_);
 
     connect(close, &QPushButton::clicked, this, &TextTools::closePanel);
     connect(query_, &QLineEdit::textChanged, this, [this] { scheduleRefresh(); });
@@ -237,7 +255,8 @@ QWidget* TextTools::buildTodo() {
     todoResults_ = resultTree("ideTodoResults", {"Marqueur", "Fichier", "Commentaire"});
     todoResults_->setColumnWidth(0, 78);
     todoResults_->setColumnWidth(1, 118);
-    layout->addWidget(todoResults_, 1);
+    todoResults_->setMaximumHeight(140);
+    layout->addWidget(todoResults_);
 
     connect(close, &QPushButton::clicked, this, &TextTools::closePanel);
     connect(refresh, &QPushButton::clicked, this, &TextTools::refreshPanel);
@@ -259,18 +278,18 @@ QWidget* TextTools::buildTodo() {
 }
 
 void TextTools::setPage(Page page) {
-    const bool opening = pages_->isHidden();
     rail_->setCurrentIndex(page);
     pages_->setCurrentIndex(page);
     pages_->show();
-    if (opening) splitter_->setSizes({qMax(1, splitter_->width() - panelWidth_), panelWidth_});
+    searchStatus_->setVisible(page == Search);
+    pages_->updateGeometry();
     refreshPanel();
 }
 
 void TextTools::closePanel() {
     if (pages_->isHidden()) return;
-    panelWidth_ = pages_->width();
     pages_->hide();
+    searchStatus_->hide();
     refresh_.stop();
     scanner_.cancel();
     if (editor_) {
@@ -289,6 +308,7 @@ void TextTools::showSearch(bool project, bool replace) {
         if (query_->text().isEmpty() && !selected.contains(QChar::ParagraphSeparator))
             query_->setText(selected);
     }
+    replaceRow_->setVisible(replace);
     setPage(Search);
     if (replace && !query_->text().isEmpty()) replacement_->setFocus();
     else { query_->setFocus(); query_->selectAll(); }

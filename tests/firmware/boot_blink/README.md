@@ -75,7 +75,7 @@ Le build conserve les symboles, désactive LTO et utilise `-O0 -g3`. Les deux va
 | 3 | 1 | 3 | 1 | 1 |
 | 4 | 0 | 4 | 2 | 0 |
 
-Le débogueur affiche **l'état du latch GPIO**, sans dessiner une LED ni simuler une tension. Le temps est virtuel : 500 ms de timer ne correspondent pas nécessairement à 500 ms sur l'ordinateur. Pour parcourir rapidement les transitions, reconstruire avec `HALF_PERIOD_MS=1`. Les symboles C facilitent les points d'arrêt ; l'affichage du source C à côté de l'assembleur reste une fonction future de PicoDbg.
+Le voyant **LED intégrée** de la barre d’état suit GP25. Le temps est virtuel et la durée affichée par le timer peut différer de la durée observée sur l’ordinateur. Pour parcourir rapidement les transitions avec le point d’arrêt, reconstruire avec `HALF_PERIOD_MS=1`.
 
 Pour voir qui écrit le latch, un watchpoint doit viser **l'adresse SET ou CLR effectivement écrite**, pas seulement GPIO_OUT :
 

@@ -187,7 +187,7 @@ void Memory::tick(unsigned core) {
     auto& s = system_.at(core);
     if (!fifo_[core].empty() || fifoErrors_[core])
         s.pending |= (uint64_t(1) << (description_.chip == Chip::RP2040 ? 15u + core : 25u)) & ~s.active;
-    s.pending |= peripherals_.interrupts() & ~s.active;
+    s.pending |= peripherals_.interrupts(core) & ~s.active;
     if (!(s.systickCtrl & 1u)) return;
     if (s.systickValue == 0) s.systickValue = s.systickLoad;
     else if (--s.systickValue == 0) {
@@ -199,7 +199,10 @@ void Memory::advanceTime(uint64_t virtualMicroseconds) {
     peripherals_.advance(virtualMicroseconds); updateInterrupts();
 }
 void Memory::updateInterrupts() {
-    for (auto& s : system_) s.pending |= peripherals_.interrupts() & ~s.active;
+    for (unsigned core = 0; core < system_.size(); ++core) {
+        auto& s = system_[core];
+        s.pending |= peripherals_.interrupts(core) & ~s.active;
+    }
 }
 bool Memory::hasScheduledPeripheralEvent() const { return peripherals_.hasEvents(); }
 bool Memory::receiveUart(unsigned index, uint8_t byte) {

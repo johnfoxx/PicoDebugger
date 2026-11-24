@@ -197,25 +197,42 @@ bool stackMemory(const DebugTarget& target, uint32_t address, unsigned size) {
         && uint64_t(address) + size <= region->end;
 }
 
+static bool readFrameBits(const DebugTarget& target, unsigned core, const FrameField& field, uint64_t& raw) {
+    const auto size = field.type.size;
+    if (!size || size > 8) return false;
+    if (field.reg >= 0 && target.registerAvailable(core, static_cast<unsigned>(field.reg))) {
+        if (size > 4 && (field.reg != 0 || !target.registerAvailable(core, 1))) return false;
+        raw = target.registerValue(core, static_cast<unsigned>(field.reg));
+        if (size < 4) raw &= (uint64_t(1) << (size * 8)) - 1;
+        if (size > 4) raw |= uint64_t(target.registerValue(core, 1)) << 32;
+        return true;
+    }
+    if (!field.inMemory || !stackMemory(target, field.address, size)) return false;
+    raw = 0;
+    for (unsigned i = 0; i < size; ++i) raw |= uint64_t(target.peek(field.address + i, 1, core)) << (8 * i);
+    return true;
+}
+
 QString frameValue(const DebugTarget& target, unsigned core, const FrameField& field) {
     if (!field.rendered.isEmpty()) return field.rendered;
-    const auto size = field.type.size;
-    if (!size || size > 8) return {};
-    try {
-        if (field.reg >= 0 && target.registerAvailable(core, static_cast<unsigned>(field.reg))) {
-            if (size > 4 && (field.reg != 0 || !target.registerAvailable(core, 1))) return {};
-            auto raw = uint64_t(target.registerValue(core, static_cast<unsigned>(field.reg)));
-            if (size < 4) raw &= (uint64_t(1) << (size * 8)) - 1;
-            if (size > 4) raw |= uint64_t(target.registerValue(core, 1)) << 32;
-            return formatScalar(raw, field.type);
-        }
-        if (field.inMemory && stackMemory(target, field.address, size)) {
-            uint64_t raw = 0;
-            for (unsigned i = 0; i < size; ++i) raw |= uint64_t(target.peek(field.address + i, 1, core)) << (8 * i);
-            return formatScalar(raw, field.type);
-        }
-    } catch (const Error&) { return "…"; }
+    uint64_t raw;
+    try { if (readFrameBits(target, core, field, raw)) return formatScalar(raw, field.type); }
+    catch (const Error&) { return "…"; }
     return {};
+}
+QString frameRawValue(const DebugTarget& target, unsigned core, const FrameField& field, bool binary) {
+    if (!field.type.size || field.type.size > 8) return "—";
+    try {
+        uint64_t raw;
+        if (!readFrameBits(target, core, field, raw)) {
+            if (field.rendered.isEmpty()) return "—";
+            auto rendered = field.rendered;
+            if (field.type.kind == FrameType::Pointer) rendered = rendered.section(' ', 0, 0);
+            raw = parseFrameValue(rendered, field.type);
+        }
+        if (binary) return "0b" + QString::number(raw, 2);
+        return "0x" + QString::number(raw, 16).rightJustified(static_cast<int>(field.type.size * 2u), QLatin1Char('0'));
+    } catch (const Error&) { return "…"; }
 }
 
 uint64_t parseFrameValue(const QString& input, const FrameType& type) {

@@ -34,6 +34,8 @@ public:
     void close(const QString& path);
     void complete(const QString& path, const QString& text, int line, int column,
                   std::function<void(const QJsonArray&)> receive);
+    void definition(const QString& path, const QString& text, int line, int column,
+                    std::function<void(const QJsonArray&)> receive);
     bool ready() const { return ready_; }
     std::function<void(const QString&)> status;
     std::function<void(const QString&, const QJsonArray&)> diagnostics;

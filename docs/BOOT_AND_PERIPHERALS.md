@@ -4,7 +4,9 @@
 
 Oui, avec le **démarrage direct** proposé par ce débogueur. Le chargeur installe les segments ELF en Flash/SRAM, lit le SP initial et le Reset_Handler dans la table des vecteurs lorsqu'elle est identifiée, puis laisse le cœur 0 à l'arrêt. Le firmware exécute ensuite son propre startup. Sans vecteurs identifiés, le modèle utilise `e_entry` et le sommet de SRAM, ce qui est signalé dans le diagnostic.
 
-Ce mode ne reproduit pas la séquence d'alimentation de la puce. La ROM n'est pas exécutée, le cœur 1 reste retenu, les lignes RESETS commencent relâchées et les périphériques avancent en temps virtuel. Cela permet d'exécuter et d'inspecter des programmes autonomes ; cela ne suffit pas à assurer le fonctionnement d'un firmware Pico SDK arbitraire. Les fonctions ROM, la configuration d'horloges, le boot sécurisé RP2350, certaines instructions Thumb-2/FPU et les exceptions M33 restent des obstacles possibles.
+Le démarrage direct laisse le cœur 1 retenu et commence avec toutes les lignes RESETS actives. `RESET` vaut `0x01ffffff` sur RP2040 et `0x1fffffff` sur RP2350. `RESET_DONE` vaut zéro. Le firmware libère les blocs utilisés en effaçant leurs bits dans `RESET`, par exemple en écrivant leur masque via l'alias CLR à l'adresse `RESET + 0x3000`. Ensuite, il peut vérifier les mêmes bits dans `RESET_DONE`. L'émulateur signale cette libération immédiatement et les périphériques libérés avancent en temps virtuel.
+
+Ce mode saute la ROM et la séquence d'alimentation. Les fonctions ROM, la configuration d'horloges, le boot sécurisé RP2350, certaines instructions Thumb-2/FPU et les exceptions M33 restent des obstacles à l'exécution de firmwares Pico SDK.
 
 Le bandeau de la GUI indique ce mode en permanence. Après chargement/reset, le journal et la barre d'état donnent PC, SP et VTOR. Choisir le profil Pico 2 avant de charger un ELF RP2350, ou utiliser `--chip rp2350`. Les attributs ARM de l'ELF ne sélectionnent pas automatiquement la puce.
 
@@ -31,18 +33,18 @@ Dans **Périphériques** (`Ctrl+P`), double-cliquer un bloc ou choisir **Inspect
 
 Les inspecteurs UART ont un onglet interne **UART · TX / RX** : capture TX (derniers 64 Kio environ) et saisie RX UTF-8 sans retour ligne ajouté. **Injecter RX** met l'exécution en pause et indique le nombre d'octets acceptés. UARTEN/RXE et l'espace FIFO conditionnent l'acceptation. Revenir à **Registres** pour les valeurs et leurs bits. Lire ces valeurs ne consomme pas la FIFO.
 
-`Ctrl+Maj+0` restaure la disposition initiale sans fermer les inspecteurs. Un changement de puce les ferme tous. Voir [le guide de l'interface](INTERFACE.md) pour les zones et raccourcis.
+`Ctrl+Maj+O` rétablit la disposition initiale sur **Cœur 0** et rattache les inspecteurs détachés. Chaque projet conserve ses onglets de périphériques et leurs réglages par famille de puce. Voir [le guide de l’interface](INTERFACE.md) pour les zones et raccourcis.
 
 ## Modèles ajoutés après v0.2.0
 
 ### Inspection détaillée des registres
 
-Le catalogue décrit désormais **587 registres / 1 653 champs pour le RP2040** et **783 registres / 2 373 champs pour le RP2350**, alias DMA compris. Ces nombres mesurent la documentation intégrée, **pas la couverture d'émulation**. Les familles ajoutées sont ADC, I2C0/1, DMA (12/16 canaux et leurs alias) et PIO0/1/2 ; elles restent sans modèle d'exécution. Leurs adresses, accès et champs sont consultables, mais leur valeur reste « Non émulé ». La valeur de reset documentaire n'est jamais utilisée comme état courant.
+Le catalogue fourni décrit les blocs ADC, I2C0/1, DMA et PIO0/1/2 ainsi que les GPIO des deux puces. Pour afficher les autres registres et champs du silicium, utiliser **Vues → Périphériques → Télécharger le catalogue SVD de la puce** ou **Importer un catalogue SVD…**. Le SVD est aussi détecté dans le Pico SDK configuré. Les registres documentaires affichent « Non émulé » dans le simulateur.
 
 Le catalogue est intégré à l'espace central. Les inspecteurs restent en onglets tant que **Détacher** n'est pas utilisé ; ils conservent un contexte cœur indépendant.
-Dans chaque inspecteur, sélectionner un registre puis **Bits** affiche ses champs : positions des bits, valeur numérique et signification. Exemples : `UARTFR.RXFE=1` signifie « FIFO RX vide : Oui », `UARTLCR_H.WLEN=3` signifie « 8 bits ». Les descriptions matérielles incluent parfois des modes non émulés ; la couverture du bloc et ses limites restent applicables. Les listes de valeurs symboliques sont accessibles dans les infobulles, même si la valeur actuelle est inconnue. Les bits absents d'une description ne sont pas automatiquement considérés comme réservés.
+Dans chaque inspecteur, sélectionner un registre puis **Bits** affiche la position, la valeur numérique et la signification de chaque champ, dans l’ordre croissant des numéros de bits. Par exemple, `SIO.GPIO_OUT` affiche `GPIO25` au bit 25 et décode `1` en « Haut ». Les infobulles listent les valeurs symboliques connues. Pour un registre sans champ décrit, la table affiche les 32 bits bruts avec la mention « Fonction non documentée dans le catalogue ». Une valeur indisponible est affichée avec un tiret.
 
-Le bouton **Registres** revient à la liste ; un double-clic sur un registre ouvre également ses bits. Le filtre de registres accepte un nom, une adresse ou un champ, par exemple `RXFE`, `CH15` ou `0x40070018`. Les changements sont surlignés. Les détails réutilisent la valeur déjà inspectée, sans lecture MMIO supplémentaire. Aucun champ n'est éditable dans cette version.
+Le bouton **Registres** revient à la liste. Le filtre accepte un nom, une adresse ou un champ. Sur cible arrêtée, sélectionner un champ inscriptible et cliquer **Modifier…**, ou double-cliquer sur sa valeur. Pour un champ W1C, **Effacer…** écrit le masque d’acquittement. Les registres documentaires et les champs en lecture seule restent consultables.
 
 | Bloc | Couverture fonctionnelle | Limites principales |
 |---|---|---|

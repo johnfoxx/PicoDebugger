@@ -1,6 +1,7 @@
 #include "picodbg/debugger.hpp"
 #include "picodbg/peripherals.hpp"
 #include "picodbg/timer.hpp"
+#include <algorithm>
 #include <iostream>
 #include <set>
 #include <stdexcept>
@@ -50,6 +51,8 @@ void timerTests() {
 }
 void integrationTests() {
     Debugger d; d.loadImage(demoImage());
+    const auto releaseTimer = [&] { d.memory.write(0x4000f000, 1u << 21, 4); };
+    releaseTimer();
     d.memory.load(0x10000140, {0x41, 0x02, 0x00, 0x10}); // IRQ0 -> demo handler.
     d.memory.write(0xe000e100, 1, 4);
     d.memory.write(0x4005403c, 1, 4);
@@ -60,21 +63,45 @@ void integrationTests() {
     d.memory.write(0x4005403c, 0, 4); d.step(0); d.step(0);
     check(!d.cpus[0].handlerMode() && d.memory.system(0).active == 0 && !(d.memory.system(0).pending & 1), "Acknowledge and return avoid spurious retrigger");
     d.reset(); d.memory.load(0x10000140, {0x41, 0x02, 0x00, 0x10});
+    releaseTimer();
     d.memory.load(0x10000200, {0x30, 0xbf, 0x00, 0xbe}); // WFI, BKPT
     d.memory.write(0xe000e100, 1, 4); d.memory.write(0x40054038, 1, 4); d.memory.write(0x40054010, 5, 4);
     d.step(0); check(d.cpus[0].sleeping, "WFI before timer alarm");
     d.run(40); check((d.cpus[0].xpsr & 0x1ff) == 16 && !d.cpus[0].sleeping, "Scheduler advances time while WFI waits");
     d.reset();
+    releaseTimer();
     d.memory.write(0x40054010, 10, 4); d.addWatchpoint(0x40054028, 4, true, false);
     const auto before = d.revision(); const auto state = d.memory.peek(0x40054028, 4);
     d.memory.peek(0x40054028, 4); check(d.revision() == before && state == 0, "Peripheral inspection does not advance time");
     d.step(0); check(d.memory.peek(0x40054028, 4) == 1, "One virtual tick per quantum, not twice for two cores");
     d.reset();
+    releaseTimer();
     d.memory.load(0x10000140, {0x41, 0x02, 0x00, 0x10});
     d.memory.write(0xe000e100, 1, 4); d.memory.write(0x4005403c, 1, 4);
     d.step(0); d.step(0); d.step(0); // Enter, BKPT, exception return; leave source asserted.
     check(!d.cpus[0].handlerMode() && (d.memory.system(0).pending & 1), "Held IRQ level re-pends after return");
     d.step(0); check((d.cpus[0].xpsr & 0x1ff) == 16, "Unacknowledged timer IRQ is delivered again");
+}
+void fieldWriteTests() {
+    Debugger d;
+    d.loadImage(demoImage());
+    const auto devices = peripheralCatalog(Chip::RP2040);
+    const auto sio = std::find_if(devices.begin(), devices.end(), [](const PeripheralDescription& device) {
+        return device.name == "SIO";
+    });
+    check(sio != devices.end(), "SIO catalogue is available");
+    const auto status = std::find_if(sio->registers.begin(), sio->registers.end(), [](const RegisterDescription& reg) {
+        return reg.name == "SIO.FIFO_ST";
+    });
+    check(status != sio->registers.end() && status->fields.size() == 4, "FIFO status fields are available");
+    check(fieldWriteMode(*status, status->fields[0]) == FieldWriteMode::Unavailable, "Read-only fields cannot be written");
+    check(fieldWriteMode(*status, status->fields[2]) == FieldWriteMode::Clear, "W1C field supports an explicit clear");
+    d.memory.read(0xd0000058, 4); // Set ROE.
+    for (unsigned i = 0; i < 9; ++i) d.memory.write(0xd0000054, i, 4); // Set WOF.
+    const auto old = d.peek(status->address, 4);
+    check((old & 12u) == 12u, "Both FIFO errors are set");
+    d.writePeripheralRegister(status->address, fieldWriteValue(*status, status->fields[2], old, 1));
+    check((d.peek(status->address, 4) & 12u) == 8u, "Clearing a W1C field leaves the sibling flag set");
 }
 void catalogTests() {
     for (Chip chip : {Chip::RP2040, Chip::RP2350}) {
@@ -130,6 +157,6 @@ void catalogTests() {
 }
 }
 int main() {
-    try { timerTests(); integrationTests(); catalogTests(); std::cout << checks << " peripheral checks passed\n"; return 0; }
+    try { timerTests(); integrationTests(); fieldWriteTests(); catalogTests(); std::cout << checks << " peripheral checks passed\n"; return 0; }
     catch (const std::exception& error) { std::cerr << "FAIL: " << error.what() << '\n'; return 1; }
 }

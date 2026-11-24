@@ -4,6 +4,10 @@
 #include <limits>
 
 namespace picodbg {
+LedState Debugger::onboardLed() const {
+    if (board_.wireless) return LedState::Unavailable;
+    return memory.gpio25High() ? LedState::On : LedState::Off;
+}
 Debugger::Debugger(Chip chip) : Debugger(defaultBoard(chip)) {}
 Debugger::Debugger(Board board) : memory(describeBoard(board).chip), board_(describeBoard(board)) {
     memory.onAccess = [this](const MemoryAccess& access) {
@@ -53,7 +57,7 @@ void Debugger::reset() {
     stop.kind = StopKind::Ready; stop.core = 0; stop.address = entry & ~1u;
     stop.message = std::string("ELF direct : PC=") + hex(entry & ~1u) + " SP=" + hex(sp) +
         (image.hasVectors ? " VTOR=" + hex(image.vectorAddress) : " ; pas de vecteurs identifiés") +
-        " ; Boot ROM non exécutée, resets périphériques relâchés, cœur 1 retenu ; carte " + board_.name +
+        " ; Boot ROM non exécutée, resets périphériques actifs, cœur 1 retenu ; carte " + board_.name +
         (board_.wireless ? " ; radio/LED CYW43 non émulées" : "");
 }
 void Debugger::startCore(unsigned core, uint32_t entry, uint32_t stack) {

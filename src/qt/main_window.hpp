@@ -7,6 +7,7 @@
 #include <QByteArray>
 #include <QMainWindow>
 #include <QPointer>
+#include <QVariantMap>
 #include <array>
 #include <memory>
 #include <set>
@@ -21,6 +22,7 @@ class QShowEvent;
 class QLineEdit;
 class QPlainTextEdit;
 class QPushButton;
+class QSettings;
 class QSpinBox;
 class QTableWidget;
 class QTabWidget;
@@ -34,6 +36,7 @@ class InspectionWorkspace;
 class PeripheralExplorer;
 class VirtualTimePanel;
 class BoardPanel;
+class BoardLed;
 class ProbeSerialMonitor;
 class ValueWatches;
 class MemoryTable;
@@ -52,6 +55,8 @@ public:
     void connectHardware(const picodbg::ProbeOptions& options);
     void showIde();
     void attachIde(picoide::IdeWindow* ide);
+    void setLayoutProject(const QString& root);
+    void saveLayout();
     void syncIdeState();
     void pauseFromIde();
     void stepFromIde();
@@ -116,8 +121,9 @@ private:
     bool timeOnly_ = false;
     uint64_t remainingTime_ = 0;
     unsigned selected_ = 0;
-    bool allCores_ = true;
+    bool allCores_ = false;
     QByteArray overviewState_;
+    QString layoutProject_;
     bool defaultLayout_ = true;
     bool layoutUsed_ = false;
     bool compactMonitor_ = false;
@@ -155,12 +161,21 @@ private:
     QPointer<PeripheralExplorer> explorer_;
     VirtualTimePanel* virtualTimePanel_;
     BoardPanel* boardPanel_;
+    BoardLed* boardLed_;
     QLabel* timeLabel_;
     void openPeripheralExplorer();
+    void installPeripheralCatalog(picodbg::Chip chip, const QByteArray& contents);
+    void downloadPeripheralCatalog();
     void advanceVirtualTime(uint64_t duration, bool timeOnly);
     std::vector<QPointer<PeripheralInspection>> inspections_;
     unsigned inspectionSequence_ = 1;
+    bool peripheralLayoutPending_ = false;
     PeripheralInspection* openPeripheral(const QString& name, unsigned core, bool duplicate = false);
+    PeripheralInspection* addPeripheralInspection(const QString& name, unsigned core, bool duplicate,
+                                                  const QVariantMap& selection = {});
+    QString peripheralLayoutKey() const;
+    QVariantMap savePeripheralLayout() const;
+    void restoreProjectPeripherals();
     void closeInspections();
     QTableWidget* watches_;
     ValueWatches* valueWatches_;
@@ -197,7 +212,11 @@ private:
     void setMemoryAddress(const QString& expression);
     void moveMemoryPage(bool forward);
     void showMemoryView();
-    void saveLayout();
+    void restoreLayout(const QSettings& settings);
+    void writeLayout(QSettings& settings) const;
+    void restoreOverview();
+    void setLayoutCore(int index);
+    void setLayoutAssemblyVisible(bool visible);
     void sizeOverview();
     void showManual();
     void openMemoryWatch(const ValueWatch& watch);
@@ -228,6 +247,8 @@ private:
     void memoryValueDialog(bool watch, int row = -1, int column = -1);
     void editPeripheralRegister(QWidget& parent, const QString& device, const picodbg::RegisterDescription& reg,
                                 unsigned core, const QString& current);
+    void editPeripheralField(QWidget& parent, picodbg::RegisterDescription reg, picodbg::RegisterField field,
+                             unsigned core, uint32_t current);
     void singleStep();
     void runBatch();
     void setRunning(bool running);

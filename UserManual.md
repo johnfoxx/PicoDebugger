@@ -30,7 +30,7 @@ Avec **Tous**, les registres et les piles des deux cœurs sont visibles à gauch
 - **Vues → Mettre en avant** permet d’afficher une seule vue centrale, le duo **Mémoire et périphériques** ou toutes les vues disponibles. Les panneaux conservent leur organisation.
 - Faites glisser la barre de titre d’un panneau vers un bord pour le déplacer ou vers un autre panneau pour les regrouper en onglets. Faites glisser les séparateurs pour modifier les tailles. Vous pouvez ainsi empiler Mémoire et Périphériques, les placer côte à côte ou ne garder qu’un des deux visible.
 - **Vues → Panneaux** affiche ou masque chaque panneau. **Vues → Fenêtres flottantes** détache ou rattache un panneau. Plusieurs panneaux peuvent flotter simultanément.
-- La disposition est mémorisée à la fermeture du débogueur. **Ctrl+Maj+0**, dans **Vues → Rétablir la disposition initiale**, restaure les positions et la visibilité de départ.
+- Lors d’un changement de projet ou à la fermeture, la disposition du débogueur est enregistrée dans `.picodbg/debugger-layout.ini` du projet. Les onglets de périphériques, leurs filtres et leurs fenêtres détachées sont restaurés pour la puce sélectionnée. **Ctrl+Maj+O**, dans **Vues → Rétablir la disposition initiale**, restaure les panneaux et sélectionne **Cœur 0**. Le débogueur utilisé seul mémorise sa disposition dans les préférences de l’application.
 - Survolez un bouton, un champ ou une valeur pour afficher son rôle. Les menus **Actions** et le clic droit donnent accès aux commandes des tableaux de mémoire et de registres.
 - **Vues → Thème** applique le thème clair ou sombre aux fenêtres et aux inspecteurs. Le choix est enregistré.
 

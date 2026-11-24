@@ -4,9 +4,12 @@
 
 #include <QAbstractItemView>
 #include <QCompleter>
+#include <QCursor>
 #include <QFontDatabase>
 #include <QHelpEvent>
 #include <QKeyEvent>
+#include <QMouseEvent>
+#include <QFocusEvent>
 #include <QPainter>
 #include <QPaintEvent>
 #include <QRegularExpression>
@@ -92,7 +95,7 @@ int positionIn(const QTextBlock& block, int column) {
 
 CodeEditor::CodeEditor(const Language& language, QWidget* parent)
     : QPlainTextEdit(parent), gutter_(new Gutter(this)), completer_(new QCompleter(this)),
-      suggestions_(new QStandardItemModel(this)) {
+      suggestions_(new QStandardItemModel(this)), cComments_(language.highlight == Highlight::C) {
     setObjectName("ideEditor");
     if (language.highlight == Highlight::C) highlighter_ = new CHighlighter(document());
     auto codingFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
@@ -101,7 +104,7 @@ CodeEditor::CodeEditor(const Language& language, QWidget* parent)
     setFont(codingFont);
     setLineWrapMode(QPlainTextEdit::NoWrap);
     setTabStopDistance(QFontMetricsF(font()).horizontalAdvance(' ') * 4);
-    setMouseTracking(true);
+    viewport()->setMouseTracking(true);
     completer_->setWidget(this);
     completer_->setModel(suggestions_);
     completer_->setCompletionMode(QCompleter::UnfilteredPopupCompletion);
@@ -116,6 +119,21 @@ CodeEditor::CodeEditor(const Language& language, QWidget* parent)
         if (dy && !searchHighlights_.empty()) decorate();
     });
     connect(this, &QPlainTextEdit::cursorPositionChanged, this, [this] { decorate(); gutter_->update(); });
+    connect(this, &QPlainTextEdit::textChanged, this, [this] {
+        if (clickedDefinition_.isNull() && hoveredDefinition_.isNull()) return;
+        definitionFeedback_.stop();
+        clickedDefinition_ = {};
+        setHoveredDefinition({});
+        decorate();
+    });
+    definitionFeedback_.setSingleShot(true);
+    connect(&definitionFeedback_, &QTimer::timeout, this, [this] {
+        auto symbol = clickedDefinition_;
+        clickedDefinition_ = {};
+        decorate();
+        symbol.setPosition(symbol.selectionStart());
+        if (definitionRequested) definitionRequested(symbol.blockNumber(), symbol.positionInBlock());
+    });
     updateGutter();
     decorate();
 }
@@ -169,11 +187,18 @@ void CodeEditor::paintGutter(QPaintEvent* event) {
 }
 
 void CodeEditor::keyPressEvent(QKeyEvent* event) {
+    if (event->key() == Qt::Key_Control) setHoveredDefinition(symbolAt(viewport()->mapFromGlobal(QCursor::pos())));
+    else if (event->modifiers() != Qt::ControlModifier) setHoveredDefinition({});
     if (isReadOnly()) {
         QPlainTextEdit::keyPressEvent(event);
         return;
     }
     const auto key = event->key();
+    if ((event->modifiers() & Qt::ControlModifier) &&
+        (key == Qt::Key_Slash || (key == Qt::Key_C && event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier)))) {
+        toggleLineComment();
+        return;
+    }
     if (completer_->popup()->isVisible()) {
         switch (key) {
         case Qt::Key_Enter: case Qt::Key_Return: case Qt::Key_Escape: case Qt::Key_Tab:
@@ -203,6 +228,11 @@ void CodeEditor::keyPressEvent(QKeyEvent* event) {
         if (cursor.block().text().left(cursor.positionInBlock()).endsWith("->") || event->text() == ".")
             completionRequested();
     }
+}
+
+void CodeEditor::keyReleaseEvent(QKeyEvent* event) {
+    if (event->key() == Qt::Key_Control) setHoveredDefinition({});
+    QPlainTextEdit::keyReleaseEvent(event);
 }
 
 void CodeEditor::showCompletions(const QJsonArray& items) {
@@ -349,10 +379,23 @@ void CodeEditor::decorate() {
         issue.format.setUnderlineColor(problem.severity == 1 ? picoThemeColor("#ff9490") : picoThemeColor("#f1ce80"));
         selections.push_back(issue);
     }
+    const bool clicked = !clickedDefinition_.isNull();
+    const auto& link = clicked ? clickedDefinition_ : hoveredDefinition_;
+    if (!link.isNull()) {
+        QTextEdit::ExtraSelection selection;
+        selection.cursor = link;
+        const auto color = picoThemeColor(clicked ? "#8ce4d6" : "#83cbde");
+        selection.format.setForeground(color);
+        selection.format.setUnderlineColor(color);
+        selection.format.setUnderlineStyle(QTextCharFormat::SingleUnderline);
+        if (clicked) selection.format.setBackground(picoThemeColor("#285168"));
+        selections.push_back(selection);
+    }
     setExtraSelections(selections);
 }
 
 bool CodeEditor::viewportEvent(QEvent* event) {
+    if (event->type() == QEvent::Leave) setHoveredDefinition({});
     if (event->type() == QEvent::ToolTip) {
         const auto* help = static_cast<QHelpEvent*>(event);
         const int line = cursorForPosition(help->pos()).blockNumber();
@@ -374,6 +417,99 @@ void CodeEditor::goTo(int line, int column) {
         centerCursor();
     }
     setFocus();
+}
+
+void CodeEditor::focusInEvent(QFocusEvent* event) {
+    QPlainTextEdit::focusInEvent(event);
+    if (focused) focused();
+}
+
+void CodeEditor::focusOutEvent(QFocusEvent* event) {
+    setHoveredDefinition({});
+    QPlainTextEdit::focusOutEvent(event);
+}
+
+QTextCursor CodeEditor::symbolAt(const QPoint& position) const {
+    if (!definitionRequested || !viewport()->rect().contains(position)) return {};
+    const auto point = cursorForPosition(position);
+    const auto block = point.block();
+    static const QRegularExpression identifier("\\b[A-Za-z_][A-Za-z_0-9]*\\b");
+    auto matches = identifier.globalMatch(block.text());
+    while (matches.hasNext()) {
+        const auto match = matches.next();
+        if (point.positionInBlock() < match.capturedStart()) break;
+        if (point.positionInBlock() > match.capturedEnd()) continue;
+        QTextCursor symbol(block);
+        symbol.setPosition(block.position() + match.capturedStart());
+        const auto start = cursorRect(symbol);
+        symbol.setPosition(block.position() + match.capturedEnd(), QTextCursor::KeepAnchor);
+        if (position.y() >= start.top() && position.y() <= start.bottom() &&
+            position.x() >= start.left() && position.x() < cursorRect(symbol).left()) return symbol;
+    }
+    return {};
+}
+
+void CodeEditor::setHoveredDefinition(const QTextCursor& symbol) {
+    if (hoveredDefinition_ == symbol && hoveredDefinition_.anchor() == symbol.anchor()) return;
+    hoveredDefinition_ = symbol;
+    viewport()->setCursor(symbol.isNull() ? Qt::IBeamCursor : Qt::PointingHandCursor);
+    decorate();
+}
+
+void CodeEditor::mouseMoveEvent(QMouseEvent* event) {
+    QPlainTextEdit::mouseMoveEvent(event);
+    setHoveredDefinition(event->modifiers() == Qt::ControlModifier && event->buttons() == Qt::NoButton
+        ? symbolAt(event->pos()) : QTextCursor());
+}
+
+void CodeEditor::mousePressEvent(QMouseEvent* event) {
+    if (event->button() == Qt::LeftButton && event->modifiers() == Qt::ControlModifier) {
+        const auto symbol = symbolAt(event->pos());
+        if (!symbol.isNull()) {
+            clickedDefinition_ = symbol;
+            setHoveredDefinition(symbol);
+            decorate();
+            definitionFeedback_.start(120);
+            event->accept();
+            return;
+        }
+    }
+    QPlainTextEdit::mousePressEvent(event);
+}
+
+void CodeEditor::toggleLineComment() {
+    if (isReadOnly() || !cComments_) return;
+    const auto selection = textCursor();
+    const auto first = document()->findBlock(selection.selectionStart());
+    const auto last = document()->findBlock(selection.hasSelection() ? selection.selectionEnd() - 1 : selection.position());
+    QVector<int> positions;
+    bool allCommented = true;
+    static const QRegularExpression indent("^[ \\t]*");
+    for (auto block = first; block.isValid(); block = block.next()) {
+        const auto line = block.text();
+        const auto start = indent.match(line).capturedLength();
+        if (start < line.size() || !selection.hasSelection()) {
+            positions.push_back(block.position() + start);
+            allCommented = allCommented && line.mid(start).startsWith("//");
+        }
+        if (block == last) break;
+    }
+    QTextCursor edit(document());
+    edit.beginEditBlock();
+    for (auto it = positions.crbegin(); it != positions.crend(); ++it) {
+        edit.setPosition(*it);
+        if (allCommented) {
+            edit.setPosition(*it + (document()->characterAt(*it + 2) == ' ' ? 3 : 2), QTextCursor::KeepAnchor);
+            edit.removeSelectedText();
+        } else {
+            edit.insertText("// ");
+        }
+    }
+    edit.endEditBlock();
+    if (!selection.hasSelection() && !positions.isEmpty()) {
+        edit.setPosition(positions.front() + (allCommented ? 0 : 3));
+        setTextCursor(edit);
+    }
 }
 
 void CodeEditor::revealDebugLine(int line) {

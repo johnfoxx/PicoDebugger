@@ -22,6 +22,7 @@ public:
     void advanceTime(uint64_t microseconds);
     uint64_t virtualTime() const { return virtualTime_; }
     const BoardDescription& board() const { return board_; }
+    LedState onboardLed() const override;
     void pause();
     size_t injectUart(unsigned index, const std::string& bytes);
     void addWatchpoint(uint32_t address, uint32_t length, bool read, bool write);

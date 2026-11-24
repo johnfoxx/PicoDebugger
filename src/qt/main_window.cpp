@@ -8,6 +8,7 @@
 #include "inspection_workspace.hpp"
 #include "peripheral_inspection.hpp"
 #include "peripheral_explorer.hpp"
+#include "svd_catalog.hpp"
 #include "virtual_time_panel.hpp"
 #include "value_watches.hpp"
 #include "memory_table.hpp"
@@ -24,6 +25,7 @@
 #include <QComboBox>
 #include <QDateTime>
 #include <QDialog>
+#include <QDir>
 #include <QDockWidget>
 #include <QElapsedTimer>
 #include <QFile>
@@ -39,10 +41,13 @@
 #include <QMenuBar>
 #include <QMenu>
 #include <QMessageBox>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
 #include <QPlainTextEdit>
 #include <QPalette>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QSet>
 #include <QSettings>
 #include <QShowEvent>
 #include <QScrollArea>
@@ -68,6 +73,7 @@ constexpr int layoutVersion = 3;
 constexpr int defaultMonitorWidth = 144;
 constexpr int monitorLayoutVersion = 2;
 const char* layoutSetting = "debugger/panelLayout";
+const char* projectLayoutFile = ".picodbg/debugger-layout.ini";
 QString q(const std::string& text) { return QString::fromStdString(text); }
 QString hx(uint32_t value) { return q(hex(value)); }
 uint32_t parseWriteValue(const QString& text, unsigned size) {
@@ -156,12 +162,7 @@ MainWindow::MainWindow() : debugger_(new Debugger), sourceMap_(this), stackInfo_
     setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
     buildUi();
     const QSettings settings;
-    compactMonitor_ = settings.value("debugger/monitorLayoutVersion", 0).toInt() == monitorLayoutVersion;
-    const auto saved = settings.value(layoutSetting).toByteArray();
-    defaultLayout_ = saved.isEmpty() || !restoreState(saved, layoutVersion);
-    if (!defaultLayout_)
-        assemblyDock_->setVisible(QSettings().value("debugger/standaloneAssembly", true).toBool());
-    else if (!saved.isEmpty()) restoreState(overviewState_, layoutVersion);
+    restoreLayout(settings);
     sourceMap_.updated = [this] { refreshSource(true); refreshAssembly(); };
     stackInfo_.updated = [this] { refreshStack(); };
     connect(timer_, &QTimer::timeout, this, [this] { runBatch(); });
@@ -174,6 +175,7 @@ MainWindow::MainWindow() : debugger_(new Debugger), sourceMap_(this), stackInfo_
 }
 MainWindow::~MainWindow() {
     saveLayout();
+    disconnect(workspace_, nullptr, this, nullptr);
     ide_.clear();
     ownedIde_.reset();
 }
@@ -192,15 +194,13 @@ void MainWindow::buildUi() {
     });
     auto* overview = views->addAction("Rétablir la disposition initiale");
     overview->setObjectName("overviewAction");
-    overview->setShortcut(QKeySequence("Ctrl+Shift+0"));
+    overview->setShortcuts({QKeySequence("Ctrl+Shift+O"), QKeySequence("Ctrl+Shift+0")});
     connect(overview, &QAction::triggered, this, [this] {
         workspace_->gatherInspections();
-        restoreState(overviewState_, layoutVersion);
-        sizeOverview();
-        workspace_->setCurrentWidget(peripherals_);
-        inspectionTabs_->setCurrentIndex(0);
-        monitorTabs_->setCurrentWidget(valueWatches_);
-        if (assemblySuppressed_) { revealAssemblyAfterIde_ = true; assemblyDock_->hide(); }
+        restoreOverview();
+        defaultLayout_ = false;
+        compactMonitor_ = true;
+        refresh();
     });
     views->addMenu("Panneaux")->setObjectName("debuggerPanelsMenu");
     views->addMenu("Fenêtres flottantes")->setObjectName("debuggerFloatingMenu");
@@ -280,17 +280,24 @@ void MainWindow::buildUi() {
     toolbar->addWidget(chip_);
     connect(chip_, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this, [this](int index) {
         const Board board = static_cast<Board>(chip_->itemData(index).toInt());
+        const bool hardware = debugger_->hardware();
         if (auto* hw = dynamic_cast<GdbTarget*>(debugger_.get())) {
             if (hw->connected() || hw->connecting()) { const QSignalBlocker blocked(chip_); chip_->setCurrentIndex(chip_->findData(static_cast<int>(debugger_->board().board))); return; }
-            closeInspections(); debugger_.reset(new GdbTarget(board));
-        } else { setRunning(false); closeInspections(); debugger_.reset(new Debugger(board)); }
+        }
+        if (!layoutProject_.isEmpty()) saveLayout();
+        setRunning(false);
+        closeInspections();
+        peripherals_->reloadCatalog();
+        if (hardware) debugger_.reset(new GdbTarget(board));
+        else debugger_.reset(new Debugger(board));
+        peripheralLayoutPending_ = !layoutProject_.isEmpty();
+        restoreProjectPeripherals();
         imagePath_.clear(); imageName_.clear(); previousValid_ = false; lastHardwareSymbols_ = 0;
         indexSource({}); fillMapping(); refresh(); log("Carte sélectionnée : charger un ELF pour cette carte.");
     });
     toolbar->addSeparator();
     core_ = new ChoiceBox;
     core_->addItems({"Cœur 0", "Cœur 1", "Tous"});
-    core_->setCurrentIndex(2);
     core_->setToolTip("Tous compare les deux cœurs. Le point indique le dernier cœur actif pour F10, la mémoire et les expressions.");
     toolbar->addWidget(core_);
     core_->setObjectName("coreSelector");
@@ -625,6 +632,22 @@ void MainWindow::buildUi() {
     auto* gather = peripheralViews->addAction("Rassembler les inspecteurs"); gather->setObjectName("gatherInspectorsAction");
     gather->setShortcut(QKeySequence("Ctrl+Shift+P"));
     connect(gather, &QAction::triggered, workspace_, &InspectionWorkspace::gatherInspections);
+    peripheralViews->addSeparator();
+    auto* importSvd = peripheralViews->addAction("Importer un catalogue SVD…");
+    importSvd->setObjectName("importPeripheralSvdAction");
+    connect(importSvd, &QAction::triggered, this, [this] {
+        const auto chip = debugger_->description().chip;
+        const auto path = QFileDialog::getOpenFileName(this, "Importer le catalogue de la puce sélectionnée",
+                                                       {}, "Catalogue CMSIS-SVD (*.svd *.xml)");
+        if (path.isEmpty()) return;
+        QFile file(path);
+        try {
+            if (!file.open(QIODevice::ReadOnly)) throw Error(ErrorKind::InvalidArgument, file.errorString().toStdString());
+            installPeripheralCatalog(chip, file.read(16 * 1024 * 1024 + 1));
+        } catch (const Error& error) { QMessageBox::warning(this, "Catalogue SVD", q(error.what())); }
+    });
+    auto* downloadSvd = peripheralViews->addAction("Télécharger le catalogue SVD de la puce");
+    connect(downloadSvd, &QAction::triggered, this, &MainWindow::downloadPeripheralCatalog);
     connect(mapping_, &QTableWidget::cellDoubleClicked, this, [this](int line, int) {
         if (!mapping_->item(line, 0)) return;
         setMemoryAddress(mapping_->item(line, 0)->text());
@@ -776,6 +799,8 @@ void MainWindow::buildUi() {
     ideLinkStatus_ = new QLabel;
     ideLinkStatus_->setObjectName("ideLinkStatus");
     statusBar()->addPermanentWidget(ideLinkStatus_);
+    boardLed_ = new BoardLed;
+    statusBar()->addPermanentWidget(boardLed_);
     timeLabel_ = new QLabel; timeLabel_->setObjectName("virtualTimeStatus");
     timeLabel_->setToolTip("Ouvrir les commandes du temps virtuel (Ctrl+6)");
     statusBar()->addPermanentWidget(timeLabel_);
@@ -791,6 +816,7 @@ void MainWindow::buildUi() {
     addDockWidget(Qt::RightDockWidgetArea, monitorDock_);
     sizeOverview();
     overviewState_ = saveState(layoutVersion);
+    connect(workspace_, &QTabWidget::currentChanged, this, [this] { refreshPeripherals(); });
 }
 bool MainWindow::loadFile(const QString& path) {
     setRunning(false);
@@ -886,6 +912,7 @@ void MainWindow::refresh() {
     QString shortBoard = q(debugger_->board().name); shortBoard.remove("Raspberry Pi ");
     modeStatus_->setText(mode + shortBoard + " · " + shortState); modeStatus_->setToolTip(status);
     syncIdeState();
+    boardLed_->updateTarget(*debugger_);
     timeLabel_->setVisible(!real);
     inspectionTabs_->setTabVisible(inspectionTabs_->indexOf(virtualTimeTab_), !real);
     findChild<QAction*>("virtualTimeViewAction")->setEnabled(!real);
@@ -1014,8 +1041,9 @@ void MainWindow::editCpuRegister(int row, int column) {
     connect(&buttons, &QDialogButtonBox::accepted, &dialog, [&] {
         try {
             if (running_) throw Error(ErrorKind::InvalidArgument, "Mettre la cible en pause pour écrire");
-            debugger_->writeCpuRegister(core, index, parseWriteValue(value.text(), 4));
-            if (!debugger_->hardware()) log(QString("Registre %1 modifié · cœur %2").arg(registers_->item(row, 0)->text()).arg(core));
+            const auto raw = parseWriteValue(value.text(), 4);
+            debugger_->writeCpuRegister(core, index, raw);
+            log(QString("Registre %1 ← %2 · cœur %3").arg(registers_->item(row, 0)->text(), hx(raw)).arg(core));
             refresh();
             dialog.accept();
         } catch (const std::exception& e) {
@@ -1255,7 +1283,7 @@ void MainWindow::memoryValueDialog(bool watch, int line, int column) {
                 const auto start = memory_->start();
                 if (!memory_->length() || at < start || uint64_t(at) + size > uint64_t(start) + memory_->length())
                     setMemoryAddress(hx(at));
-                if (!debugger_->hardware()) log(QString("Écriture mémoire à %1 · %2 bits · cœur %3").arg(hx(at)).arg(8 * size).arg(core));
+                log(QString("Mémoire %1 ← %2 · %3 bits · cœur %4").arg(hx(at), q(hex(raw, 2 * size))).arg(8 * size).arg(core));
                 refresh();
                 memory_->selectAddress(at);
             }
@@ -1295,12 +1323,78 @@ void MainWindow::editPeripheralRegister(QWidget& parent, const QString& device, 
     connect(&buttons, &QDialogButtonBox::accepted, &dialog, [&] {
         try {
             if (running_) throw Error(ErrorKind::InvalidArgument, "Mettre la cible en pause pour écrire");
-            debugger_->writePeripheralRegister(address, parseWriteValue(value.text(), 4), core);
-            if (!debugger_->hardware()) log(QString("Écriture registre à %1 · cœur %2").arg(hx(address)).arg(core));
+            const auto raw = parseWriteValue(value.text(), 4);
+            debugger_->writePeripheralRegister(address, raw, core);
+            auto message = QString("%1.%2 [%3] ← %4 · cœur %5").arg(device, q(reg.name), hx(address), hx(raw)).arg(core);
+            if (!debugger_->hardware() && reg.access != "WO") {
+                try { message += " · valeur lue " + hx(debugger_->peek(address, 4, core)); } catch (const Error&) {}
+            }
+            log(message);
             refresh();
             dialog.accept();
         } catch (const Error& e) {
             error.setText(q(e.what()));
+            error.show();
+        }
+    });
+    dialog.exec();
+}
+
+void MainWindow::editPeripheralField(QWidget& parent, RegisterDescription reg, RegisterField field,
+                                     unsigned core, uint32_t current) {
+    const auto mode = fieldWriteMode(reg, field);
+    if (mode == FieldWriteMode::Unavailable) return;
+    const auto* target = debugger_.get();
+    const bool clear = mode == FieldWriteMode::Clear;
+    QDialog dialog(&parent);
+    dialog.setObjectName("writePeripheralFieldDialog");
+    dialog.setWindowTitle(clear ? "Effacer un champ" : "Modifier un champ");
+    QFormLayout layout(&dialog);
+    const auto bits = field.width == 1 ? QString::number(field.lsb)
+        : QString("%1 à %2").arg(field.lsb + field.width - 1).arg(field.lsb);
+    layout.addRow(new QLabel(QString("%1.%2 · bits %3 · cœur %4").arg(q(reg.name), q(field.name), bits).arg(core)));
+    auto* description = new QLabel(q(field.description), &dialog);
+    description->setWordWrap(true);
+    if (!field.description.empty()) layout.addRow(description);
+    QLabel clearNote("Écrire 1 acquitte les bits sélectionnés.");
+    QLineEdit value;
+    value.setObjectName("registerFieldWriteValue");
+    const auto maximum = fieldValue(0xffffffffu, field);
+    value.setText(QString::number(clear ? maximum : fieldValue(current, field)));
+    value.setPlaceholderText(QString("0 à %1 · décimal ou 0x…").arg(maximum));
+    if (clear) layout.addRow(&clearNote);
+    if (!clear || field.width > 1) layout.addRow(clear ? "Masque à acquitter" : "Valeur", &value);
+    QLabel error;
+    error.setWordWrap(true); error.hide();
+    layout.addRow(&error);
+    QDialogButtonBox buttons(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    buttons.button(QDialogButtonBox::Ok)->setText(clear ? "Effacer" : "Écrire");
+    layout.addRow(&buttons);
+    value.selectAll();
+    connect(&buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    connect(&buttons, &QDialogButtonBox::accepted, &dialog, [&] {
+        try {
+            if (target != debugger_.get() || running_ || !target->loaded() || target->busy() || target->executing())
+                throw Error(ErrorKind::InvalidArgument, "Mettre la cible en pause pour écrire");
+            const auto incoming = parseWriteValue(value.text(), 4);
+            const auto oldValue = reg.access == "W1C" ? 0u : target->peek(reg.address, 4, core);
+            const auto word = fieldWriteValue(reg, field, oldValue, incoming);
+            if (clear || word != oldValue) {
+                debugger_->writePeripheralRegister(reg.address, word, core);
+                auto message = QString("%1.%2 [%3, bit %4] ← %5 · mot écrit %6 · cœur %7")
+                    .arg(q(reg.name), q(field.name), hx(reg.address), bits, QString::number(incoming), hx(word)).arg(core);
+                if (!target->hardware()) {
+                    try {
+                        const auto actual = target->peek(reg.address, 4, core);
+                        message += QString(" · champ relu %1 · registre %2").arg(fieldValue(actual, field)).arg(hx(actual));
+                    } catch (const Error&) {}
+                }
+                log(message);
+                refresh();
+            }
+            dialog.accept();
+        } catch (const Error& issue) {
+            error.setText(q(issue.what()));
             error.show();
         }
     });
@@ -1506,8 +1600,8 @@ void MainWindow::openStackInspector(unsigned core, unsigned level) {
             sameStackFrame(view->frame(), stackFrames_[core][static_cast<int>(level)]))
             editStackMemory(core, level, mode, address, field, view);
     };
-    view->editTyped = [this, core, view](const FrameField& field, const QString& value) {
-        editStackField(core, view->frame(), field, value, view);
+    view->editTyped = [this, core, view](const FrameField& field, const QString& value, StackMemoryView::EditMode mode) {
+        editStackField(core, view->frame(), field, value, view, mode);
     };
     showInspectionWindow(view);
     refreshStack(core);
@@ -1573,9 +1667,11 @@ void MainWindow::editStackField(unsigned core, StackViewFrame frame, FrameField 
     dialog.setObjectName("stackValueDialog");
     dialog.setWindowTitle(QString("Modifier %1 · cœur %2").arg(field.name).arg(core));
     QFormLayout layout(&dialog);
-    QLineEdit value(rendered == "…" ? QString() : rendered);
+    const bool rawField = mode == StackMemoryView::RawHex || mode == StackMemoryView::RawBinary;
+    QLineEdit value(rendered == "…" || rendered == "—" ? QString() : rendered);
     value.setObjectName("stackWriteValue");
     value.selectAll();
+    if (rawField) value.setPlaceholderText("0x… ou 0b…");
     layout.addRow(field.type.name, &value);
     QLabel error;
     error.setWordWrap(true);
@@ -1593,9 +1689,10 @@ void MainWindow::editStackField(unsigned core, StackViewFrame frame, FrameField 
                 frames[frame.level].activation != frame.frame.activation)
                 throw Error(ErrorKind::InvalidArgument, "La trame a changé : resélectionnez la valeur");
             auto* hardware = dynamic_cast<GdbTarget*>(debugger_.get());
-            if (hardware && !field.expression.isEmpty())
+            if (hardware && !field.expression.isEmpty() && !rawField) {
                 hardware->writeStackVariable(core, frame.level, field, value.text());
-            else {
+                log(QString("Pile %1 [%2] ← %3 · cœur %4").arg(field.name, field.expression, value.text()).arg(core));
+            } else {
                 uint64_t raw;
                 if (mode == StackMemoryView::AsciiByte) {
                     const auto input = value.text();
@@ -1603,6 +1700,18 @@ void MainWindow::editStackField(unsigned core, StackViewFrame frame, FrameField 
                     if (match.hasMatch()) raw = match.captured(1).toUInt(nullptr, 16);
                     else if (input.size() == 1 && input[0].unicode() >= 32 && input[0].unicode() < 127) raw = input[0].unicode();
                     else throw Error(ErrorKind::InvalidArgument, "Entrez un caractère ASCII ou une séquence \\xNN.");
+                } else if (rawField) {
+                    auto input = value.text().trimmed();
+                    const bool hasHex = input.startsWith("0x", Qt::CaseInsensitive);
+                    const bool hasBinary = input.startsWith("0b", Qt::CaseInsensitive);
+                    const bool binary = hasBinary || (!hasHex && mode == StackMemoryView::RawBinary);
+                    if (hasHex || hasBinary) input.remove(0, 2);
+                    const QRegularExpression literal(binary ? "^[01]+$" : "^[0-9a-fA-F]+$");
+                    bool ok = false;
+                    raw = input.toULongLong(&ok, binary ? 2 : 16);
+                    if (!ok || !literal.match(input).hasMatch() || !field.type.size || field.type.size > 8 ||
+                        (field.type.size < 8 && raw >= (uint64_t(1) << (8u * field.type.size))))
+                        throw Error(ErrorKind::InvalidArgument, "Valeur hexadécimale ou binaire hors de la taille du champ");
                 } else {
                     auto input = value.text().trimmed();
                     if (mode != StackMemoryView::Typed && !input.startsWith("0x", Qt::CaseInsensitive))
@@ -1623,7 +1732,9 @@ void MainWindow::editStackField(unsigned core, StackViewFrame frame, FrameField 
                         throw Error(ErrorKind::InvalidArgument, "Adresse de pile indisponible en écriture");
                     debugger_->writeMemoryBytes(field.address, raw, field.type.size, core);
                 }
-                log(QString("%1 modifié · cœur %2").arg(field.name).arg(core));
+                const auto location = field.inMemory ? hx(field.address) : q(registerName(static_cast<unsigned>(field.reg)));
+                const auto rawText = "0x" + QString::number(raw, 16).rightJustified(static_cast<int>(2 * field.type.size), '0');
+                log(QString("Pile %1 [%2] ← %3 · cœur %4").arg(field.name, location, rawText).arg(core));
             }
             refresh();
             dialog.accept();
@@ -1636,7 +1747,7 @@ void MainWindow::editStackField(unsigned core, StackViewFrame frame, FrameField 
 }
 
 void MainWindow::fillMapping() {
-    memoryDevices_ = peripheralCatalog(debugger_->description().chip);
+    memoryDevices_ = picosvd::catalog(debugger_->description().chip);
     boardPanel_->setBoard(debugger_->board(), debugger_->hardware());
     mapping_->setRowCount(0);
     for (const auto& region : debugger_->description().regions) {
@@ -1696,17 +1807,55 @@ void MainWindow::configurePeripheralPanel(PeripheralPanel& panel) {
     panel.editRegister = [this, &panel](const QString& device, const RegisterDescription& reg, unsigned core, const QString& value) {
         editPeripheralRegister(panel, device, reg, core, value);
     };
+    panel.editField = [this, &panel](const RegisterDescription& reg, const RegisterField& field, unsigned core, uint32_t raw) {
+        editPeripheralField(panel, reg, field, core, raw);
+    };
+}
+void MainWindow::installPeripheralCatalog(Chip chip, const QByteArray& contents) {
+    picosvd::install(chip, contents);
+    if (debugger_->description().chip == chip) {
+        if (!layoutProject_.isEmpty()) saveLayout();
+        closeInspections();
+        peripherals_->reloadCatalog();
+        valueWatches_->reloadCatalog();
+        peripheralLayoutPending_ = !layoutProject_.isEmpty();
+        restoreProjectPeripherals();
+        fillMapping();
+        refresh();
+    }
+    const auto message = "Catalogue SVD chargé · " + picosvd::source(chip);
+    log(message);
+    statusBar()->showMessage(message, 6000);
+}
+void MainWindow::downloadPeripheralCatalog() {
+    const auto chip = debugger_->description().chip;
+    auto* downloader = new QNetworkAccessManager(this);
+    QNetworkRequest request{QUrl(picosvd::officialUrl(chip))};
+    request.setTransferTimeout(15000);
+    auto* reply = downloader->get(request);
+    statusBar()->showMessage("Téléchargement du catalogue SVD…", 15000);
+    connect(reply, &QNetworkReply::downloadProgress, reply, [reply](qint64 received, qint64 total) {
+        if (received > 16 * 1024 * 1024 || total > 16 * 1024 * 1024) reply->abort();
+    });
+    connect(reply, &QNetworkReply::finished, this, [this, downloader, reply, chip] {
+        downloader->deleteLater();
+        try {
+            if (reply->error() != QNetworkReply::NoError) throw Error(ErrorKind::InvalidArgument, reply->errorString().toStdString());
+            installPeripheralCatalog(chip, reply->readAll());
+        } catch (const Error& error) { QMessageBox::warning(this, "Catalogue SVD", q(error.what())); }
+    });
 }
 void MainWindow::refreshPeripherals() {
     peripherals_->updateTarget(*debugger_, selected_, running_);
     if (explorer_) explorer_->updateTarget(*debugger_, running_);
     for (auto it = inspections_.begin(); it != inspections_.end();) {
         if (!*it) { it = inspections_.erase(it); continue; }
-        (*it)->updateTarget(*debugger_, running_);
+        if ((*it)->isVisible() || workspace_->currentWidget() == *it) (*it)->updateTarget(*debugger_, running_);
         ++it;
     }
 }
 void MainWindow::closeInspections() {
+    const QSignalBlocker workspaceSignals(workspace_);
     if (explorer_) { explorer_->close(); explorer_ = nullptr; }
     workspace_->clearInspections();
     inspections_.clear();
@@ -1737,20 +1886,31 @@ PeripheralInspection* MainWindow::openPeripheral(const QString& name, unsigned c
     revealDock(peripheralDock_);
     if (!duplicate) {
         for (const auto& inspection : inspections_) {
-            if (!inspection || inspection->panel().selectedDevice() != name) continue;
+            if (!inspection || inspection->device() != name) continue;
             if (inspection->core() != core) continue;
             const auto key = inspection->objectName().mid(QString("deviceInspection_").size());
-            if (workspace_->revealInspection(key)) return inspection;
+            if (workspace_->revealInspection(key)) {
+                inspection->updateTarget(*debugger_, running_);
+                return inspection;
+            }
         }
         duplicate = workspace_->findChild<QWidget*>("deviceInspection_" + name) != nullptr;
     }
+    return addPeripheralInspection(name, core, duplicate);
+}
+PeripheralInspection* MainWindow::addPeripheralInspection(const QString& name, unsigned core, bool duplicate,
+                                                            const QVariantMap& selection) {
     const QString suffix = duplicate ? QString::number(++inspectionSequence_) : QString();
     const QString key = duplicate ? name + "#" + suffix : name;
     auto* inspection = new PeripheralInspection(name, core);
     inspection->setObjectName("deviceInspection_" + key);
+    inspection->restoreSelection(selection);
     configurePeripheralPanel(inspection->panel());
-    inspection->refreshRequested = [this] { refreshPeripherals(); };
-    inspection->detachRequested = [this, key] { workspace_->toggleDetached(key); };
+    inspection->refreshRequested = [this, inspection] { inspection->updateTarget(*debugger_, running_); };
+    inspection->detachRequested = [this, key, inspection] {
+        workspace_->toggleDetached(key);
+        inspection->updateTarget(*debugger_, running_);
+    };
     inspection->duplicateRequested = [this, name, inspection] { openPeripheral(name, inspection->core(), true); };
     inspection->injectUart = [this](unsigned uart, const std::string& bytes) {
         setRunning(false);
@@ -1759,7 +1919,11 @@ PeripheralInspection* MainWindow::openPeripheral(const QString& name, unsigned c
     inspections_.push_back(inspection);
     workspace_->addInspection(key, duplicate ? name + " · " + suffix : name, inspection,
         [inspection](bool detached) { inspection->setDetached(detached); });
-    refreshPeripherals();
+    const auto detached = selection.value("detached").toByteArray();
+    if (!detached.isEmpty()) {
+        workspace_->toggleDetached(key, detached);
+        inspection->updateTarget(*debugger_, running_);
+    }
     return inspection;
 }
 void MainWindow::refreshPoints() {
@@ -1977,11 +2141,15 @@ void MainWindow::selectHardware(bool hardware) {
             refresh(); return;
         }
     }
+    if (!layoutProject_.isEmpty()) saveLayout();
     setRunning(false); timer_->stop(); closeInspections();
+    peripherals_->reloadCatalog();
     pendingExpressions_.clear();
     pendingBacktraces_.clear();
     const Board board = debugger_->board().board;
     if (hardware) debugger_.reset(new GdbTarget(board)); else debugger_.reset(new Debugger(board));
+    peripheralLayoutPending_ = !layoutProject_.isEmpty();
+    restoreProjectPeripherals();
     lastHardwareSymbols_ = 0;
     indexSource({});
     running_ = false; previousValid_ = false; lastHardwareRevision_ = 0; fillMapping(); refresh();
@@ -2141,11 +2309,141 @@ void MainWindow::sizeOverview() {
 }
 void MainWindow::saveLayout() {
     if (!layoutUsed_) return;
-    QSettings settings;
+    if (layoutProject_.isEmpty()) {
+        QSettings settings;
+        writeLayout(settings);
+        return;
+    }
+    const QDir project(layoutProject_);
+    if (!project.exists() || !project.mkpath(".picodbg")) {
+        log("Impossible d’enregistrer la disposition du débogueur dans " + layoutProject_);
+        return;
+    }
+    QSettings settings(project.filePath(projectLayoutFile), QSettings::IniFormat);
+    writeLayout(settings);
+    settings.setValue("debugger/geometry", saveGeometry());
+    if (!peripheralLayoutPending_) settings.setValue(peripheralLayoutKey(), savePeripheralLayout());
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
+        log("Impossible d’enregistrer la disposition du débogueur dans " + settings.fileName());
+}
+
+void MainWindow::writeLayout(QSettings& settings) const {
     settings.setValue(layoutSetting, saveState(layoutVersion));
     settings.setValue("debugger/monitorLayoutVersion", monitorLayoutVersion);
     settings.setValue("debugger/standaloneAssembly",
                       assemblySuppressed_ ? revealAssemblyAfterIde_ : !assemblyDock_->isHidden());
+    settings.setValue("debugger/coreView", core_->currentIndex());
+    settings.setValue("debugger/toolsTab", inspectionTabs_->currentIndex());
+    settings.setValue("debugger/monitorTab", monitorTabs_->currentIndex());
+}
+
+void MainWindow::setLayoutProject(const QString& root) {
+    if (layoutProject_ == root) return;
+    saveLayout();
+    closeInspections();
+    layoutProject_ = root;
+    peripheralLayoutPending_ = !root.isEmpty();
+    if (root.isEmpty()) {
+        const QSettings settings;
+        restoreLayout(settings);
+        peripherals_->restoreSelection({{"device", "SIO"}});
+    } else {
+        const QSettings settings(QDir(root).filePath(projectLayoutFile), QSettings::IniFormat);
+        restoreLayout(settings);
+    }
+    layoutUsed_ = isVisible();
+    if (layoutUsed_ && defaultLayout_) {
+        defaultLayout_ = false;
+        compactMonitor_ = true;
+    }
+    restoreProjectPeripherals();
+    refresh();
+}
+
+QString MainWindow::peripheralLayoutKey() const {
+    return debugger_->description().chip == Chip::RP2040 ? "debugger/rp2040Peripherals" : "debugger/rp2350Peripherals";
+}
+QVariantMap MainWindow::savePeripheralLayout() const {
+    QVariantList tabs;
+    for (int index = 0; index < workspace_->count(); ++index) {
+        auto* peripheral = dynamic_cast<PeripheralInspection*>(workspace_->widget(index));
+        if (!peripheral) continue;
+        auto selection = peripheral->saveSelection();
+        selection.insert("current", peripheral == workspace_->currentWidget());
+        tabs.push_back(selection);
+    }
+    for (const auto& inspection : inspections_) {
+        if (!inspection) continue;
+        const auto geometry = workspace_->detachedGeometry(inspection);
+        if (geometry.isEmpty()) continue;
+        auto selection = inspection->saveSelection();
+        selection.insert("detached", geometry);
+        tabs.push_back(selection);
+    }
+    return {{"catalogue", peripherals_->saveSelection()}, {"tabs", tabs}};
+}
+void MainWindow::restoreProjectPeripherals() {
+    if (!peripheralLayoutPending_ || !isVisible()) return;
+    peripheralLayoutPending_ = false;
+    const QSettings settings(QDir(layoutProject_).filePath(projectLayoutFile), QSettings::IniFormat);
+    const auto layout = settings.value(peripheralLayoutKey()).toMap();
+    peripherals_->restoreSelection(layout.value("catalogue", QVariantMap{{"device", "SIO"}}).toMap());
+    const QSignalBlocker workspaceSignals(workspace_);
+    QWidget* current = peripherals_;
+    QSet<QString> restored;
+    const auto devices = picosvd::catalogSnapshot(debugger_->description().chip);
+    for (const auto& entry : layout.value("tabs").toList()) {
+        const auto selection = entry.toMap();
+        const auto name = selection.value("device").toString();
+        if (std::none_of(devices->begin(), devices->end(), [&name](const PeripheralDescription& device) {
+                return q(device.name) == name;
+            })) continue;
+        auto* inspection = addPeripheralInspection(name, selection.value("core").toInt() == 1 ? 1u : 0u,
+                                                    restored.contains(name), selection);
+        restored.insert(name);
+        if (selection.value("current").toBool() && workspace_->indexOf(inspection) >= 0) current = inspection;
+    }
+    workspace_->setCurrentWidget(current);
+}
+
+void MainWindow::restoreLayout(const QSettings& settings) {
+    const auto saved = settings.value(layoutSetting).toByteArray();
+    const auto geometry = settings.value("debugger/geometry").toByteArray();
+    if (!saved.isEmpty() && !geometry.isEmpty()) restoreGeometry(geometry);
+    defaultLayout_ = saved.isEmpty() || !restoreState(saved, layoutVersion);
+    compactMonitor_ = settings.value("debugger/monitorLayoutVersion", 0).toInt() == monitorLayoutVersion;
+    if (defaultLayout_) {
+        restoreOverview();
+        return;
+    }
+    setLayoutCore(settings.value("debugger/coreView", 0).toInt());
+    setLayoutAssemblyVisible(settings.value("debugger/standaloneAssembly", true).toBool());
+    inspectionTabs_->setCurrentIndex(qBound(0, settings.value("debugger/toolsTab", 0).toInt(), inspectionTabs_->count() - 1));
+    const int watches = monitorTabs_->indexOf(valueWatches_);
+    monitorTabs_->setCurrentIndex(qBound(0, settings.value("debugger/monitorTab", watches).toInt(), monitorTabs_->count() - 1));
+}
+
+void MainWindow::restoreOverview() {
+    setLayoutCore(0);
+    restoreState(overviewState_, layoutVersion);
+    setLayoutAssemblyVisible(true);
+    sizeOverview();
+    workspace_->setCurrentWidget(peripherals_);
+    inspectionTabs_->setCurrentIndex(0);
+    monitorTabs_->setCurrentWidget(valueWatches_);
+}
+
+void MainWindow::setLayoutCore(int index) {
+    const QSignalBlocker blocked(core_);
+    core_->setCurrentIndex(index >= 0 && index < core_->count() ? index : 0);
+    allCores_ = core_->currentIndex() == 2;
+    selected_ = core_->currentIndex() == 1 ? 1 : 0;
+}
+
+void MainWindow::setLayoutAssemblyVisible(bool visible) {
+    revealAssemblyAfterIde_ = visible;
+    assemblyDock_->setVisible(visible && !assemblySuppressed_);
 }
 
 void MainWindow::showManual() {
@@ -2179,28 +2477,38 @@ void MainWindow::showIde() {
         ownedIde_.reset(new picoide::IdeWindow(this, selectedBoard()));
         attachIde(ownedIde_.get());
     }
+    if (!ide_->isVisible()) ide_->restoreSessionProject();
     showInspectionWindow(ide_);
     refreshSource(true);
 }
 
 void MainWindow::attachIde(picoide::IdeWindow* ide) {
     ide_ = ide;
+    if (ide_) setLayoutProject(ide_->projectDirectory());
     syncIdeState();
 }
 
 void MainWindow::showEvent(QShowEvent* event) {
     QMainWindow::showEvent(event);
     layoutUsed_ = true;
+    if (peripheralLayoutPending_) {
+        restoreProjectPeripherals();
+        refreshPeripherals();
+    }
     syncIdeState();
     refreshSource(true);
     if (defaultLayout_) {
-        defaultLayout_ = false;
-        compactMonitor_ = true;
-        QTimer::singleShot(0, this, &MainWindow::sizeOverview);
-    } else if (!compactMonitor_) {
         compactMonitor_ = true;
         QTimer::singleShot(0, this, [this] {
-            if (!monitorDock_->isFloating() && monitorDock_->width() > defaultMonitorWidth)
+            if (!defaultLayout_) return;
+            defaultLayout_ = false;
+            sizeOverview();
+        });
+    } else if (!compactMonitor_) {
+        compactMonitor_ = true;
+        const auto project = layoutProject_;
+        QTimer::singleShot(0, this, [this, project] {
+            if (layoutProject_ == project && !monitorDock_->isFloating() && monitorDock_->width() > defaultMonitorWidth)
                 resizeDocks({monitorDock_, memoryDock_},
                             {defaultMonitorWidth, memoryDock_->width() + monitorDock_->width() - defaultMonitorWidth},
                             Qt::Horizontal);

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(PicoDebugger VERSION 0.10.0 LANGUAGES CXX)
+project(PicoDebugger VERSION 0.11.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -42,7 +42,8 @@ if(PICODBG_GUI)
         else()
             find_package(Qt6 REQUIRED COMPONENTS Widgets)
         endif()
-        add_library(picodbg_widgets src/qt/main_window.cpp src/qt/window_theme.cpp src/qt/source_map.cpp src/qt/peripheral_panel.cpp src/qt/choice_box.cpp
+        find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Xml Network)
+        add_library(picodbg_widgets src/qt/main_window.cpp src/qt/window_theme.cpp src/qt/source_map.cpp src/qt/peripheral_panel.cpp src/qt/choice_box.cpp src/qt/svd_catalog.cpp
             src/qt/register_inspector.cpp src/qt/inspection_workspace.cpp src/qt/peripheral_inspection.cpp src/qt/value_watches.cpp
             src/qt/memory_table.cpp src/qt/stack_details.cpp src/qt/stack_view.cpp src/qt/debugger_resources.qrc
             src/qt/gdb_mi.cpp src/qt/gdb_target.cpp src/qt/probe_dialog.cpp
@@ -54,7 +55,7 @@ if(PICODBG_GUI)
             src/qt/ide/ide_templates.qrc src/qt/ide/ide_tools_resources.qrc)
         set_target_properties(picodbg_widgets PROPERTIES AUTORCC ON)
         target_include_directories(picodbg_widgets PUBLIC src/qt)
-        target_link_libraries(picodbg_widgets PUBLIC picodbg_core Qt${QT_VERSION_MAJOR}::Widgets)
+        target_link_libraries(picodbg_widgets PUBLIC picodbg_core Qt${QT_VERSION_MAJOR}::Widgets PRIVATE Qt${QT_VERSION_MAJOR}::Xml Qt${QT_VERSION_MAJOR}::Network)
         find_package(Qt${QT_VERSION_MAJOR} QUIET COMPONENTS SerialPort)
         if(TARGET Qt${QT_VERSION_MAJOR}::SerialPort)
             target_link_libraries(picodbg_widgets PRIVATE Qt${QT_VERSION_MAJOR}::SerialPort)

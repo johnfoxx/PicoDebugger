@@ -1,6 +1,7 @@
 #include "stack_view.hpp"
 
 #include "debug_access.hpp"
+#include <QApplication>
 #include <QColorDialog>
 #include <QDateTime>
 #include <QFontDatabase>
@@ -13,6 +14,7 @@
 #include <QPainter>
 #include <QPushButton>
 #include <QResizeEvent>
+#include <QScreen>
 #include <QScrollBar>
 #include <QSignalBlocker>
 #include <QSplitter>
@@ -35,7 +37,10 @@ constexpr int knownBytesRole = Qt::UserRole + 9;
 constexpr qint64 changeMs = 2400;
 constexpr unsigned pageBytes = 256;
 constexpr int byteInset = 3;
-constexpr int zoneColumn = 5;
+constexpr int rawColumn = 4;
+constexpr int decodedColumn = 5;
+constexpr int zoneColumn = 6;
+constexpr int rawKeyRole = Qt::UserRole + 20;
 
 QString addressText(uint32_t value) {
     return QString("%1").arg(value, 8, 16, QLatin1Char('0')).toUpper();
@@ -669,7 +674,8 @@ StackInspector::StackInspector(unsigned core, const StackViewFrame& frame, QWidg
     setObjectName("stackInspector");
     setAttribute(Qt::WA_DeleteOnClose);
     setWindowTitle(QString("Pile · cœur %1 · %2").arg(core).arg(stackFrameName(frame)));
-    resize(985, 565);
+    const auto available = (parent ? parent->screen() : screen())->availableGeometry();
+    resize(std::min(1340, available.width()), std::min(620, available.height()));
     auto* layout = new QVBoxLayout(this);
     context_ = new QLabel;
     context_->setObjectName("stackInspectorContext");
@@ -696,7 +702,8 @@ StackInspector::StackInspector(unsigned core, const StackViewFrame& frame, QWidg
     panes->addWidget(raw);
     fields_ = new QTreeWidget;
     fields_->setObjectName("stackInspectorFields");
-    fields_->setHeaderLabels({"Rep.", "Offset / reg.", "Nom", "Type · taille", "Décodé", "Zone"});
+    fields_->setHeaderLabels({"Rep.", "Offset / reg.", "Symbole", "Type · taille", "Hex / bin", "Décodé", "Zone"});
+    fields_->headerItem()->setToolTip(rawColumn, "Clic pour alterner hexadécimal et binaire. Double-clic pour modifier.");
     fields_->headerItem()->setToolTip(zoneColumn, "Cocher une zone pour conserver sa couleur dans l’inspecteur.");
     auto fieldFont = fields_->font();
     fieldFont.setPixelSize(14);
@@ -704,13 +711,16 @@ StackInspector::StackInspector(unsigned core, const StackViewFrame& frame, QWidg
     fields_->header()->setFont(fieldFont);
     fields_->setStyleSheet("QHeaderView::section { padding:3px; }");
     fields_->setIndentation(13);
+    fields_->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
+    fields_->header()->setStretchLastSection(false);
     fields_->header()->setSectionResizeMode(0, QHeaderView::Fixed);
-    fields_->header()->setSectionResizeMode(2, QHeaderView::Stretch);
+    fields_->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
     fields_->setItemDelegate(new StackLabelDelegate(fields_));
     fields_->setColumnWidth(0, 55);
     fields_->setColumnWidth(1, 88);
     fields_->setColumnWidth(3, 140);
-    fields_->setColumnWidth(4, 130);
+    fields_->setColumnWidth(rawColumn, 122);
+    fields_->setColumnWidth(decodedColumn, 126);
     fields_->setColumnWidth(zoneColumn, 54);
     fields_->header()->setSectionResizeMode(zoneColumn, QHeaderView::Fixed);
     repaintChanges(changeRepaint_, fields_->viewport(), latestChange_);
@@ -719,7 +729,7 @@ StackInspector::StackInspector(unsigned core, const StackViewFrame& frame, QWidg
     fields_->setExpandsOnDoubleClick(false);
     panes->addWidget(fields_);
     panes->setStretchFactor(1, 1);
-    panes->setSizes({295, 605});
+    panes->setSizes({315, 1000});
     layout->addWidget(panes, 1);
     auto* footer = new QHBoxLayout;
     auto* help = new QLabel("Cochez les zones à colorer. Un trait souligne les valeurs récemment modifiées.");
@@ -748,21 +758,39 @@ StackInspector::StackInspector(unsigned core, const StackViewFrame& frame, QWidg
     memory_->editRequested = [this](unsigned, StackMemoryView::EditMode mode, uint32_t at, int field) {
         if (editMemory) editMemory(mode, at, field);
     };
+    rawClick_.setSingleShot(true);
+    connect(&rawClick_, &QTimer::timeout, this, [this] {
+        if (!available_ || pendingRawClick_.isEmpty()) return;
+        if (!binaryFields_.remove(pendingRawClick_)) binaryFields_.insert(pendingRawClick_);
+        pendingRawClick_.clear();
+        if (refreshRequested) refreshRequested();
+    });
     connect(fields_, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem* item, int column) {
         if (column == zoneColumn) return;
+        if (column == rawColumn) {
+            pendingRawClick_ = item->data(rawColumn, rawKeyRole).toString();
+            rawClick_.start(QApplication::doubleClickInterval());
+            return;
+        }
         const int index = item->data(0, fieldRole).toInt();
         if (available_ && index >= 0 && index < frame_.fields.size() && rangeSelected)
             rangeSelected(frame_.fields[index].span, true);
     });
     connect(fields_, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* item, int column) {
         if (!available_ || column == zoneColumn) return;
+        if (column == rawColumn) { rawClick_.stop(); pendingRawClick_.clear(); }
         const auto index = item->data(0, fieldRole).toInt();
         if (index < 0 || index >= frame_.fields.size()) return;
         const auto& field = frame_.fields[index].field;
         if (field.type.isArray && !item->parent()) { item->setExpanded(!item->isExpanded()); return; }
         const auto element = item->data(0, elementRole);
         const auto value = element.isValid() ? stackArrayElement(field, element.toUInt()) : field;
-        if (column == 4 && writable_ && value.editable && editTyped) editTyped(value, item->text(4));
+        if (!writable_ || !value.editable || !editTyped) return;
+        if (column == decodedColumn) editTyped(value, item->text(decodedColumn), StackMemoryView::Typed);
+        if (column == rawColumn) {
+            const bool binary = binaryFields_.contains(item->data(rawColumn, rawKeyRole).toString());
+            editTyped(value, item->text(rawColumn), binary ? StackMemoryView::RawBinary : StackMemoryView::RawHex);
+        }
     });
 }
 
@@ -862,23 +890,33 @@ void StackInspector::showFields(const picodbg::DebugTarget& target, const StackV
         const auto where = field.inMemory && frame_.frame.hasSp ? QString("%1%2").arg(field.address >= frame_.frame.sp ? "+0x" : "−0x")
             .arg(field.address >= frame_.frame.sp ? field.address - frame_.frame.sp : frame_.frame.sp - field.address, 0, 16)
             : field.reg >= 0 ? QString::fromStdString(picodbg::registerName(static_cast<unsigned>(field.reg))) : QString("—");
-        QString value;
+        const auto rawKey = field.role + "/" + field.name + "/" + where;
+        const bool binary = binaryFields_.contains(rawKey);
+        QString value, raw;
         if (field.type.isArray && field.type.size) {
-            QStringList preview;
-            for (unsigned i = 0; field.inMemory && i < std::min(field.type.count, 4u); ++i)
-                preview << frameValue(target, core_, stackArrayElement(field, i));
-            if (!preview.isEmpty() && field.type.count > 4) preview << "…";
+            QStringList preview, rawPreview;
+            for (unsigned i = 0; field.inMemory && i < std::min(field.type.count, 4u); ++i) {
+                const auto element = stackArrayElement(field, i);
+                preview << frameValue(target, core_, element);
+                rawPreview << frameRawValue(target, core_, element, binary);
+            }
+            if (!preview.isEmpty() && field.type.count > 4) { preview << "…"; rawPreview << "…"; }
             value = preview.isEmpty() ? QString("%1 éléments").arg(field.type.count) : "[" + preview.join(", ") + "]";
-        } else value = frameValue(target, core_, field);
+            raw = rawPreview.isEmpty() ? QString("—") : "[" + rawPreview.join(", ") + "]";
+        } else {
+            value = frameValue(target, core_, field);
+            raw = frameRawValue(target, core_, field, binary);
+        }
         auto type = field.type.name;
         type.replace("unsigned char", "uint8_t");
         type.replace("signed char", "int8_t");
         type.replace("short int", "short");
         type.replace("long int", "long");
         if (field.type.size) type.prepend(QString("%1 o · ").arg(field.type.size * field.type.count));
-        const QStringList values{entry.label, where, field.name, type, value.isEmpty() ? QString("—") : value};
+        const QStringList values{entry.label, where, field.name, type, raw, value.isEmpty() ? QString("—") : value};
         item->setData(0, fieldRole, index);
         item->setData(0, elementRole, element);
+        item->setData(rawColumn, rawKeyRole, rawKey);
         auto span = entry.span;
         if (span.valid() && element.isValid()) {
             span.start = field.address;
@@ -899,12 +937,13 @@ void StackInspector::showFields(const picodbg::DebugTarget& target, const StackV
                 if (!changed && found->until > now) changed = found->until;
             }
         }
-        item->setData(4, changesRole, changed);
+        item->setData(rawColumn, changesRole, changed);
+        item->setData(decodedColumn, changesRole, changed);
         if (changed > now) latestChange_ = std::max(latestChange_, changed);
         for (int col = 0; col < values.size(); ++col) {
             item->setText(col, values[col]);
             item->setToolTip(col, QString("%1 · %2 · %3\n%4\n%5 · %6")
-                .arg(entry.label, field.role, field.name, field.type.name, where, values[4]));
+                .arg(entry.label, field.role, field.name, field.type.name, where, values[col]));
         }
     };
     for (int i = 0; i < frame_.fields.size(); ++i) {

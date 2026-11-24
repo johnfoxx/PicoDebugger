@@ -22,7 +22,7 @@ inline DebugValue inspectValue(const picodbg::DebugTarget& target, uint32_t addr
     if (target.executing() || target.busy()) return {"En attente", "Valeur disponible à l’arrêt de la cible", false, 0};
     try {
         const auto raw = target.peek(address, size, core);
-        return {QString::fromStdString(picodbg::hex(raw, 2 * size)), {}, true, raw};
+        return {QString("0x%1").arg(raw, static_cast<int>(2 * size), 16, QLatin1Char('0')), {}, true, raw};
     } catch (const picodbg::Error& error) {
         const auto detail = QString::fromUtf8(error.what());
         if (detail.startsWith("Lecture explicite")) return {"Lecture explicite", detail, false, 0};
@@ -33,6 +33,7 @@ inline DebugValue inspectValue(const picodbg::DebugTarget& target, uint32_t addr
 
 inline DebugValue inspectRegister(const picodbg::DebugTarget& target, const picodbg::RegisterDescription& reg,
                                   unsigned core, bool emulated) {
+    if (!target.hardware() && reg.documentedOnly) return {"Non émulé", {}, false, 0};
     if (!target.loaded()) return inspectValue(target, reg.address, 4, core);
     if (reg.access == "WO") return {"Écriture seule", {}, false, 0};
     if (!target.hardware() && !emulated) return {"Non émulé", {}, false, 0};
@@ -43,6 +44,9 @@ inline QString registerAccessText(const picodbg::RegisterDescription& reg) {
     if (reg.access == "RW") return "Lecture et écriture";
     if (reg.access == "WO") return "Écriture seule";
     if (reg.access == "W1C") return "Écrire 1 efface les bits correspondants";
+    if (reg.access == "W1S") return "Écrire 1 active les bits correspondants";
+    if (reg.access == "W1T") return "Écrire 1 inverse les bits correspondants";
+    if (reg.access == "SPECIAL") return "Accès spécial selon la documentation du registre";
     if (reg.access == "RC") return "Lecture avec effacement";
     return "Lecture seule";
 }

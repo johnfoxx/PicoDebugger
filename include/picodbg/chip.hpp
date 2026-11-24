@@ -18,6 +18,9 @@ struct ChipDescription {
     std::vector<Region> regions;
 };
 ChipDescription describe(Chip chip);
+inline unsigned gpioCount(Chip chip) { return chip == Chip::RP2040 ? 30u : 48u; }
+inline unsigned gpioIrqWords(Chip chip) { return (gpioCount(chip) + 7u) / 8u; }
+inline uint32_t gpioIrqOffset(Chip chip) { return chip == Chip::RP2040 ? 0xf0u : 0x230u; }
 const Region* regionAt(const ChipDescription& chip, uint32_t address);
 inline bool regionWritable(const Region& region) {
     return region.permissions.compare(0, 3, "R/W") == 0;

@@ -4,6 +4,8 @@ L’IDE s’ouvre maximisé. Vous pouvez ensuite redimensionner sa fenêtre avec
 
 Lancer `pico-debugger` ou `pico-debugger /chemin/projet` pour commencer dans l'IDE. Créer, ouvrir et compiler un projet depuis cette fenêtre. Le bouton **Débogueur** ouvre la session à la demande. Pour commencer dans le débogueur, utiliser `pico-debugger --debugger` ou passer directement un ELF. **Fichier → Ouvrir l'IDE C** ou **Ctrl+Maj+E** l'ouvrent dans l'autre sens. Les deux fenêtres peuvent rester côte à côte ou sur deux écrans. Leurs barres d'état indiquent si l'autre fenêtre est reliée ou fermée et si l'émulateur ou la carte est en cours d'exécution.
 
+Au lancement sans projet ou ELF explicite, l’IDE rouvre le projet qui était ouvert à sa dernière fermeture. Si **Fermer le projet** a été utilisé avant de quitter l’IDE, le prochain lancement affiche l’accueil.
+
 Dans l'IDE ou le débogueur, choisir **Vues → Thème → Clair** ou **Sombre**. Le changement s'applique immédiatement aux deux fenêtres et aux fenêtres d'inspection ouvertes. Il est conservé entre les lancements.
 
 ## Premier projet
@@ -21,13 +23,15 @@ Les fichiers générés sont commentés en français. Pour suivre le démarrage 
 
 L'éditeur affiche les numéros de ligne, colore la syntaxe et reprend l'indentation. Il ouvre les fichiers texte UTF-8 du projet, dont les en-têtes et les scripts CMake. Les commandes **Annuler** et **Rétablir** s'appliquent à l'onglet courant.
 
-Lorsque clangd tourne, les diagnostics apparaissent pendant la saisie et **Ctrl+Espace** affiche les suggestions au curseur. Pour résoudre les inclusions et macros du projet, configurer ou compiler au moins une fois afin que CMake produise `compile_commands.json`. Le programme déclare précisément le chemin du compilateur ARM autorisé pour l'interrogation des en-têtes système. Les modèles fournissent une configuration `.clang-tidy` avec des contrôles d'analyse statique et d'erreurs fréquentes. Les projets importés utilisent leurs propres réglages clangd et clang-tidy.
+Lorsque clangd tourne, les diagnostics apparaissent pendant la saisie et **Ctrl+Espace** affiche les suggestions au curseur. Maintenir **Ctrl** au survol d’un symbole le colore et le souligne. Un clic ouvre sa définition. Les fichiers de définition en dehors du projet s’ouvrent en lecture seule. Pour résoudre les inclusions et macros du projet, configurer ou compiler au moins une fois afin que CMake produise `compile_commands.json`. Le programme déclare précisément le chemin du compilateur ARM autorisé pour l'interrogation des en-têtes système. Les modèles fournissent une configuration `.clang-tidy` avec des contrôles d'analyse statique et d'erreurs fréquentes. Les projets importés utilisent leurs propres réglages clangd et clang-tidy.
+
+Le menu contextuel d’un onglet permet de le détacher ou de le déplacer vers l’autre volet pour comparer deux fichiers côte à côte. Le bouton **Rattacher l’onglet** et la fermeture de sa fenêtre le rétablissent dans son volet. Les modifications en cours suivent l’onglet. Dans les fichiers C et C++, **Ctrl+/** ou **Ctrl+Maj+C** commente ou décommente la ligne courante ou les lignes sélectionnées.
 
 L'onglet **Problèmes** rassemble les diagnostics de clangd et les messages du compilateur localisés dans les fichiers du projet. Double-cliquer sur une ligne pour atteindre la source. La sortie complète de CMake et du compilateur reste dans **Compilation**. L'analyse statique couvre certaines classes d'erreurs et les tests du firmware restent nécessaires pour valider son comportement. Sans clangd, l'éditeur conserve la coloration et les diagnostics de compilation.
 
 ### Rechercher et modifier du texte
 
-Ouvrir la languette **Recherche** à droite de l'éditeur. **Ctrl+F** recherche dans le fichier actif, **Ctrl+H** ouvre le champ de remplacement. **Ctrl+Maj+F** et **Ctrl+Maj+H** font de même sur tout le projet. Les occurrences sont surlignées dans l'éditeur. **F3** et **Maj+F3** parcourent les résultats dans les deux sens. Dans la liste du projet, double-cliquer sur un résultat ouvre le fichier à la ligne correspondante.
+La barre **Recherche** se trouve sous l’éditeur, au-dessus de la console. **Ctrl+F** recherche dans le fichier actif, et **Ctrl+H** affiche aussi la ligne de remplacement. **Ctrl+Maj+F** et **Ctrl+Maj+H** font de même sur tout le projet. Les occurrences sont surlignées dans l'éditeur. **F3** et **Maj+F3** parcourent les résultats dans les deux sens. Dans la liste du projet, double-cliquer sur un résultat ouvre le fichier à la ligne correspondante.
 
 Le motif est pris au sens littéral par défaut. Cocher **Regex** pour utiliser une expression régulière. Cocher **Casse** pour distinguer les majuscules des minuscules. Par exemple, rechercher `\bGPIO_(\d+)\b` et remplacer par `PIN_$1` transforme `GPIO_25` en `PIN_25`. Dans le texte de remplacement, `$1` ou `\1` insère le premier groupe capturé et `${nom}` insère un groupe nommé. `$$` insère un dollar et `\n` insère un saut de ligne. Qt fournit le moteur d'expressions régulières.
 

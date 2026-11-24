@@ -20,7 +20,7 @@ BoardDescription describeBoard(Board board) {
     d.connections = {
         {"LED intégrée", wireless ? "CYW43 · WL_GPIO0" : "GPIO25", wireless
             ? "Commande via le pilote radio ; état non émulé. GPIO25 est la sélection radio."
-            : "Active haut ; latch SIO consultable, pas de signal électrique simulé."},
+            : "Active à l’état haut ; le voyant suit la configuration et la sortie de GPIO25."},
         {"Mode alimentation SMPS", wireless ? "CYW43 · WL_GPIO1" : "GPIO23", "Câblage décrit ; alimentation non simulée."},
         {"Détection VBUS", wireless ? "CYW43 · WL_GPIO2" : "GPIO24", "Entrée physique non simulée."},
         {"Mesure VSYS", "GPIO29 / ADC3", wireless ? "Partagé avec l'horloge radio ; ADC non émulé." : "ADC non émulé."},

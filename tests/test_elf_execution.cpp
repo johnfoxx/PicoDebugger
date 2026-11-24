@@ -24,12 +24,14 @@ void peripherals(Debugger& d) {
           "Expected BKPT 3, got " + stopName(stop.kind) + ": " + stop.message);
     const bool pico2 = d.board().chip == Chip::RP2350;
     expect(d, "read32(0xd0000010)", 0x02000000);
+    check(d.onboardLed() == LedState::On, "Firmware GPIO configuration turns on the onboard LED");
     expect(d, pico2 ? "read32(0x400b003c)" : "read32(0x40054034)", 1);
     expect(d, pico2 ? "read32(0x400a80f4)" : "read32(0x400500a4)", 1);
     const uint32_t time = d.evaluate("read32(0x20000000)");
     check(time >= 80 && time < 100, "Timer polling result outside expected range: " + hex(time));
 }
 void bootBlink(Debugger& d) {
+    check(d.onboardLed() == LedState::Off, "LED starts off");
     expect(d, "read32(data_cookie)", 0); // The loader must not pre-copy .data.
     expect(d, "pc ^ (Reset_Handler & ~1)", 0);
     const uint32_t mainAddress = d.evaluate("main & ~1");
@@ -48,6 +50,7 @@ void bootBlink(Debugger& d) {
         expect(d, "read32(boot_error)", 0);
         expect(d, "read32(half_period_ms)", 1);
         expect(d, "read32(led_state)", transition % 2);
+        check(d.onboardLed() == (transition % 2 ? LedState::On : LedState::Off), "Onboard LED follows the firmware");
         expect(d, "read32(led_transitions)", transition);
         expect(d, "read32(blink_count)", transition / 2);
         expect(d, "read32(0xd0000010) & 0x02000000", (transition % 2) << 25);
@@ -56,6 +59,7 @@ void bootBlink(Debugger& d) {
                    : "read32(0xd0000020) & 0x02000000", 1u << 25);
     }
     d.reset();
+    check(d.onboardLed() == LedState::Off, "Reset turns off the onboard LED");
     expect(d, "read32(data_cookie)", 0);
     expect(d, "read32(led_transitions)", 0);
     runTo(d, checkpoint); // The breakpoint survives reset.

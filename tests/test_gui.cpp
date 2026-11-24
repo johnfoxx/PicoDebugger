@@ -101,22 +101,22 @@ int main(int argc, char** argv) {
         require(cpuDock->widget()->minimumHeight() == cpuDock->widget()->maximumHeight() &&
                 stackDock->geometry().bottom() == monitorDock->geometry().bottom(), "Fixed CPU height leaves the full remaining column to the stack");
         auto* regs = find<QTableWidget>(window, "registersTable");
-        require(regs->columnCount() == 4 && regs->isColumnHidden(3) && regs->item(0, 2)->text() == "0x00000000", "Both CPU values must be visible");
-        require(regs->visualItemRect(regs->item(20, 2)).bottom() < regs->viewport()->height(), "All standard register rows fit without scrolling");
+        require(regs->columnCount() == 4 && !regs->isColumnHidden(1) && regs->item(0, 1)->text() == "0x00000000",
+                "Core 0 registers are visible at startup");
+        require(regs->visualItemRect(regs->item(20, 1)).bottom() < regs->viewport()->height(), "All standard register rows fit without scrolling");
         auto* stack0 = find<QTreeWidget>(window, "stackCore0");
         auto* stack1 = find<QTreeWidget>(window, "stackCore1");
-        require(stack0->isVisible() && stack1->isVisible() && stack0->topLevelItem(0)->text(0).startsWith("#0 "),
-                "Both stacks visible with the current frame");
         auto* coreSelector = find<QComboBox>(window, "coreSelector");
-        require(coreSelector->currentIndex() == 2, "Both cores selected at startup");
-        coreSelector->setCurrentIndex(0);
+        require(coreSelector->currentIndex() == 0 && stack0->isVisible() && !stack1->isVisible() &&
+                stack0->topLevelItem(0)->text(0).startsWith("#0 "), "Core 0 and its current stack frame are shown at startup");
         require(!regs->isColumnHidden(3) && regs->isColumnHidden(2) && !regs->item(15, 3)->text().isEmpty() &&
                 stack0->isVisible() && !stack1->isVisible() && !stack0->isColumnHidden(3), "Single core keeps stack ASCII and adds register meanings");
         coreSelector->setCurrentIndex(1);
         require(regs->isColumnHidden(1) && !regs->isColumnHidden(2) && !stack0->isVisible() && stack1->isVisible(), "Core 1 fills the focus area");
         coreSelector->setCurrentIndex(0);
         coreSelector->setCurrentIndex(2);
-        require(!regs->isColumnHidden(1) && !regs->isColumnHidden(2) && stack0->isVisible() && stack1->isVisible(), "All restores both contexts");
+        require(!regs->isColumnHidden(1) && !regs->isColumnHidden(2) && regs->isColumnHidden(3) &&
+                regs->item(0, 2)->text() == "0x00000000" && stack0->isVisible() && stack1->isVisible(), "All restores both contexts");
         find<QAction>(window, "focusView_memory")->trigger();
         require(memoryDock->isVisible() && ioDock->isHidden() && assemblyDock->isHidden(), "Memory focus");
         find<QAction>(window, "focusView_split")->trigger();
@@ -229,7 +229,7 @@ int main(int argc, char** argv) {
         require(peripheralRegisters->rowCount() == 17, "Timer register catalog missing");
         require(peripheralRegisters->item(10, 1)->text() == "0x00000000", "Timer live value missing");
         step->trigger();
-        require(peripheralRegisters->item(10, 1)->text() == "0x00000001", "Timer view did not update");
+        require(peripheralRegisters->item(10, 1)->text() == "0x00000000", "Timer must stay stopped while held in reset");
         filter->setText("UART0");
         require(timer->isHidden() && !uart->isHidden(), "Peripheral filter mismatch");
         devices->setCurrentItem(uart);
@@ -258,7 +258,8 @@ int main(int argc, char** argv) {
         uartRegisters->setCurrentCell(2, 0); // UARTFR at reset: RXFE=1, TXFE=1.
         auto* uartFields = uartWindow->findChild<QTableWidget*>("registerFieldsTable");
         require(uartFields && uartFields->rowCount() == 5 && uartFields->item(1, 2)->text() == "1", "UART bit values not decoded");
-        require(uartFields->item(1, 3)->text().contains("FIFO RX vide : Oui"), "UART bit meaning missing");
+        const auto rxMeaning = uartFields->item(1, 3)->text();
+        require(rxMeaning.contains("FIFO RX vide") && rxMeaning.contains("Oui"), "UART bit meaning missing");
         find<QPushButton>(*uartWindow, "registerDetailsButton")->click();
         require(uartFields->isVisible() && !uartRegisters->isVisible(), "Bits must replace the values view without stacking another panel");
         find<QPushButton>(*uartWindow, "registerDetailsButton")->click();
@@ -287,7 +288,7 @@ int main(int argc, char** argv) {
         QPointer<QWidget> timerWindow = find<QWidget>(window, "deviceInspection_TIMER");
         require(timerWindow->isVisible() && uartWindow && workspace->indexOf(uartWindow) >= 1, "Several inspection tabs must coexist");
         auto* timerValues = timerWindow->findChild<QTableWidget*>("peripheralsTable");
-        step->trigger(); require(timerValues->item(10, 1)->text() == "0x00000002", "Mini window values not refreshed");
+        step->trigger(); require(timerValues->item(10, 1)->text() == "0x00000000", "Mini window shows the held timer's reset value");
         require(QMetaObject::invokeMethod(workspace, "tabCloseRequested", Qt::DirectConnection,
                                          Q_ARG(int, workspace->indexOf(timerWindow))), "Close-tab signal unavailable");
         QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
@@ -336,7 +337,7 @@ int main(int argc, char** argv) {
         require(peripheralRegisters->item(10, 1)->text() == "Pas d'image", "Old session value survived profile change");
         window.loadDemo();
         require(peripheralRegisters->item(10, 1)->text() == "0x00000000", "RP2350 timer reset value");
-        step->trigger(); require(peripheralRegisters->item(10, 1)->text() == "0x00000001", "RP2350 TIMER1 must advance");
+        step->trigger(); require(peripheralRegisters->item(10, 1)->text() == "0x00000000", "RP2350 TIMER1 starts held in reset");
         find<QPushButton>(*catalogPage, "openDeviceWindowButton")->click();
         auto* timer1Window = find<QWidget>(window, "deviceInspection_TIMER1");
         find<QComboBox>(window, "coreSelector")->setCurrentIndex(1);

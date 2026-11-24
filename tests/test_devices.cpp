@@ -22,12 +22,93 @@ void timer2350() {
     t.write(0x3c, 1); check(t.read(0x48, true) == 1, "LOCKED prevents IRQ acknowledge");
     t.reset(); check(t.read(0x34, true) == 0 && t.read(0x28, true) == 0, "Peripheral reset releases LOCKED");
     Memory m(Chip::RP2350);
+    m.write(0x40023000, (1u << 23) | (1u << 24), 4);
     m.write(0x400b0010, 3, 4); m.write(0x400b0040, 1, 4);
     m.write(0x400b8014, 4, 4); m.write(0x400b8040, 2, 4);
     m.write(0x400b0030, 1, 4); m.advanceTime(4);
     check(m.peek(0x400b0028, 4) == 0 && m.peek(0x400b8028, 4) == 4, "Independent RP2350 timers/pause");
     check((m.system(0).pending & 0x21u) == 0x20u && (m.system(1).pending & 0x20u), "TIMER1 IRQ1 maps to line5 on both cores");
     m.write(0x400b0030, 0, 4); m.advanceTime(3); check(m.system(0).pending & 1, "TIMER0 IRQ0 mapping");
+}
+void onboardLedTests() {
+    constexpr uint32_t ledMask = 1u << 25;
+    for (const bool pico2 : {false, true}) {
+        const uint32_t ctrl = pico2 ? 0x400280ccu : 0x400140ccu;
+        const uint32_t pad = pico2 ? 0x40038068u : 0x4001c068u;
+        const uint32_t sioOe = pico2 ? 0xd0000030u : 0xd0000020u;
+        const uint32_t reset = pico2 ? 0x40020000u : 0x4000c000u;
+        const uint32_t resetIo = 1u << (pico2 ? 6 : 5);
+        const uint32_t resetPads = 1u << (pico2 ? 9 : 8);
+        Debugger d(pico2 ? Board::Pico2 : Board::Pico);
+        auto& m = d.memory;
+        check(d.onboardLed() == LedState::Off && m.peek(ctrl, 4) == 31, "LED and mux reset state");
+        m.write(reset + 0x3000u, resetIo | resetPads | (1u << (pico2 ? 26 : 22)), 4);
+        m.write(pico2 ? 0x40070030u : 0x40034030u, 0x301, 4);
+        m.write(0xd0000010, ledMask, 4);
+        m.write(sioOe, ledMask, 4);
+        check(d.onboardLed() == LedState::Off, "UART and SIO latches alone do not control the LED");
+        m.write(ctrl, 5, 4);
+        if (pico2) {
+            check(d.onboardLed() == LedState::Off, "RP2350 pad isolation blocks LED");
+            m.write(pad + 0x3000u, 1u << 8, 4);
+        }
+        check(d.onboardLed() == LedState::On, "SIO drives the active-high LED");
+        m.write(pad + 0x2000u, 1u << 7, 4);
+        check(d.onboardLed() == LedState::Off, "Pad output disable turns LED off");
+        m.write(pad + 0x3000u, 1u << 7, 4);
+        const auto outover = pico2 ? 12 : 8;
+        const auto oeover = pico2 ? 14 : 12;
+        m.write(ctrl, 5u | (1u << outover), 4);
+        check(d.onboardLed() == LedState::Off, "OUTOVER can invert the SIO output");
+        m.write(ctrl, 5u | (2u << oeover), 4);
+        check(d.onboardLed() == LedState::Off, "OEOVER can disable the output");
+        m.write(ctrl, 5, 4);
+        m.write(sioOe, 0, 4);
+        check(d.onboardLed() == LedState::Off, "Releasing SIO OE turns the LED off");
+        m.write(sioOe, ledMask, 4);
+        m.write(reset + 0x2000u, resetPads, 4);
+        m.write(pad, 0, 4);
+        check(d.onboardLed() == LedState::Off && m.peek(pad, 4) == (pico2 ? 0x116u : 0x56u), "Pad reset holds the pad at its reset configuration");
+        m.write(reset + 0x2000u, resetIo, 4);
+        m.write(ctrl, 5, 4);
+        m.write(reset + 0x3000u, resetIo | resetPads, 4);
+        check(d.onboardLed() == LedState::Off && m.peek(ctrl, 4) == 31, "Mux reset clears the pin selection");
+        if (pico2) {
+            m.write(pad + 0x3000u, 1u << 8, 4);
+            check(!(m.peek(pad, 4) & (1u << 8)), "Firmware can clear ISO after releasing the bank");
+        }
+
+        const auto ioBase = ctrl - 0xccu;
+        const auto padBase = pad - 0x68u;
+        const auto pin = gpioCount(d.board().chip) - 1u;
+        const auto pinMask = 1u << (pin % 32u);
+        const auto status = ioBase + pin * 8u;
+        const auto bit = 1u << (4u * (pin % 8u) + 3u);
+        const auto intr = ioBase + gpioIrqOffset(d.board().chip) + 4u * (pin / 8u);
+        const auto proc0Enable = intr + 4u * gpioIrqWords(d.board().chip);
+        const auto proc0Status = intr + 12u * gpioIrqWords(d.board().chip);
+        m.write(status + 4, 5, 4);
+        m.write(padBase + 4 + pin * 4u, 0x40, 4);
+        m.write(proc0Enable, bit, 4);
+        m.write(pico2 ? 0xd000003cu : 0xd0000024u, pinMask, 4);
+        m.write(pico2 ? 0xd000001cu : 0xd0000014u, pinMask, 4);
+        check(m.peek(status + 4, 4) == 5 && (m.peek(pico2 ? 0xd0000008u : 0xd0000004u, 4) & pinMask),
+              "The last pin in either GPIO bank takes configuration and returns its digital level");
+        check((m.peek(intr, 4) & bit) && (m.peek(proc0Status, 4) & bit) &&
+              (m.system(0).pending & (1u << (pico2 ? 21u : 13u))) && !(m.system(1).pending & (1u << (pico2 ? 21u : 13u))),
+              "A GPIO edge and its enable reach only the selected processor");
+        m.write(intr, bit, 4);
+        check(!(m.peek(proc0Status, 4) & bit), "Acknowledge clears the selected GPIO edge");
+        unsupported([&] { m.write(status, 1, 4); });
+
+        Debugger wireless(pico2 ? Board::Pico2W : Board::PicoW);
+        wireless.memory.write(reset + 0x3000u, resetIo | resetPads, 4);
+        wireless.memory.write(ctrl, 5, 4);
+        wireless.memory.write(pad, 0, 4);
+        wireless.memory.write(0xd0000010, ledMask, 4);
+        wireless.memory.write(sioOe, ledMask, 4);
+        check(wireless.onboardLed() == LedState::Unavailable, "GP25 does not report a CYW43 LED state");
+    }
 }
 void uartTests() {
     Uart uart;
@@ -103,6 +184,14 @@ void busTests() {
         Memory m(chip); const bool p2 = chip == Chip::RP2350;
         const uint32_t uart = p2 ? 0x40070000 : 0x40034000, resets = p2 ? 0x40020000 : 0x4000c000;
         const unsigned uartBit = p2 ? 26u : 22u, irq = p2 ? 33u : 20u;
+        const uint32_t resetMask = p2 ? 0x1fffffffu : 0x01ffffffu;
+        const uint32_t uartMask = 1u << uartBit;
+        check(m.peek(resets, 4) == resetMask && m.peek(resets + 8, 4) == 0, "All implemented reset lines are asserted at power-on");
+        m.write(uart + 0x30, 0x301, 4);
+        check(!m.receiveUart(0, 'X'), "A device starts held in reset");
+        m.write(resets + 0x3000, uartMask, 4);
+        check(m.peek(resets, 4) == (resetMask & ~uartMask) && m.peek(resets + 8, 4) == uartMask,
+              "CLR releases only the selected peripheral");
         m.write(uart + 0x30, 0x301, 4); m.write(uart + 0x38, 0x10, 4);
         check(m.receiveUart(0, 'R'), "Bus RX injection");
         check(m.system(0).pending & (uint64_t(1) << irq), "UART line maps to correct NVIC bank");
@@ -115,10 +204,10 @@ void busTests() {
             check(m.peek(0xd0000010, 4) == 2, "RP2350 GPIO aliases differ from RP2040");
             m.write(0xd0000038, 2, 4); check(m.peek(0xd0000030, 4) == 2, "RP2350 GPIO OE mapping");
         }
-        m.write(resets + 0x2000, 1u << uartBit, 4);
-        check(m.peek(uart + 0x30, 4) == 0x300 && !(m.peek(resets + 8, 4) & (1u << uartBit)), "Peripheral reset resets UART and clears DONE");
+        m.write(resets + 0x2000, uartMask, 4);
+        check(m.peek(uart + 0x30, 4) == 0x300 && !(m.peek(resets + 8, 4) & uartMask), "Peripheral reset resets UART and clears DONE");
         m.write(uart + 0x30, 0x301, 4); check(!m.receiveUart(0, 'X'), "Held reset ignores writes/input");
-        m.write(resets + 0x3000, 1u << uartBit, 4); check(m.peek(resets + 8, 4) & (1u << uartBit), "Reset deassert sets DONE");
+        m.write(resets + 0x3000, uartMask, 4); check(m.peek(resets + 8, 4) & uartMask, "Reset deassert sets DONE");
         const auto wd = p2 ? 0x400d8000u : 0x40058000u;
         m.write(wd + 0x28, 0x12345678, 4); check(m.peek(wd + 0x28, 4) == 0x12345678, "Watchdog scratch7");
         unsupported([&] { m.write(wd, 0x40000000, 4); });
@@ -127,11 +216,15 @@ void busTests() {
         catch (const Error& e) { diagnosed = e.kind == ErrorKind::Unsupported && e.address == uart + 0x48; }
         check(diagnosed, "Device diagnostics use absolute bus addresses");
     }
-    Debugger d(Chip::RP2350); d.loadImage(demoImage()); d.memory.write(0x40070030, 0x301, 4);
+    Debugger d(Chip::RP2350); d.loadImage(demoImage());
+    d.memory.write(0x40023000, 1u << 26, 4);
+    d.memory.write(0x40070030, 0x301, 4);
     const auto revision = d.revision(); check(d.injectUart(0, "RX") == 1 && d.revision() > revision, "Injection reports FIFO capacity and updates snapshot revision");
+    d.reset();
+    check(d.peek(0x40020000, 4) == 0x1fffffffu && d.peek(0x40020008, 4) == 0, "Debugger reset restores startup reset lines");
 }
 }
 int main() {
-    try { timer2350(); uartTests(); spiTests(); pwmTests(); busTests(); std::cout << checks << " device checks passed\n"; }
+    try { timer2350(); onboardLedTests(); uartTests(); spiTests(); pwmTests(); busTests(); std::cout << checks << " device checks passed\n"; }
     catch (const std::exception& e) { std::cerr << "FAIL: " << e.what() << '\n'; return 1; }
 }

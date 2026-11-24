@@ -46,6 +46,7 @@ int main(int argc, char** argv) {
         if (parser.isSet("demo")) ide.prepareDemo();
         else if (!project.isEmpty()) ide.openProject(project);
         else if (!input.isEmpty()) ide.prepareElf(input);
+        else if (!smoke) ide.restoreSessionProject();
         showInspectionWindow(&ide);
         return app.exec();
     }

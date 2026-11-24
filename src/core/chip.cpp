@@ -63,9 +63,11 @@ ChipDescription describe(Chip chip) {
         if (region.name == "UART0" || region.name == "UART1") region.coverage = "PL011 partiel : FIFO RX/TX, IRQ, loopback ; temps virtuel";
         if (region.name == "SPI0" || region.name == "SPI1") region.coverage = "PL022 partiel : FIFO, loopback interne, IRQ ; pas d'esclave externe";
         if (region.name == "PWM") region.coverage = "Compteurs, diviseur, wrap/IRQ ; pas de GPIO/DREQ";
-        if (region.name == "RESETS") region.coverage = "Reset des modèles présents ; lignes initialement relâchées (démarrage direct)";
+        if (region.name == "IO_BANK0") region.coverage = "Partiel : contrôle et état numérique des GPIO";
+        if (region.name == "PADS_BANK0") region.coverage = "Partiel : configuration des pads GPIO";
+        if (region.name == "RESETS") region.coverage = "Lignes actives au démarrage, libération immédiate des blocs sélectionnés";
         if (region.name == "WATCHDOG") region.coverage = "SCRATCH0..7 uniquement ; compteur/reset non émulés";
-        if (region.begin == 0xd0000000) region.coverage = "CPUID, FIFO, spinlocks, latches GPIO ; pinmux et sécurité absents";
+        if (region.begin == 0xd0000000) region.coverage = "CPUID, FIFO, spinlocks et latches GPIO";
         if (region.begin == 0xe0000000) region.coverage = "SysTick, NVIC enable/pending ; RP2350 : exceptions non émulées";
     }
     std::sort(d.regions.begin(), d.regions.end(), [](const Region& a, const Region& b) { return a.begin < b.begin; });
@@ -83,7 +85,7 @@ std::vector<PeripheralRegister> inspectableRegisters(Chip chip) {
         {0xd0000058, "SIO.FIFO_RD", "Inspection sans dépiler ; zéro si FIFO vide"}
     };
     for (unsigned i = 0; i < 32; ++i) registers.push_back({0xd0000100u + i * 4u, "SIO.SPINLOCK" + std::to_string(i), "Inspection sans acquérir ; 0 = verrou pris"});
-    registers.push_back({0xd0000010, "SIO.GPIO_OUT", "Latch de sortie uniquement ; aucune broche externe simulée"});
+    registers.push_back({0xd0000010, "SIO.GPIO_OUT", "Latch de sortie ; GPIO25 pilote la LED des Pico et Pico 2 sans Wi-Fi"});
     registers.push_back({chip == Chip::RP2040 ? 0xd0000020u : 0xd0000030u, "SIO.GPIO_OE", "Output enable"});
     if (chip == Chip::RP2350) {
         registers.push_back({0xd0000014, "SIO.GPIO_HI_OUT", "GPIO32..47, QSPI/USB latches ; pas de sécurité/pinmux"});

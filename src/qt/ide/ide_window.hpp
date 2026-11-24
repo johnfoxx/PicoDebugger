@@ -18,6 +18,7 @@ class QShowEvent;
 class QSplitter;
 class QTableView;
 class QTabWidget;
+class QDialog;
 class QTreeWidget;
 class QTreeView;
 
@@ -33,7 +34,9 @@ public:
     void prepareElf(const QString& path) { startupElf_ = path; }
     void prepareDemo() { startupDemo_ = true; }
     bool openProject(const QString& directory);
-    bool openSource(const QString& path, bool focus = true, bool activate = true);
+    void restoreSessionProject();
+    const QString& projectDirectory() const { return root_; }
+    bool openSource(const QString& path, bool focus = true, bool activate = true, bool externalDefinition = false);
     void debuggerState(bool ready, bool canPause, bool canStep, bool debuggerVisible, bool inspectAssembly,
                        picodbg::Board board, const QString& description);
     void debuggerFeedback(const QString& message, bool error = false);
@@ -52,8 +55,11 @@ private:
         QByteArray diskText;
         CodeEditor* editor;
         QTimer* sync;
+        QTabWidget* group = nullptr;
+        QPointer<QDialog> detached;
         std::vector<Problem> diagnostics;
         unsigned completionSequence = 0;
+        unsigned definitionSequence = 0;
     };
     enum class Task { Configure, Build, Debug, Board };
     QPointer<MainWindow> debugger_;
@@ -70,6 +76,10 @@ private:
     QTreeView* tree_;
     QFileSystemModel* files_;
     QTabWidget* editors_;
+    QTabWidget* secondaryEditors_;
+    QTabWidget* activeGroup_ = nullptr;
+    QPointer<CodeEditor> activeEditor_;
+    QSplitter* editorSplit_;
     TextTools* textTools_;
     QSplitter* codeSplit_;
     QWidget* assemblyPane_;
@@ -143,12 +153,20 @@ private:
     void revealDebugLocation(const picosource::Location& location);
     bool sourceMatchesElf(const Source& source) const;
     void selectSource(bool navigate);
-    void closeSource(int index);
+    void closeSource(Source& source);
+    void configureEditorGroup(QTabWidget& group);
+    void addEditorTab(Source& source, QTabWidget& group);
+    void activateEditor(CodeEditor* editor, bool focus = false);
+    void moveEditor(Source& source, QTabWidget& group);
+    void detachEditor(Source& source);
+    void removeEditorView(Source& source);
+    void syncEditorGroups();
     bool save(Source& source);
     bool saveAll();
     void configureTools();
     void restartLanguage(bool force = false);
     void requestCompletion(Source& source);
+    void requestDefinition(Source& source, int line, int column);
     void receiveDiagnostics(const QString& path, const QJsonArray& diagnostics);
     void refreshProblems();
     void build(Task task);
